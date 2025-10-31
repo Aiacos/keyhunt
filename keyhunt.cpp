@@ -264,8 +264,19 @@ struct bloom *vanity_bloom = NULL;
 
 struct bloom bloom;
 
-uint64_t *steps = NULL;
-unsigned int *ends = NULL;
+/* Pad shared counters to separate cache lines and reduce false sharing between threads. */
+struct thread_counter {
+	uint64_t value;
+	uint8_t padding[56];
+};
+
+struct thread_flag {
+	unsigned int value;
+	uint8_t padding[60];
+};
+
+struct thread_counter *steps = NULL;
+struct thread_flag *ends = NULL;
 uint64_t N = 0;
 
 uint64_t N_SEQUENTIAL_MAX = 0x100000000;
@@ -416,7 +427,8 @@ int main(int argc, char **argv)	{
 	char buffer[2048];
 	char rawvalue[32];
 	struct tothread *tt;	//tothread
-	Tokenizer t,tokenizerbsgs;	//tokenizer
+	Tokenizer t{};	//tokenizer
+	Tokenizer tokenizerbsgs{};	//tokenizer
 	char *fileName = NULL;
 	char *hextemp = NULL;
 	char *aux = NULL;
@@ -2027,9 +2039,9 @@ int main(int argc, char **argv)	{
 
 		i = 0;
 
-		steps = (uint64_t *) calloc(NTHREADS,sizeof(uint64_t));
+		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
 		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
-		ends = (unsigned int *) calloc(NTHREADS,sizeof(int));
+		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));
 		checkpointer((void *)ends,__FILE__,"calloc","ends" ,__LINE__ -1 );
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
@@ -2042,7 +2054,7 @@ int main(int argc, char **argv)	{
 			tt = (tothread*) malloc(sizeof(struct tothread));
 			checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
 			tt->nt = j;
-			steps[j] = 0;
+			steps[j].value = 0;
 			s = 0;
 			switch(FLAGBSGSMODE)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -2092,9 +2104,9 @@ int main(int argc, char **argv)	{
 		free(aux);
 	}
 	if(FLAGMODE != MODE_BSGS)	{
-		steps = (uint64_t *) calloc(NTHREADS,sizeof(uint64_t));
+		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
 		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
-		ends = (unsigned int *) calloc(NTHREADS,sizeof(int));
+		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));
 		checkpointer((void *)ends,__FILE__,"calloc","ends" ,__LINE__ -1 );
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
@@ -2106,7 +2118,7 @@ int main(int argc, char **argv)	{
 			tt = (tothread*) malloc(sizeof(struct tothread));
 			checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
 			tt->nt = j;
-			steps[j] = 0;
+			steps[j].value = 0;
 			s = 0;
 			switch(FLAGMODE)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -2156,7 +2168,7 @@ int main(int argc, char **argv)	{
 		seconds.AddOne();
 		check_flag = 1;
 		for(j = 0; j <NTHREADS && check_flag; j++) {
-			check_flag &= ends[j];
+			check_flag &= ends[j].value;
 		}
 		if(check_flag)	{
 			continue_flag = 0;
@@ -2168,7 +2180,7 @@ int main(int argc, char **argv)	{
 				total.SetInt32(0);
 				for(j = 0; j < NTHREADS; j++) {
 					pretotal.Set(&debugcount_mpz);
-					pretotal.Mult(steps[j]);					
+						pretotal.Mult(steps[j].value);					
 					total.Add(&pretotal);
 				}
 				
@@ -2496,7 +2508,7 @@ void *thread_process_minikeys(void *vargp)	{
 						}
 					}
 				}
-				steps[thread_number]++;
+				steps[thread_number].value++;
 				count+=1024;
 			}while(count < N_SEQUENTIAL_MAX && continue_flag);
 		}
@@ -2538,11 +2550,17 @@ void *thread_process(void *vargp)	{
 	char publickeyhashrmd160_endomorphism[12][4][20];
 	
 	bool calculate_y = FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH || FLAGCRYPTO  == CRYPTO_ETH;
-	Int key_mpz,keyfound,temp_stride;
+	Int key_mpz,keyfound;
+	Int stride_half;
+	Int stride_four;
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	grp->Set(dx);
+	stride_half.SetInt32(CPU_GRP_SIZE / 2);
+	stride_half.Mult(&stride);
+	stride_four.SetInt32(4);
+	stride_four.Mult(&stride);
 			
 	do {
 		if(FLAGRANDOM){
@@ -2583,12 +2601,10 @@ void *thread_process(void *vargp)	{
 					THREADOUTPUT = 1;
 				}
 			}
-			do {
-				temp_stride.SetInt32(CPU_GRP_SIZE / 2);
-				temp_stride.Mult(&stride);
-				key_mpz.Add(&temp_stride);
-	 			startP = secp->ComputePublicKey(&key_mpz);
-				key_mpz.Sub(&temp_stride);
+				do {
+					key_mpz.Add(&stride_half);
+		 			startP = secp->ComputePublicKey(&key_mpz);
+					key_mpz.Sub(&stride_half);
 
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
@@ -3061,10 +3077,8 @@ void *thread_process(void *vargp)	{
 							}
 						break;
 					}
-					count+=4;
-					temp_stride.SetInt32(4);
-					temp_stride.Mult(&stride);
-					key_mpz.Add(&temp_stride);
+						count+=4;
+						key_mpz.Add(&stride_four);
 				}
 				/*
 				if(FLAGDEBUG) {
@@ -3073,7 +3087,7 @@ void *thread_process(void *vargp)	{
 				}
 				*/
 
-				steps[thread_number]++;
+				steps[thread_number].value++;
 
 				// Next start point (startP + GRP_SIZE*G)
 				pp = startP;
@@ -3094,7 +3108,7 @@ void *thread_process(void *vargp)	{
 			}while(count < N_SEQUENTIAL_MAX && continue_flag);
 		}
 	} while(continue_flag);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -3130,11 +3144,17 @@ void *thread_process_vanity(void *vargp)	{
 	
 	char publickeyhashrmd160_endomorphism[12][4][20];
 	
-	Int key_mpz,temp_stride,keyfound;
+	Int key_mpz,keyfound;
+	Int stride_half;
+	Int stride_four;
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	grp->Set(dx);
+	stride_half.SetInt32(CPU_GRP_SIZE / 2);
+	stride_half.Mult(&stride);
+	stride_four.SetInt32(4);
+	stride_four.Mult(&stride);
 	
 	
 	//if FLAGENDOMORPHISM  == 1 and only compress search is enabled then there is no need to calculate the Y value value					
@@ -3193,12 +3213,10 @@ void *thread_process_vanity(void *vargp)	{
 					THREADOUTPUT = 1;
 				}
 			}
-			do {
-				temp_stride.SetInt32(CPU_GRP_SIZE / 2);
-				temp_stride.Mult(&stride);
-				key_mpz.Add(&temp_stride);
-	 			startP = secp->ComputePublicKey(&key_mpz);
-				key_mpz.Sub(&temp_stride);
+				do {
+					key_mpz.Add(&stride_half);
+		 			startP = secp->ComputePublicKey(&key_mpz);
+					key_mpz.Sub(&stride_half);
 
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
@@ -3505,12 +3523,10 @@ void *thread_process_vanity(void *vargp)	{
 						
 					}
 
-					count+=4;
-					temp_stride.SetInt32(4);
-					temp_stride.Mult(&stride);
-					key_mpz.Add(&temp_stride);
+						count+=4;
+						key_mpz.Add(&stride_four);
 				}
-				steps[thread_number]++;
+				steps[thread_number].value++;
 
 				// Next start point (startP + GRP_SIZE*G)
 				pp = startP;
@@ -3531,7 +3547,7 @@ void *thread_process_vanity(void *vargp)	{
 			}while(count < N_SEQUENTIAL_MAX && continue_flag);
 		}
 	} while(continue_flag);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -3788,10 +3804,10 @@ void *thread_process_bsgs(void *vargp)	{
 	Int base_key, keyfound;
 	IntGroup* grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	Int dx[CPU_GRP_SIZE / 2 + 1];
-	Int dy, dyn, _s, _p, km, intaux;
+	Int dy, dyn, _s, _p, intaux;
 
 	// Point variables
-	Point base_point, point_aux, point_found;
+	Point base_point, point_aux, point_found, offset_point;
 	Point startP;
 	Point pp, pn;
 	Point pts[CPU_GRP_SIZE];
@@ -3815,7 +3831,8 @@ void *thread_process_bsgs(void *vargp)	{
 	intaux.Set(&BSGS_M_double);
 	intaux.Mult(CPU_GRP_SIZE/2);
 	intaux.Add(&BSGS_M);
-	
+	offset_point = secp->ComputePublicKey(&intaux);
+		
 	do	{	
 	/*
 		We do this in an atomic pthread_mutex operation to not affect others threads
@@ -3859,11 +3876,8 @@ void *thread_process_bsgs(void *vargp)	{
 			}
 		}
 		base_point = secp->ComputePublicKey(&base_key);
-		km.Set(&base_key);
-		km.Neg();
-		km.Add(&secp->order);
-		km.Sub(&intaux);
-		point_aux = secp->ComputePublicKey(&km);
+		point_aux = secp->AddDirect(base_point, offset_point);
+		point_aux = secp->Negation(point_aux);
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
@@ -4002,9 +4016,9 @@ pn.y.ModAdd(&GSn[i].y);
 				} // end while
 			}// End if 
 		}
-		steps[thread_number]+=2;
+		steps[thread_number].value+=2;
 	}while(1);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -4018,7 +4032,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 	struct tothread *tt;
 	char xpoint_raw[32],*aux_c,*hextemp;
 	Int base_key,keyfound,n_range_random;
-	Point base_point,point_aux,point_found;
+	Point base_point,point_aux,point_found,offset_point;
 	uint32_t l,k,r,salir,thread_number,cycles;
 	
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
@@ -4033,7 +4047,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 	Int dyn;
 	Int _s;
 	Int _p;
-	Int km,intaux;
+	Int intaux;
 	Point pp;
 	Point pn;
 	grp->Set(dx);
@@ -4051,6 +4065,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 	intaux.Set(&BSGS_M_double);
 	intaux.Mult(CPU_GRP_SIZE/2);
 	intaux.Add(&BSGS_M);
+	offset_point = secp->ComputePublicKey(&intaux);
 
 	do	{
 		
@@ -4089,14 +4104,8 @@ void *thread_process_bsgs_random(void *vargp)	{
 			}
 		}
 		base_point = secp->ComputePublicKey(&base_key);
-
-		km.Set(&base_key);
-		km.Neg();
-		
-		
-		km.Add(&secp->order);
-		km.Sub(&intaux);
-		point_aux = secp->ComputePublicKey(&km);
+		point_aux = secp->AddDirect(base_point, offset_point);
+		point_aux = secp->Negation(point_aux);
 
 
 		/* We need to test individually every point in BSGS_Q */
@@ -4257,9 +4266,9 @@ pn.y.ModAdd(&GSn[i].y);
 			}	//End if
 		} // End for with k bsgs_point_number
 
-		steps[thread_number]+=2;
+		steps[thread_number].value+=2;
 	}while(1);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -4796,11 +4805,11 @@ void *thread_process_bsgs_dance(void *vargp)	{
 
 	Point pts[CPU_GRP_SIZE];
 	Int dx[CPU_GRP_SIZE / 2 + 1];
-	Point pp,pn,startP,base_point,point_aux,point_found;
+	Point pp,pn,startP,base_point,point_aux,point_found,offset_point;
 	FILE *filekey;
 	struct tothread *tt;
 	char xpoint_raw[32],*aux_c,*hextemp;
-	Int base_key,keyfound,dy,dyn,_s,_p,km,intaux;
+	Int base_key,keyfound,dy,dyn,_s,_p,intaux;
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
 	int hLength = (CPU_GRP_SIZE / 2 - 1);	
@@ -4819,6 +4828,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	intaux.Set(&BSGS_M_double);
 	intaux.Mult(CPU_GRP_SIZE/2);
 	intaux.Add(&BSGS_M);
+	offset_point = secp->ComputePublicKey(&intaux);
 	
 	entrar = 1;
 	
@@ -4896,13 +4906,8 @@ void *thread_process_bsgs_dance(void *vargp)	{
 		}
 		
 		base_point = secp->ComputePublicKey(&base_key);
-
-		km.Set(&base_key);
-		km.Neg();
-		
-		km.Add(&secp->order);
-		km.Sub(&intaux);
-		point_aux = secp->ComputePublicKey(&km);
+		point_aux = secp->AddDirect(base_point, offset_point);
+		point_aux = secp->Negation(point_aux);
 		
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
@@ -5060,9 +5065,9 @@ pn.y.ModAdd(&GSn[i].y);
 				}//while all the aMP points
 			}// End if 
 		}
-		steps[thread_number]+=2;
+		steps[thread_number].value+=2;
 	}while(1);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -5075,7 +5080,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	struct tothread *tt;
 	char xpoint_raw[32],*aux_c,*hextemp;
 	Int base_key,keyfound;
-	Point base_point,point_aux,point_found;
+	Point base_point,point_aux,point_found,offset_point;
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
 	
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
@@ -5090,7 +5095,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	Int dyn;
 	Int _s;
 	Int _p;
-	Int km,intaux;
+	Int intaux;
 	Point pp;
 	Point pn;
 	grp->Set(dx);
@@ -5107,6 +5112,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	intaux.Set(&BSGS_M_double);
 	intaux.Mult(CPU_GRP_SIZE/2);
 	intaux.Add(&BSGS_M);
+	offset_point = secp->ComputePublicKey(&intaux);
 	
 	entrar = 1;
 	/*
@@ -5156,13 +5162,8 @@ void *thread_process_bsgs_backward(void *vargp)	{
 		}
 		
 		base_point = secp->ComputePublicKey(&base_key);
-
-		km.Set(&base_key);
-		km.Neg();
-		
-		km.Add(&secp->order);
-		km.Sub(&intaux);
-		point_aux = secp->ComputePublicKey(&km);
+		point_aux = secp->AddDirect(base_point, offset_point);
+		point_aux = secp->Negation(point_aux);
 		
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
@@ -5317,9 +5318,9 @@ pn.y.ModAdd(&GSn[i].y);
 				}//while all the aMP points
 			}// End if 
 		}
-		steps[thread_number]+=2;
+		steps[thread_number].value+=2;
 	}while(1);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -5332,7 +5333,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	struct tothread *tt;
 	char xpoint_raw[32],*aux_c,*hextemp;
 	Int base_key,keyfound;
-	Point base_point,point_aux,point_found;
+	Point base_point,point_aux,point_found,offset_point;
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
 	
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
@@ -5347,7 +5348,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	Int dyn;
 	Int _s;
 	Int _p;
-	Int km,intaux;
+	Int intaux;
 	Point pp;
 	Point pn;
 	grp->Set(dx);
@@ -5364,6 +5365,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	intaux.Set(&BSGS_M_double);
 	intaux.Mult(CPU_GRP_SIZE/2);
 	intaux.Add(&BSGS_M);
+	offset_point = secp->ComputePublicKey(&intaux);
 	
 	entrar = 1;
 	
@@ -5440,13 +5442,8 @@ void *thread_process_bsgs_both(void *vargp)	{
 		}
 		
 		base_point = secp->ComputePublicKey(&base_key);
-
-		km.Set(&base_key);
-		km.Neg();
-		
-		km.Add(&secp->order);
-		km.Sub(&intaux);
-		point_aux = secp->ComputePublicKey(&km);
+		point_aux = secp->AddDirect(base_point, offset_point);
+		point_aux = secp->Negation(point_aux);
 		
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
@@ -5602,9 +5599,9 @@ void *thread_process_bsgs_both(void *vargp)	{
 					}//while all the aMP points
 			}// End if 
 		}
-		steps[thread_number]+=2;	
+			steps[thread_number].value+=2;	
 	}while(1);
-	ends[thread_number] = 1;
+	ends[thread_number].value = 1;
 	return NULL;
 }
 
@@ -6458,7 +6455,7 @@ bool forceReadFileXPoint(char *fileName)	{
 	size_t r,lenaux;
 	uint8_t rawvalue[100];
 	char aux[1000],*hextemp;
-	Tokenizer tokenizer_xpoint;	//tokenizer
+	Tokenizer tokenizer_xpoint{};	//tokenizer
 	fileDescriptor = fopen(fileName,"r");	
 	if(fileDescriptor == NULL)	{
 		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);

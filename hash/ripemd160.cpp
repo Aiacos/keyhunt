@@ -289,17 +289,27 @@ void CRIPEMD160::Finalize(unsigned char hash[20])
     memcpy(hash,s,20);
 }
 
-static const uint64_t sizedesc_32 = 32 << 3;
-static const unsigned char pad[64] = { 0x80 };
+static const uint32_t sizedesc_32_low = 32 << 3;
 
-void ripemd160_32(unsigned char *input, unsigned char *digest) {
+void ripemd160_32(const unsigned char *input, unsigned char *digest) {
+  alignas(16) uint32_t block[16];
+  uint32_t *state = reinterpret_cast<uint32_t *>(digest);
 
-  uint32_t *s = (uint32_t *)digest;
-  _ripemd160::Initialize(s);
-  memcpy(input+32,pad,24);
-  memcpy(input+56,&sizedesc_32,8);
-  _ripemd160::Transform(s, input);
+  // Copy the 32-byte message (already little endian) into the first eight words.
+  memcpy(block, input, 32);
 
+  // Apply RIPEMD-160 padding for a 32-byte message.
+  block[8] = 0x00000080u;
+  block[9] = 0;
+  block[10] = 0;
+  block[11] = 0;
+  block[12] = 0;
+  block[13] = 0;
+  block[14] = sizedesc_32_low;
+  block[15] = 0;
+
+  _ripemd160::Initialize(state);
+  _ripemd160::Transform(state, reinterpret_cast<unsigned char *>(block));
 }
 
 void ripemd160(unsigned char *input,int length,unsigned char *digest) {

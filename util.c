@@ -4,6 +4,23 @@
 
 #include "util.h"
 
+static void tokenizer_reserve(Tokenizer *t, int min_capacity) {
+	if (t->capacity >= min_capacity) {
+		return;
+	}
+	int new_capacity = t->capacity > 0 ? t->capacity : 4;
+	while (new_capacity < min_capacity) {
+		new_capacity <<= 1;
+	}
+	char **new_tokens = (char **) realloc(t->tokens, sizeof(char *) * new_capacity);
+	if (new_tokens == NULL) {
+		printf("Out of memory\n");
+		exit(EXIT_FAILURE);
+	}
+	t->tokens = new_tokens;
+	t->capacity = new_capacity;
+}
+
 
 char *ltrim(char *str, const char *seps)	{
 	size_t totrim;
@@ -52,39 +69,42 @@ int indexOf(char *s,const char **array,int length_array)	{
 }
 
 char *nextToken(Tokenizer *t)	{
-	if(t->current < t->n)	{
-		t->current++;
-		return t->tokens[t->current-1];
+	if(t == NULL || t->current >= t->n)	{
+		return NULL;
 	}
-	else {
-		return  NULL;
-	}
+	return t->tokens[t->current++];
 }
+
 int hasMoreTokens(Tokenizer *t)	{
-	return (t->current < t->n);
+	return (t != NULL && t->current < t->n);
 }
 
 void stringtokenizer(char *data,Tokenizer *t)	{
 	char *token;
+	if(t == NULL || data == NULL)	{
+		return;
+	}
+	if(t->tokens != NULL)	{
+		free(t->tokens);
+	}
 	t->tokens = NULL;
 	t->n = 0;
 	t->current = 0;
+	t->capacity = 0;
 	trim(data,"\t\n\r :");
 	token = strtok(data," \t:");
 	while(token != NULL)	{
-		t->n++;
-		t->tokens = (char**) realloc(t->tokens,sizeof(char*)*t->n);
-		if(t->tokens == NULL)	{
-			printf("Out of memory\n");
-			exit(0);
-		}
-		t->tokens[t->n - 1] = token;
+		tokenizer_reserve(t, t->n + 1);
+		t->tokens[t->n++] = token;
 		token = strtok(NULL," \t:");
 	}
 }
 
 void freetokenizer(Tokenizer *t)	{
-	if(t->n > 0)	{
+	if(t == NULL)	{
+		return;
+	}
+	if(t->tokens != NULL)	{
 		free(t->tokens);
 	}
 	memset(t,0,sizeof(Tokenizer));

@@ -417,7 +417,8 @@ int main(int argc, char **argv)	{
 	char buffer[2048];
 	char rawvalue[32];
 	struct tothread *tt;	//tothread
-	Tokenizer t,tokenizerbsgs;	//tokenizer
+	Tokenizer t{};	//tokenizer
+	Tokenizer tokenizerbsgs{};	//tokenizer
 	char *fileName = NULL;
 	char *hextemp = NULL;
 	char *aux = NULL;
@@ -6706,7 +6707,7 @@ bool forceReadFileXPoint(char *fileName)	{
 	size_t r,lenaux;
 	uint8_t rawvalue[100];
 	char aux[1000],*hextemp;
-	Tokenizer tokenizer_xpoint;	//tokenizer
+	Tokenizer tokenizer_xpoint{};	//tokenizer
 	fileDescriptor = fopen(fileName,"r");	
 	if(fileDescriptor == NULL)	{
 		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);

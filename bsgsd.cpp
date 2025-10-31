@@ -2346,7 +2346,7 @@ void* client_handler(void* arg) {
     char buffer[1024];
 	char *hextemp;
 	int bytes_received;
-	Tokenizer t;
+	Tokenizer t{};
 	t.tokens = NULL;
 	
 	// Peek at the incoming data to determine its length

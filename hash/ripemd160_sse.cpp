@@ -81,7 +81,7 @@ namespace ripemd160sse {
 #define R42(a,b,c,d,e,x,r) Round(a, b, c, d, e, f2(b, c, d), x, 0x7A6D76E9ul, r)
 #define R52(a,b,c,d,e,x,r) Round(a, b, c, d, e, f1(b, c, d), x, 0, r)
 
-#define LOADW(i) _mm_set_epi32(*((uint32_t *)blk[0]+i),*((uint32_t *)blk[1]+i),*((uint32_t *)blk[2]+i),*((uint32_t *)blk[3]+i))
+#define LOADW(i) _mm_set_epi32(*((const uint32_t *)blk[0]+i),*((const uint32_t *)blk[1]+i),*((const uint32_t *)blk[2]+i),*((const uint32_t *)blk[3]+i))
 
   // Initialize RIPEMD-160 state
   void Initialize(__m128i *s) {
@@ -89,7 +89,7 @@ namespace ripemd160sse {
   }
 
   // Perform 4 RIPE in parallel using SSE2
-  void Transform(__m128i *s, uint8_t *blk[4]) {
+  void Transform(__m128i *s, const uint8_t *blk[4]) {
 
     __m128i a1 = _mm_load_si128(s + 0);
     __m128i b1 = _mm_load_si128(s + 1);
@@ -113,14 +113,19 @@ namespace ripemd160sse {
     w[5] = LOADW(5);
     w[6] = LOADW(6);
     w[7] = LOADW(7);
-    w[8] = LOADW(8);
-    w[9] = LOADW(9);
-    w[10] = LOADW(10);
-    w[11] = LOADW(11);
-    w[12] = LOADW(12);
-    w[13] = LOADW(13);
-    w[14] = LOADW(14);
-    w[15] = LOADW(15);
+
+    const __m128i pad80 = _mm_set1_epi32(0x00000080u);
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i bitlen = _mm_set1_epi32(32 << 3);
+
+    w[8] = pad80;
+    w[9] = zero;
+    w[10] = zero;
+    w[11] = zero;
+    w[12] = zero;
+    w[13] = zero;
+    w[14] = bitlen;
+    w[15] = zero;
 
     R11(a1, b1, c1, d1, e1, w[0], 11);
     R12(a2, b2, c2, d2, e2, w[5], 8);
@@ -317,31 +322,20 @@ namespace ripemd160sse {
 
 #endif
 
-static const uint64_t sizedesc_32 = 32 << 3;
-static const unsigned char pad[64] = { 0x80 };
-
 void ripemd160sse_32(
-  unsigned char *i0,
-  unsigned char *i1,
-  unsigned char *i2,
-  unsigned char *i3,
+  const unsigned char *i0,
+  const unsigned char *i1,
+  const unsigned char *i2,
+  const unsigned char *i3,
   unsigned char *d0,
   unsigned char *d1,
   unsigned char *d2,
   unsigned char *d3) {
 
   __m128i s[5];
-  uint8_t *bs[] = { i0,i1,i2,i3 };
+  const uint8_t *bs[] = { i0,i1,i2,i3 };
 
   ripemd160sse::Initialize(s);
-  memcpy(i0 + 32, pad, 24);
-  memcpy(i0 + 56, &sizedesc_32, 8);
-  memcpy(i1 + 32, pad, 24);
-  memcpy(i1 + 56, &sizedesc_32, 8);
-  memcpy(i2 + 32, pad, 24);
-  memcpy(i2 + 56, &sizedesc_32, 8);
-  memcpy(i3 + 32, pad, 24);
-  memcpy(i3 + 56, &sizedesc_32, 8);
 
   ripemd160sse::Transform(s, bs);
 
