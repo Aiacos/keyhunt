@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include "hashing.h"
 #include "sha3/sha3.h"
+#include "hash/ripemd160.h"
 
 int sha256(const unsigned char *data, size_t length, unsigned char *digest) {
     if (digest == NULL) {
@@ -104,6 +105,12 @@ int rmd160(const unsigned char *data, size_t length, unsigned char *digest) {
         printf("Invalid RIPEMD160 input buffer\n");
         return 1;
     }
+
+    if (length == 32) {
+        ripemd160_32(data, digest);
+        return 0;
+    }
+
     RIPEMD160_CTX ctx;
     if (RIPEMD160_Init(&ctx) != 1) {
         printf("Failed to initialize RIPEMD-160 context\n");
@@ -127,6 +134,12 @@ int rmd160_4(size_t length, const unsigned char *data0, const unsigned char *dat
     const unsigned char *inputs[4] = {data0, data1, data2, data3};
     unsigned char *outputs[4] = {digest0, digest1, digest2, digest3};
     RIPEMD160_CTX ctx[4];
+
+    if (length == 32) {
+        ripemd160sse_32(data0, data1, data2, data3,
+                        digest0, digest1, digest2, digest3);
+        return 0;
+    }
 
     for (size_t i = 0; i < 4; ++i) {
         if (outputs[i] == NULL) {

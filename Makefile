@@ -19,7 +19,7 @@ LDLIBS ?=
 LDLIBS += -lm -lpthread
 
 BLOOM_OBJS := oldbloom/bloom.o bloom/bloom.o
-HASH_OBJS := hash/ripemd160.o hash/ripemd160_sse.o hash/sha256.o hash/sha256_sse.o
+HASH_OBJS := hash/ripemd160.o hash/ripemd160_sse.o hash/ripemd160_avx2.o hash/sha256.o hash/sha256_sse.o
 SHA3_OBJS := sha3/sha3.o sha3/keccak.o
 SECP256K1_OBJS := secp256k1/Int.o secp256k1/Point.o secp256k1/SECP256K1.o secp256k1/IntMod.o secp256k1/Random.o secp256k1/IntGroup.o
 GMP256K1_OBJS := gmp256k1/Int.o gmp256k1/Point.o gmp256k1/GMP256K1.o gmp256k1/IntMod.o gmp256k1/Random.o gmp256k1/IntGroup.o
@@ -66,3 +66,7 @@ sha3/sha3.o: sha3/sha3.c
 
 sha3/keccak.o: sha3/keccak.c
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# AVX2 optimized builds
+hash/ripemd160_avx2.o: hash/ripemd160_avx2.cpp
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@

@@ -12,7 +12,6 @@ email: albertobsd@gmail.com
 #include <vector>
 #include <inttypes.h>
 #include "base58/libbase58.h"
-#include "rmd160/rmd160.h"
 #include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
 #include "sha3/sha3.h"
@@ -1368,7 +1367,7 @@ void pubkeytopubaddress_dst(char *pkey,int length,char *dst)	{
 	char digest[60];
 	size_t pubaddress_size = 40;
 	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
-	RMD160Data((const unsigned char*)digest,32, digest+1);
+	ripemd160_32((const unsigned char*)digest,(unsigned char*)(digest+1));
 	digest[0] = 0;
 	sha256((uint8_t*)digest, 21,(uint8_t*) digest+21);
 	sha256((uint8_t*)digest+21, 32,(uint8_t*) digest+21);
@@ -1399,7 +1398,7 @@ char *pubkeytopubaddress(char *pkey,int length)	{
 	//digest [000...0]
  	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
 	//digest [SHA256 32 bytes+000....0]
-	RMD160Data((const unsigned char*)digest,32, digest+1);
+	ripemd160_32((const unsigned char*)digest,(unsigned char*)(digest+1));
 	//digest [? +RMD160 20 bytes+????000....0]
 	digest[0] = 0;
 	//digest [0 +RMD160 20 bytes+????000....0]
@@ -1419,7 +1418,7 @@ void publickeytohashrmd160_dst(char *pkey,int length,char *dst)	{
 	//digest [000...0]
  	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
 	//digest [SHA256 32 bytes]
-	RMD160Data((const unsigned char*)digest,32, dst);
+	ripemd160_32((const unsigned char*)digest,(unsigned char*)dst);
 	//hash160 [RMD160 20 bytes]
 }
 
@@ -1431,7 +1430,7 @@ char *publickeytohashrmd160(char *pkey,int length)	{
 	//digest [000...0]
  	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
 	//digest [SHA256 32 bytes]
-	RMD160Data((const unsigned char*)digest,32, hash160);
+	ripemd160_32((const unsigned char*)digest,(unsigned char*)hash160);
 	//hash160 [RMD160 20 bytes]
 	free(digest);
 	return hash160;	// hash160 need to be free by te caller funtion

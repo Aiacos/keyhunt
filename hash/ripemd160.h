@@ -41,9 +41,20 @@ public:
 
 void ripemd160(unsigned char *input,int length,unsigned char *digest);
 void ripemd160_32(const unsigned char *input, unsigned char *digest);
+
+// SSE2 implementation (4-way parallel)
 void ripemd160sse_32(const uint8_t *i0, const uint8_t *i1, const uint8_t *i2, const uint8_t *i3,
   uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3);
 void ripemd160sse_test();
+
+// AVX2 implementation (8-way parallel) - requires AVX2 support
+void ripemd160avx2_32(const uint8_t *i0, const uint8_t *i1, const uint8_t *i2, const uint8_t *i3,
+  const uint8_t *i4, const uint8_t *i5, const uint8_t *i6, const uint8_t *i7,
+  uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
+  uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7);
+int ripemd160_avx2_available(void);
+void ripemd160avx2_test();
+
 std::string ripemd160_hex(unsigned char *digest);
 
 static inline bool ripemd160_comp_hash(uint8_t *h0, uint8_t *h1) {

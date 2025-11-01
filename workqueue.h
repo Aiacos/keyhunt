@@ -48,6 +48,15 @@ public:
 		return running_;
 	}
 
+	bool snapshot_next_start(IntType &out) const {
+		std::lock_guard<std::mutex> lock(mutex_);
+		if (!running_ || rangeStart_ == nullptr) {
+			return false;
+		}
+		out.Set(rangeStart_);
+		return true;
+	}
+
 	bool pop(IntType &out) {
 		std::unique_lock<std::mutex> lock(mutex_);
 		if (!running_) {

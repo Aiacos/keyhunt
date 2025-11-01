@@ -53,10 +53,23 @@ public:
     uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3);
 
   void GetHash160(int type,bool compressed, Point &pubKey, unsigned char *hash);
-  
+
   void GetHash160_fromX(int type,unsigned char prefix,
   Int *k0,Int *k1,Int *k2,Int *k3,
   uint8_t *h0,uint8_t *h1,uint8_t *h2,uint8_t *h3);
+
+  // AVX2 optimized versions (8-way parallel)
+  void GetHash160_AVX2(int type,bool compressed,
+    Point &k0, Point &k1, Point &k2, Point &k3,
+    Point &k4, Point &k5, Point &k6, Point &k7,
+    uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3,
+    uint8_t *h4, uint8_t *h5, uint8_t *h6, uint8_t *h7);
+
+  void GetHash160_fromX_AVX2(int type,unsigned char prefix,
+  Int *k0,Int *k1,Int *k2,Int *k3,
+  Int *k4,Int *k5,Int *k6,Int *k7,
+  uint8_t *h0,uint8_t *h1,uint8_t *h2,uint8_t *h3,
+  uint8_t *h4,uint8_t *h5,uint8_t *h6,uint8_t *h7);
 
 
   Point Add(Point &p1, Point &p2);

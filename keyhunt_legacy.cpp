@@ -296,6 +296,7 @@ int FLAGBSGSMODE = 0;
 int FLAGDEBUG = 0;
 int FLAGQUIET = 0;
 int FLAGMATRIX = 0;
+int FLAGPROGRESSBAR = 0;
 int KFACTOR = 1;
 int MAXLENGTHADDRESS = -1;
 int NTHREADS = 1;
@@ -421,6 +422,11 @@ Int n_range_end;
 Int n_range_diff;
 Int n_range_aux;
 
+static bool g_rangeProgressEnabled = false;
+Int g_rangeProgressStart;
+Int g_rangeProgressEnd;
+Int g_rangeProgressSpan;
+
 Int lambda,lambda2,beta,beta2;
 
 Secp256K1 *secp;
@@ -440,6 +446,156 @@ static void shutdown_work_queue() {
 	g_workQueue.shutdown();
 }
 #endif
+
+static void initialize_range_progress_tracker() {
+	if (!FLAGPROGRESSBAR) {
+		g_rangeProgressEnabled = false;
+		g_rangeProgressSpan.SetInt32(0);
+		return;
+	}
+	if (FLAGMODE == MODE_BSGS || FLAGRANDOM) {
+		g_rangeProgressEnabled = false;
+		g_rangeProgressSpan.SetInt32(0);
+		return;
+	}
+	if (n_range_start.IsGreaterOrEqual(&n_range_end)) {
+		g_rangeProgressEnabled = false;
+		g_rangeProgressSpan.SetInt32(0);
+		return;
+	}
+	g_rangeProgressStart.Set(&n_range_start);
+	g_rangeProgressEnd.Set(&n_range_end);
+	g_rangeProgressSpan.Set(&n_range_end);
+	g_rangeProgressSpan.Sub(&n_range_start);
+	g_rangeProgressEnabled = !g_rangeProgressSpan.IsZero();
+}
+
+static void format_hex_position(Int &value, char *out, size_t outSize) {
+	if (outSize == 0) {
+		return;
+	}
+	char *hex = value.GetBase16();
+	if (hex == NULL) {
+		snprintf(out, outSize, "0x0");
+		return;
+	}
+	size_t hexLen = strlen(hex);
+	if (hexLen <= 12) {
+		snprintf(out, outSize, "0x%s", hex);
+	} else {
+		snprintf(out, outSize, "0x%.6s..%s", hex, hex + (hexLen > 6 ? hexLen - 6 : 0));
+	}
+	free(hex);
+}
+
+static bool snapshot_range_next_key(Int &out) {
+	if (!g_rangeProgressEnabled) {
+		return false;
+	}
+#if defined(_WIN64) && !defined(__CYGWIN__)
+	WaitForSingleObject(write_random, INFINITE);
+	out.Set(&n_range_start);
+	ReleaseMutex(write_random);
+	return true;
+#else
+	if (!FLAGRANDOM && g_workQueue.enabled()) {
+		if (g_workQueue.snapshot_next_start(out)) {
+			return true;
+		}
+	}
+	pthread_mutex_lock(&write_random);
+	out.Set(&n_range_start);
+	pthread_mutex_unlock(&write_random);
+	return true;
+#endif
+}
+
+static bool capture_progress_metrics(int &permille, char *position, size_t positionSize) {
+	if (!g_rangeProgressEnabled || positionSize == 0) {
+		return false;
+	}
+	Int nextKey;
+	if (!snapshot_range_next_key(nextKey)) {
+		return false;
+	}
+	if (nextKey.IsLower(&g_rangeProgressStart)) {
+		nextKey.Set(&g_rangeProgressStart);
+	}
+	Int consumed;
+	consumed.Set(&nextKey);
+	consumed.Sub(&g_rangeProgressStart);
+	if (consumed.IsNegative()) {
+		consumed.SetInt32(0);
+	}
+	if (consumed.IsGreater(&g_rangeProgressSpan)) {
+		consumed.Set(&g_rangeProgressSpan);
+		nextKey.Set(&g_rangeProgressEnd);
+	}
+	if (g_rangeProgressSpan.IsZero()) {
+		permille = 1000;
+	} else {
+		Int scaled;
+		scaled.Set(&consumed);
+		scaled.Mult(1000);
+		scaled.Div(&g_rangeProgressSpan);
+		permille = static_cast<int>(scaled.GetInt32());
+		if (permille > 1000) {
+			permille = 1000;
+		} else if (permille < 0) {
+			permille = 0;
+		}
+	}
+	format_hex_position(nextKey, position, positionSize);
+	return true;
+}
+
+static void append_progress_info(char *buffer, size_t bufferSize) {
+	if (!g_rangeProgressEnabled || bufferSize < 4) {
+		return;
+	}
+	int permille = 0;
+	char position[48];
+	if (!capture_progress_metrics(permille, position, sizeof(position))) {
+		return;
+	}
+	const int segments = 20;
+	int filled = (permille * segments) / 1000;
+	int remainder = (permille * segments) % 1000;
+	char bar[segments + 1];
+	for (int i = 0; i < segments; ++i) {
+		if (i < filled) {
+			bar[i] = '=';
+		} else if (i == filled && remainder > 0 && filled < segments) {
+			bar[i] = '>';
+		} else {
+			bar[i] = '.';
+		}
+	}
+	if (filled >= segments) {
+		bar[segments - 1] = '=';
+	}
+	bar[segments] = '\0';
+	int percent = permille / 10;
+	int tenths = permille % 10;
+	char addition[160];
+	snprintf(addition, sizeof(addition), " | [%s] %d.%d%% @ %s", bar, percent, tenths, position);
+	size_t len = strlen(buffer);
+	char tail = 0;
+	if (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
+		tail = buffer[len - 1];
+		buffer[len - 1] = '\0';
+		len--;
+	}
+	size_t remaining = (len < bufferSize) ? bufferSize - len : 0;
+	if (remaining > 1) {
+		strncat(buffer, addition, remaining - 1);
+		len = strlen(buffer);
+	}
+	if (tail != 0 && len + 1 < bufferSize) {
+		buffer[len] = tail;
+		buffer[len + 1] = '\0';
+	}
+}
 
 static bool acquire_base_key(Int &key) {
 #ifndef _WIN64
@@ -632,7 +788,7 @@ int main(int argc, char **argv)	{
 	
 	printf("[+] Version %s, developed by AlbertoBSD\n",version);
 
-	while ((c = getopt(argc, argv, "deh6MqRSB:b:c:C:E:f:I:k:l:m:N:n:p:r:s:t:v:G:8:z:")) != -1) {
+	while ((c = getopt(argc, argv, "deh6MqRSB:b:c:C:E:f:I:k:l:m:N:n:p:r:s:t:v:G:8:z:P")) != -1) {
 		switch(c) {
 			case 'h':
 				menu();
@@ -765,6 +921,10 @@ int main(int argc, char **argv)	{
 			case 'M':
 				FLAGMATRIX = 1;
 				printf("[+] Matrix screen\n");
+			break;
+			case 'P':
+				FLAGPROGRESSBAR = 1;
+				printf("[+] Segmented progress indicator enabled\n");
 			break;
 			case 'm':
 				switch(indexOf(optarg,modes,7)) {
@@ -1080,6 +1240,8 @@ int main(int argc, char **argv)	{
 			printf("[+] -- to   : 0x%s\n",hextemp);
 			free(hextemp);
 		}
+
+		initialize_range_progress_tracker();
 
 		switch(FLAGMODE)	{
 			case MODE_MINIKEYS:
@@ -2404,6 +2566,7 @@ int main(int argc, char **argv)	{
 					free(str_divpretotal);
 
 				}
+				append_progress_info(buffer, sizeof(buffer));
 				printf("%s",buffer);
 				fflush(stdout);
 				THREADOUTPUT = 0;			
@@ -6131,6 +6294,7 @@ void menu() {
 	printf("-l look     What type of address/hash160 are you looking for <compress, uncompress, both> Only for rmd160 and address\n");
 	printf("-m mode     mode of search for cryptos. (bsgs, xpoint, rmd160, address, vanity) default: address\n");
 	printf("-M          Matrix screen, feel like a h4x0r, but performance will dropped\n");
+	printf("-P          Enable segmented range progress indicator (non-random address/xpoint/rmd160/vanity)\n");
 	printf("-n number   Check for N sequential numbers before the random chosen, this only works with -R option\n");
 	printf("            Use -n to set the N for the BSGS process. Bigger N more RAM needed\n");
 	printf("-q          Quiet the thread output\n");
