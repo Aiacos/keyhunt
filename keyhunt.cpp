@@ -18,6 +18,7 @@ email: albertobsd@gmail.com
 #include "sha3/sha3.h"
 #include "util.h"
 #include "workqueue.h"
+#include "sysinfo.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -132,7 +133,11 @@ int minikey_n_limit;
 	
 const char *version = "0.2.230519 Satoshi Quest";
 
-#define CPU_GRP_SIZE 1024
+// Auto-tuned parameters (configured at startup based on system)
+uint32_t CPU_GRP_SIZE = 1024;  // Batch size (was #define, now auto-tuned)
+int OPTIMAL_THREADS = 0;       // Auto-detected optimal thread count
+uint64_t OPTIMAL_N = 0;        // Auto-detected optimal N value
+int OPTIMAL_KFACTOR = 0;       // Auto-detected optimal K factor
 
 std::vector<Point> Gn;
 Point _2Gn;
@@ -833,12 +838,26 @@ int main(int argc, char **argv)	{
 	
 	printf("[+] Version %s, developed by AlbertoBSD\n",version);
 
+	// Auto-detect system configuration and optimize parameters
+	system_info_t sysinfo;
+	sysinfo_init(&sysinfo);
+
 	// Detect AVX2 support for enhanced performance
 	g_avx2_available = ripemd160_avx2_available();
 	if (g_avx2_available) {
 		printf("[+] AVX2 detected: Using optimized 8-way parallel RIPEMD160\n");
 	} else {
 		printf("[I] AVX2 not available: Using SSE2 4-way parallel RIPEMD160\n");
+	}
+
+	// Store auto-tuned recommendations (don't apply yet - wait for user args)
+	OPTIMAL_THREADS = sysinfo.recommended_threads;
+	OPTIMAL_N = sysinfo.recommended_n;
+	OPTIMAL_KFACTOR = sysinfo.recommended_kfactor;
+	// Keep CPU_GRP_SIZE at 1024 (proven optimal value)
+	// Only show recommendations if user wants
+	if (argc == 1 || (argc == 2 && strcmp(argv[1], "-h") == 0)) {
+		sysinfo_print(&sysinfo);
 	}
 
 	while ((c = getopt(argc, argv, "deh6MqRSB:b:c:C:E:f:I:k:l:m:N:n:p:r:s:t:v:G:8:z:P")) != -1) {
@@ -1091,7 +1110,7 @@ int main(int argc, char **argv)	{
 				if(NTHREADS <= 0)	{
 					NTHREADS = 1;
 				}
-				printf((NTHREADS > 1) ? "[+] Threads : %u\n": "[+] Thread : %u\n",NTHREADS);
+				printf((NTHREADS > 1) ? "[+] Threads : %u (user-specified)\n": "[+] Thread : %u (user-specified)\n",NTHREADS);
 			break;
 			case 'v':
 				FLAGVANITY = 1;
@@ -1222,9 +1241,14 @@ int main(int argc, char **argv)	{
 		}
 	}
 	N = 0;
-	
+
 	if(FLAGMODE != MODE_BSGS )	{
-		if(FLAG_N){
+		// Apply auto-tuned N if user didn't specify -n
+		if(!FLAG_N && OPTIMAL_N > 0) {
+			N_SEQUENTIAL_MAX = OPTIMAL_N;
+			printf("[I] Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
+		}
+		else if(FLAG_N){
 			if(str_N[0] == '0' && str_N[1] == 'x')	{
 				N_SEQUENTIAL_MAX =strtol(str_N,NULL,16);
 			}
@@ -1242,6 +1266,10 @@ int main(int argc, char **argv)	{
 				FLAG_N = 0;
 				N_SEQUENTIAL_MAX = 0x100000000;
 			}
+		}
+		else {
+			// No user param and no auto-tuning: use default
+			N_SEQUENTIAL_MAX = 0x100000000;
 		}
 		printf("[+] N = %p\n",(void*)N_SEQUENTIAL_MAX);
 		if(FLAGMODE == MODE_MINIKEYS)	{
@@ -1409,11 +1437,15 @@ int main(int argc, char **argv)	{
 
 		BSGS_M.SetInt64(bsgs_m);
 
+		// Apply auto-tuning for BSGS mode if user didn't specify params
+		if(!FLAG_N && OPTIMAL_N > 0) {
+			BSGS_N.SetInt64(OPTIMAL_N);
+			printf("[I] Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
+		}
+		else if(FLAG_N)	{	//Custom N by the -n param
 
-		if(FLAG_N)	{	//Custom N by the -n param
-						
 			/* Here we need to validate if the given string is a valid hexadecimal number or a base 10 number*/
-			
+
 			/* Now the conversion*/
 			if(str_N[0] == '0' && str_N[1] == 'x' )	{	/*We expected a hexadecimal value after 0x  -> str_N +2 */
 				BSGS_N.SetBase16((char*)(str_N+2));
@@ -1421,10 +1453,16 @@ int main(int argc, char **argv)	{
 			else	{
 				BSGS_N.SetBase10(str_N);
 			}
-			
+
 		}
 		else	{	//Default N
 			BSGS_N.SetInt64((uint64_t)0x100000000000);
+		}
+
+		// Apply auto-tuned KFACTOR if user didn't specify -k
+		if(KFACTOR == 1 && OPTIMAL_KFACTOR > 0) {
+			KFACTOR = OPTIMAL_KFACTOR;
+			printf("[I] Using auto-tuned K factor: %d\n", OPTIMAL_KFACTOR);
 		}
 
 		if(BSGS_N.HasSqrt())	{	//If the root is exact
@@ -2388,6 +2426,14 @@ int main(int argc, char **argv)	{
 
 		i = 0;
 
+		// Apply auto-tuned thread count ONLY if user didn't specify -t
+		// Check if NTHREADS is still at default value (1)
+		if (NTHREADS == 1 && OPTIMAL_THREADS > 0) {
+			NTHREADS = OPTIMAL_THREADS;
+			printf("[I] Using auto-tuned thread count: %d (optimal for %d physical cores)\n",
+			       NTHREADS, sysinfo.cpu_physical_cores);
+		}
+
 		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
 		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
 		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));
@@ -2461,6 +2507,11 @@ int main(int argc, char **argv)	{
 		free(aux);
 	}
 	if(FLAGMODE != MODE_BSGS)	{
+		// Apply auto-tuned thread count ONLY if user didn't specify -t
+		if (NTHREADS == 1 && OPTIMAL_THREADS > 0) {
+			NTHREADS = OPTIMAL_THREADS;
+			printf("[I] Using auto-tuned thread count: %d\n", NTHREADS);
+		}
 		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
 		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
 		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));

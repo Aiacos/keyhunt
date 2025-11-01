@@ -24,7 +24,7 @@ SHA3_OBJS := sha3/sha3.o sha3/keccak.o
 SECP256K1_OBJS := secp256k1/Int.o secp256k1/Point.o secp256k1/SECP256K1.o secp256k1/IntMod.o secp256k1/Random.o secp256k1/IntGroup.o
 GMP256K1_OBJS := gmp256k1/Int.o gmp256k1/Point.o gmp256k1/GMP256K1.o gmp256k1/IntMod.o gmp256k1/Random.o gmp256k1/IntGroup.o
 
-COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS)
+COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS)
 
 KEYHUNT_OBJS := keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 BSGSD_OBJS := bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)

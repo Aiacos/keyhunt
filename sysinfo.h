@@ -34,6 +34,8 @@ typedef struct {
     int recommended_threads;
     uint32_t recommended_batch_size;
     uint32_t recommended_workload;
+    uint64_t recommended_n;        // Optimal N parameter for range coverage
+    int recommended_kfactor;       // Optimal K factor
 } system_info_t;
 
 // Initialize and detect system information
@@ -47,7 +49,9 @@ void sysinfo_get_optimal_params(
     const system_info_t *info,
     int *threads,
     uint32_t *batch_size,
-    uint32_t *workload_per_thread
+    uint32_t *workload_per_thread,
+    uint64_t *n_value,
+    int *kfactor
 );
 
 #ifdef __cplusplus
