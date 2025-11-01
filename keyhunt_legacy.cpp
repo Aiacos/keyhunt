@@ -10,12 +10,14 @@ email: albertobsd@gmail.com
 #include <math.h>
 #include <time.h>
 #include <vector>
+#include <algorithm>
 #include <inttypes.h>
 #include "base58/libbase58.h"
 #include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
 #include "util.h"
 #include "hashing.h"
+#include "workqueue.h"
 
 #include "gmp256k1/GMP256K1.h"
 #include "gmp256k1/Point.h"
@@ -58,6 +60,10 @@ email: albertobsd@gmail.com
 #define SEARCH_BOTH 2
 
 uint32_t  THREADBPWORKLOAD = 1048576;
+
+#ifndef _WIN64
+static WorkQueue<Int> g_workQueue;
+#endif
 
 struct checksumsha256	{
 	char data[32];
@@ -131,6 +137,12 @@ Point _2GSn;
 
 void menu();
 void init_generator();
+
+#ifndef _WIN64
+static void configure_work_queue(size_t threadCount);
+static void shutdown_work_queue();
+#endif
+static bool acquire_base_key(Int &key);
 
 int searchbinary(struct address_value *buffer,char *data,int64_t array_length);
 void sleep_ms(int milliseconds);
@@ -412,6 +424,136 @@ Int n_range_aux;
 Int lambda,lambda2,beta,beta2;
 
 Secp256K1 *secp;
+
+#ifndef _WIN64
+static void configure_work_queue(size_t threadCount) {
+	if (FLAGRANDOM) {
+		g_workQueue.shutdown();
+		return;
+	}
+	size_t prefetch = std::max<size_t>(threadCount * 2, static_cast<size_t>(32));
+	g_workQueue.configure(&n_range_start, &n_range_end, N_SEQUENTIAL_MAX, prefetch);
+	g_workQueue.start();
+}
+
+static void shutdown_work_queue() {
+	g_workQueue.shutdown();
+}
+#endif
+
+static bool acquire_base_key(Int &key) {
+#ifndef _WIN64
+	if (!FLAGRANDOM && g_workQueue.enabled()) {
+		return g_workQueue.pop(key);
+	}
+#endif
+	if(FLAGRANDOM)	{
+		key.Rand(&n_range_start,&n_range_end);
+		return true;
+	}
+#if defined(_WIN64) && !defined(__CYGWIN__)
+	WaitForSingleObject(write_random, INFINITE);
+	bool hasWork = n_range_start.IsLower(&n_range_end);
+	if(hasWork)	{
+		key.Set(&n_range_start);
+		n_range_start.Add(N_SEQUENTIAL_MAX);
+	}
+	ReleaseMutex(write_random);
+	return hasWork;
+#else
+	pthread_mutex_lock(&write_random);
+	bool hasWork = n_range_start.IsLower(&n_range_end);
+	if(hasWork)	{
+		key.Set(&n_range_start);
+		n_range_start.Add(N_SEQUENTIAL_MAX);
+	}
+	pthread_mutex_unlock(&write_random);
+	return hasWork;
+#endif
+}
+
+static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &count) {
+	const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
+	const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
+
+	if(!wantCompressed && !wantUncompressed) {
+		return;
+	}
+
+	alignas(32) char hashCompressed02[CPU_GRP_SIZE][20];
+	alignas(32) char hashCompressed03[CPU_GRP_SIZE][20];
+	alignas(32) char hashUncompressed[CPU_GRP_SIZE][20];
+
+	if (wantCompressed) {
+		for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+			secp->GetHash160_fromX(P2PKH, 0x02,
+				&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+				(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+				(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
+			secp->GetHash160_fromX(P2PKH, 0x03,
+				&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+				(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+				(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3]);
+		}
+	}
+
+	if (wantUncompressed) {
+		for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+			secp->GetHash160(P2PKH,false,
+				pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+				(uint8_t*)hashUncompressed[idx], (uint8_t*)hashUncompressed[idx + 1],
+				(uint8_t*)hashUncompressed[idx + 2], (uint8_t*)hashUncompressed[idx + 3]);
+		}
+	}
+
+	Int keyCurrent;
+	keyCurrent.Set(&key_mpz);
+	uint8_t verifyBuffer[20];
+	Point publickey;
+
+	for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
+		if (wantCompressed) {
+			if (bloom_check(&bloom, hashCompressed02[idx], MAXLENGTHADDRESS)) {
+				if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+					Int candidate(keyCurrent);
+					publickey = secp->ComputePublicKey(&candidate);
+					secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
+					if(memcmp(hashCompressed02[idx], verifyBuffer, 20) != 0) {
+						candidate.Neg();
+						candidate.Add(&secp->order);
+					}
+					writekey(true,&candidate);
+				}
+			}
+			if (bloom_check(&bloom, hashCompressed03[idx], MAXLENGTHADDRESS)) {
+				if (searchbinary(addressTable, hashCompressed03[idx], N)) {
+					Int candidate(keyCurrent);
+					publickey = secp->ComputePublicKey(&candidate);
+					secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
+					if(memcmp(hashCompressed03[idx], verifyBuffer, 20) != 0) {
+						candidate.Neg();
+						candidate.Add(&secp->order);
+					}
+					writekey(true,&candidate);
+				}
+			}
+		}
+
+		if (wantUncompressed) {
+			if (bloom_check(&bloom, hashUncompressed[idx], MAXLENGTHADDRESS)) {
+				if (searchbinary(addressTable, hashUncompressed[idx], N)) {
+					Int candidate(keyCurrent);
+					writekey(false,&candidate);
+				}
+			}
+		}
+
+		keyCurrent.Add(&stride);
+	}
+
+	key_mpz.Set(&keyCurrent);
+	count += CPU_GRP_SIZE;
+}
 
 int main(int argc, char **argv)	{
 	char buffer[2048];
@@ -2109,6 +2251,14 @@ int main(int argc, char **argv)	{
 		tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
 #endif
 		checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
+#ifndef _WIN64
+		if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
+			configure_work_queue(NTHREADS);
+		}
+		else {
+			shutdown_work_queue();
+		}
+#endif
 		//if(FLAGDEBUG) { printf("[D] File: %s Line %i\n",__FILE__,__LINE__); fflush(stdout); }
 		for(i= 0;i < NTHREADS; i++)	{
 			tt = (tothread*) malloc(sizeof(struct tothread));
@@ -2270,6 +2420,9 @@ int main(int argc, char **argv)	{
 		}
 	}while(continue_flag);
 	printf("\nEnd\n");
+#ifndef _WIN64
+	shutdown_work_queue();
+#endif
 #ifdef _WIN64
 	CloseHandle(write_keys);
 	CloseHandle(write_random);
@@ -2568,26 +2721,8 @@ void *thread_process(void *vargp)	{
 	grp->Set(dx);
 
 	do {
-		if(FLAGRANDOM){
-			key_mpz.Rand(&n_range_start,&n_range_end);
-		}
-		else	{
-			if(n_range_start.IsLower(&n_range_end))	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-				WaitForSingleObject(write_random, INFINITE);
-				key_mpz.Set(&n_range_start);
-				n_range_start.Add(N_SEQUENTIAL_MAX);
-				ReleaseMutex(write_random);
-#else
-				pthread_mutex_lock(&write_random);
-				key_mpz.Set(&n_range_start);
-				n_range_start.Add(N_SEQUENTIAL_MAX);
-				pthread_mutex_unlock(&write_random);
-#endif
-			}
-			else	{
-				continue_flag = 0;
-			}
+		if(!acquire_base_key(key_mpz))	{
+			continue_flag = 0;
 		}
 		if(continue_flag)	{
 			count = 0;
@@ -2734,6 +2869,10 @@ void *thread_process(void *vargp)	{
 				}
 				
 				
+				if(FLAGMODE == MODE_RMD160 && FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM) {
+					process_rmd160_batch_btc_simple(key_mpz, pts, count);
+				}
+				else {
 				for(j = 0; j < CPU_GRP_SIZE/4;j++){
 					switch(FLAGMODE)	{
 						case MODE_RMD160:
@@ -3089,6 +3228,7 @@ void *thread_process(void *vargp)	{
 					temp_stride.Mult(&stride);
 					key_mpz.Add(&temp_stride);
 				}
+				}
 
 				steps[thread_number]++;
 
@@ -3172,26 +3312,8 @@ void *thread_process_vanity(void *vargp)	{
 	
 
 	do {
-		if(FLAGRANDOM){
-			key_mpz.Rand(&n_range_start,&n_range_end);
-		}
-		else	{
-			if(n_range_start.IsLower(&n_range_end))	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-				WaitForSingleObject(write_random, INFINITE);
-				key_mpz.Set(&n_range_start);
-				n_range_start.Add(N_SEQUENTIAL_MAX);
-				ReleaseMutex(write_random);
-#else
-				pthread_mutex_lock(&write_random);
-				key_mpz.Set(&n_range_start);
-				n_range_start.Add(N_SEQUENTIAL_MAX);
-				pthread_mutex_unlock(&write_random);
-#endif
-			}
-			else	{
-				continue_flag = 0;
-			}
+		if(!acquire_base_key(key_mpz))	{
+			continue_flag = 0;
 		}
 		if(continue_flag)	{
 			count = 0;
