@@ -1727,8 +1727,8 @@ int main(int argc, char **argv)	{
 
 		g = secp->DoubleDirect(g);
 		GSn[1] = g;
-		
-		for(int i = 2; i < CPU_GRP_SIZE / 2; i++) {
+
+		for(size_t i = 2; i < CPU_GRP_SIZE / 2; i++) {
 			g = secp->AddDirect(g,bsP);
 			GSn[i] = g;
 		}
@@ -4344,7 +4344,7 @@ pn.y.ModMulK1(&_s);
 pn.y.ModAdd(&GSn[i].y);
 #endif
 					pts[0] = pn;
-					for(int i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
 						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
 						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
 						if(r) {
@@ -4587,8 +4587,8 @@ pn.y.ModAdd(&GSn[i].y);
 #endif
 
 					pts[0] = pn;
-					
-					for(int i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
 						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
 						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
 						if(r) {
@@ -4789,7 +4789,7 @@ void init_generator()	{
 	Gn[0] = g;
 	g = secp->DoubleDirect(g);
 	Gn[1] = g;
-	for(int i = 2; i < CPU_GRP_SIZE / 2; i++) {
+	for(size_t i = 2; i < CPU_GRP_SIZE / 2; i++) {
 		g = secp->AddDirect(g,G);
 		Gn[i] = g;
 	}
@@ -5388,8 +5388,8 @@ pn.y.ModAdd(&GSn[i].y);
 #endif
 
 					pts[0] = pn;
-					
-					for(int i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
 						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
 						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
 						if(r) {
@@ -5642,8 +5642,8 @@ pn.y.ModAdd(&GSn[i].y);
 #endif
 
 					pts[0] = pn;
-					
-					for(int i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
 						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
 						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
 						if(r) {
@@ -5922,8 +5922,8 @@ void *thread_process_bsgs_both(void *vargp)	{
 #endif
 
 						pts[0] = pn;
-						
-						for(int i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+
+						for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
 							pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
 							r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
 							if(r) {

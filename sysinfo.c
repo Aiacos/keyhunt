@@ -130,13 +130,7 @@ static void detect_cache_sizes(system_info_t *info) {
     info->cache_l3_size = 0;
 
 #ifdef __linux__
-    // Try reading from sysfs
-    long l1d = read_long_from_file("/sys/devices/system/cpu/cpu0/cache/index0/size");
-    long l1i = read_long_from_file("/sys/devices/system/cpu/cpu0/cache/index1/size");
-    long l2 = read_long_from_file("/sys/devices/system/cpu/cpu0/cache/index2/size");
-    long l3 = read_long_from_file("/sys/devices/system/cpu/cpu0/cache/index3/size");
-
-    // Parse size strings (they might have K suffix)
+    // Parse size strings from sysfs (they might have K suffix)
     char buf[64];
     if (read_string_from_file("/sys/devices/system/cpu/cpu0/cache/index0/size", buf, sizeof(buf))) {
         info->cache_l1_size = atol(buf);
@@ -293,40 +287,60 @@ static void calculate_optimal_params(system_info_t *info) {
     }
     info->recommended_workload = pow2;
 
-    // Calculate optimal N and KFACTOR
+    // Calculate optimal N and KFACTOR for BSGS mode
     // N must be a perfect square, and M = sqrt(N) must be divisible by 1024
-    // Larger N means bigger jumps in range coverage
-    // Formula: M must be multiple of 1024, so M = 1024 * k for some k
-    // Therefore N = M^2 = (1024 * k)^2
+    // BSGS memory formula:
+    //   M = sqrt(N)
+    //   bloom1_MB = (M * K) * 3.5 / 1024
+    //   bloom2_MB = bloom1_MB / 32
+    //   bloom3_MB = bloom1_MB / 1024
+    //   bP_table_MB = (M / 32 * K) * 16 / (1024 * 1024)
+    //   total_MB ≈ bloom1_MB * 1.035 + bP_table_MB
 
-    // Based on available RAM and thread count, choose appropriate N
-    // More RAM and more threads → can handle larger N
-    uint64_t ram_gb = usable_ram_mb / 1024;
+    // Use 80% of usable RAM for BSGS (usable_ram is already 75% of available)
+    // This gives ~60% of total available RAM for BSGS
+    uint64_t target_ram_mb = (usable_ram_mb * 8) / 10;
 
-    // KFACTOR multiplies M to increase jump size
-    // Higher KFACTOR = larger jumps but might miss keys in sequential search
-    // For random search, larger is better for coverage
+    // Try different N values and pick the largest that fits in RAM
+    // Candidates: 0x400000000000, 0x100000000000, 0x40000000000, 0x10000000000
 
-    if (ram_gb >= 16) {
-        // High RAM systems: use large N for maximum coverage
-        // N = 0x400000000000 (M = 2097152 = 2048 * 1024)
-        info->recommended_n = 0x400000000000ULL;
-        info->recommended_kfactor = 4096;
-    } else if (ram_gb >= 8) {
-        // Medium RAM systems: moderate N
-        // N = 0x100000000000 (M = 1048576 = 1024 * 1024)
-        info->recommended_n = 0x100000000000ULL;
-        info->recommended_kfactor = 2048;
-    } else if (ram_gb >= 4) {
-        // Low RAM systems: smaller N
-        // N = 0x40000000000 (M = 524288 = 512 * 1024)
-        info->recommended_n = 0x40000000000ULL;
-        info->recommended_kfactor = 1024;
-    } else {
-        // Very low RAM: minimal N
-        // N = 0x10000000000 (M = 262144 = 256 * 1024)
-        info->recommended_n = 0x10000000000ULL;
-        info->recommended_kfactor = 512;
+    struct {
+        uint64_t n;
+        uint64_t m;  // sqrt(N)
+        int kfactor;
+        uint64_t ram_mb;
+    } candidates[] = {
+        {0x400000000000ULL, 8388608, 4096, 0},  // M*K=34B → ~118 GB
+        {0x100000000000ULL, 4194304, 4096, 0},  // M*K=17B → ~60 GB
+        {0x40000000000ULL,  2097152, 2048, 0},  // M*K=4.3B → ~15 GB
+        {0x10000000000ULL,  1048576, 2048, 0},  // M*K=2.1B → ~7.5 GB
+        {0x10000000000ULL,  1048576, 1024, 0},  // M*K=1B → ~3.7 GB
+    };
+
+    // Calculate RAM for each candidate
+    for (int i = 0; i < 5; i++) {
+        uint64_t m = candidates[i].m;
+        int k = candidates[i].kfactor;
+        // bloom1 size in MB (3.5 bytes per element)
+        uint64_t bloom1_mb = (m * k * 35) / (10 * 1024 * 1024);
+        // Total: bloom1 + bloom2 (1/32) + bloom3 (1/1024) + bP_table
+        uint64_t total_mb = (bloom1_mb * 1035) / 1000 + (m * k * 16) / (32 * 1024 * 1024);
+        candidates[i].ram_mb = total_mb;
+    }
+
+    // Pick the largest N that fits in target RAM
+    // Start from smallest (safe default) and upgrade if larger fits
+    info->recommended_n = 0x10000000000ULL;  // Safe default
+    info->recommended_kfactor = 1024;
+
+    // Check from largest to smallest, pick first that fits
+    for (int i = 0; i < 5; i++) {
+        if (candidates[i].ram_mb <= target_ram_mb) {
+            // This one fits, it's the largest because we check in order
+            info->recommended_n = candidates[i].n;
+            info->recommended_kfactor = candidates[i].kfactor;
+            break;
+        }
     }
 }
 
