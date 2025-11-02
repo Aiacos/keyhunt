@@ -347,6 +347,9 @@ char *str_stride;
 Int stride;
 
 uint64_t BSGS_XVALUE_RAM = 6;
+
+// Global system information (for memory checks across all modes)
+system_info_t g_sysinfo;
 uint64_t BSGS_BUFFERXPOINTLENGTH = 32;
 uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
 
@@ -838,31 +841,31 @@ int main(int argc, char **argv)	{
 	printf("[+] Version %s, developed by AlbertoBSD\n",version);
 
 	// Auto-detect system configuration and optimize parameters
-	system_info_t sysinfo;
+	// (sysinfo is now a global variable for memory checks)
 
 	// Check if user wants to skip system detection (useful for problematic systems)
 	if (getenv("KEYHUNT_SKIP_SYSINFO")) {
 		fprintf(stderr,"[W] Skipping system detection (KEYHUNT_SKIP_SYSINFO set)\n");
 		fprintf(stderr,"[I] Using safe default parameters\n");
-		memset(&sysinfo, 0, sizeof(sysinfo));
+		memset(&g_sysinfo, 0, sizeof(g_sysinfo));
 		// Safe defaults
-		sysinfo.cpu_physical_cores = 4;
-		sysinfo.cpu_logical_cores = 8;
-		sysinfo.cache_l1_size = 32;
-		sysinfo.cache_l2_size = 256;
-		sysinfo.cache_l3_size = 8192;
-		sysinfo.ram_total = 8192;
-		sysinfo.ram_available = 4096;
-		sysinfo.has_avx2 = false;
-		sysinfo.has_avx512 = false;
-		sysinfo.has_sha_ni = false;
-		sysinfo.recommended_threads = 8;
-		sysinfo.recommended_batch_size = 1024;
-		sysinfo.recommended_workload = 8192;
-		sysinfo.recommended_n = 0x10000000000ULL;
-		sysinfo.recommended_kfactor = 1024;
+		g_sysinfo.cpu_physical_cores = 4;
+		g_sysinfo.cpu_logical_cores = 8;
+		g_sysinfo.cache_l1_size = 32;
+		g_sysinfo.cache_l2_size = 256;
+		g_sysinfo.cache_l3_size = 8192;
+		g_sysinfo.ram_total = 8192;
+		g_sysinfo.ram_available = 4096;
+		g_sysinfo.has_avx2 = false;
+		g_sysinfo.has_avx512 = false;
+		g_sysinfo.has_sha_ni = false;
+		g_sysinfo.recommended_threads = 8;
+		g_sysinfo.recommended_batch_size = 1024;
+		g_sysinfo.recommended_workload = 8192;
+		g_sysinfo.recommended_n = 0x10000000000ULL;
+		g_sysinfo.recommended_kfactor = 1024;
 	} else {
-		sysinfo_init(&sysinfo);
+		sysinfo_init(&g_sysinfo);
 	}
 
 	// Detect AVX2 support for enhanced performance
@@ -874,13 +877,13 @@ int main(int argc, char **argv)	{
 	}
 
 	// Store auto-tuned recommendations (don't apply yet - wait for user args)
-	OPTIMAL_THREADS = sysinfo.recommended_threads;
-	OPTIMAL_N = sysinfo.recommended_n;
-	OPTIMAL_KFACTOR = sysinfo.recommended_kfactor;
+	OPTIMAL_THREADS = g_sysinfo.recommended_threads;
+	OPTIMAL_N = g_sysinfo.recommended_n;
+	OPTIMAL_KFACTOR = g_sysinfo.recommended_kfactor;
 	// Keep CPU_GRP_SIZE at 1024 (proven optimal value)
 	// Only show recommendations if user wants
 	if (argc == 1 || (argc == 2 && strcmp(argv[1], "-h") == 0)) {
-		sysinfo_print(&sysinfo);
+		sysinfo_print(&g_sysinfo);
 	}
 
 	while ((c = getopt(argc, argv, "deh6MqRSB:b:c:C:E:f:I:k:l:m:N:n:p:r:s:t:v:G:8:z:P")) != -1) {
@@ -1653,7 +1656,7 @@ int main(int argc, char **argv)	{
 			uint64_t bp_table_bytes = bsgs_m2 * 16;  // sizeof(Point) ≈ 16 bytes per element
 
 			uint64_t total_required_mb = (bloom1_bytes + bloom2_bytes + bloom3_bytes + bp_table_bytes) / (1024 * 1024);
-			uint64_t available_ram_mb = sysinfo.ram_available;
+			uint64_t available_ram_mb = g_sysinfo.ram_available;
 
 			// Safety margin: require 80% available RAM
 			uint64_t safe_limit_mb = (available_ram_mb * 80) / 100;
@@ -2558,7 +2561,7 @@ int main(int argc, char **argv)	{
 		if (NTHREADS == 1 && OPTIMAL_THREADS > 0) {
 			NTHREADS = OPTIMAL_THREADS;
 			printf("[I] Using auto-tuned thread count: %d (optimal for %d physical cores)\n",
-			       NTHREADS, sysinfo.cpu_physical_cores);
+			       NTHREADS, g_sysinfo.cpu_physical_cores);
 		}
 
 		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
@@ -7086,6 +7089,58 @@ bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
 		}
 	}
 	printf("[+] Loading data to the bloomfilter total: %.2f MB\n",(double)(((double) bloom_arg->bytes)/(double)1048576));
+
+	// Memory check: verify bloom filter fits in available RAM
+	if(r) {
+		uint64_t bloom_mb = bloom_arg->bytes / (1024 * 1024);
+		uint64_t available_ram_mb = g_sysinfo.ram_available;
+		uint64_t safe_limit_mb = (available_ram_mb * 80) / 100; // 80% safety margin
+
+		if(bloom_mb > safe_limit_mb) {
+			fprintf(stderr,"\n");
+			fprintf(stderr,"[W] ========================================================\n");
+			fprintf(stderr,"[W] INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
+			fprintf(stderr,"[W] ========================================================\n");
+			fprintf(stderr,"[W] Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb/1024);
+			fprintf(stderr,"[W] Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
+			fprintf(stderr,"[W] Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
+			fprintf(stderr,"[W]\n");
+			fprintf(stderr,"[W] Current settings:\n");
+			fprintf(stderr,"[W]   Items:      %" PRIu64 "\n", items_bloom);
+			fprintf(stderr,"[W]   Multiplier: %d (-z parameter)\n", FLAGBLOOMMULTIPLIER);
+			fprintf(stderr,"[W]   Total bloom elements: %" PRIu64 "\n", FLAGBLOOMMULTIPLIER*items_bloom);
+			fprintf(stderr,"[W]\n");
+			fprintf(stderr,"[W] SUGGESTIONS:\n");
+			fprintf(stderr,"[W] --------------------------------------------------------\n");
+
+			// Calculate optimal multiplier that fits
+			int suggested_multiplier = (int)(safe_limit_mb * 1024 * 1024 / items_bloom / 3.59);
+			if(suggested_multiplier < 1) suggested_multiplier = 1;
+
+			fprintf(stderr,"[W] Try reducing -z parameter to: %d\n", suggested_multiplier);
+			fprintf(stderr,"[W]   Command: add -z %d to your command line\n", suggested_multiplier);
+			fprintf(stderr,"[W]   This will use ~%" PRIu64 " MB\n",
+				(uint64_t)(items_bloom * suggested_multiplier * 3.59 / 1024 / 1024));
+			fprintf(stderr,"[W]\n");
+			fprintf(stderr,"[W] Or reduce the number of items in your input file\n");
+			fprintf(stderr,"[W] ========================================================\n\n");
+
+			// Free the bloom filter we just allocated
+			if(bloom_arg->bf != NULL) {
+				free(bloom_arg->bf);
+				bloom_arg->bf = NULL;
+			}
+
+			r = false;
+		}
+		else {
+			// Show memory usage info
+			double percent_used = (double)bloom_mb * 100.0 / (double)available_ram_mb;
+			fprintf(stderr,"[I] Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
+				bloom_mb, available_ram_mb, percent_used);
+		}
+	}
+
 	return r;
 }
 
