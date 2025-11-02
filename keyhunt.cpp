@@ -473,7 +473,7 @@ static void initialize_range_progress_tracker() {
 		g_rangeProgressSpan.SetInt32(0);
 		return;
 	}
-	if (FLAGMODE == MODE_BSGS || FLAGRANDOM) {
+	if (FLAGMODE == MODE_BSGS) {
 		g_rangeProgressEnabled = false;
 		g_rangeProgressSpan.SetInt32(0);
 		return;
@@ -534,38 +534,101 @@ static bool capture_progress_metrics(int &permille, char *position, size_t posit
 	if (!g_rangeProgressEnabled || positionSize == 0) {
 		return false;
 	}
-	Int nextKey;
-	if (!snapshot_range_next_key(nextKey)) {
-		return false;
-	}
-	if (nextKey.IsLower(&g_rangeProgressStart)) {
-		nextKey.Set(&g_rangeProgressStart);
-	}
+
 	Int consumed;
-	consumed.Set(&nextKey);
-	consumed.Sub(&g_rangeProgressStart);
-	if (consumed.IsNegative()) {
-		consumed.SetInt32(0);
-	}
-	if (consumed.IsGreater(&g_rangeProgressSpan)) {
-		consumed.Set(&g_rangeProgressSpan);
-		nextKey.Set(&g_rangeProgressEnd);
-	}
-	if (g_rangeProgressSpan.IsZero()) {
-		permille = 1000;
-	} else {
-		Int scaled;
-		scaled.Set(&consumed);
-		scaled.Mult(1000);
-		scaled.Div(&g_rangeProgressSpan);
-		permille = static_cast<int>(scaled.GetInt32());
-		if (permille > 1000) {
-			permille = 1000;
-		} else if (permille < 0) {
-			permille = 0;
+	Int nextKey;
+
+	if (FLAGRANDOM) {
+		// In random mode, calculate progress based on total keys checked vs range size
+		// Total keys checked = sum of all thread steps * DEBUGCOUNT * multipliers
+		Int total_checked;
+		total_checked.SetInt32(0);
+
+		if (steps != NULL) {
+			Int thread_total;
+			for (int j = 0; j < NTHREADS; j++) {
+				thread_total.SetInt32(1);
+				thread_total.Mult(&BSGS_N);  // BSGS_N is used as DEBUGCOUNT in non-BSGS modes
+				thread_total.Mult(steps[j].value);
+				total_checked.Add(&thread_total);
+			}
+
+			// Apply multipliers for endomorphism and search type
+			if (FLAGENDOMORPHISM) {
+				if (FLAGMODE == MODE_XPOINT) {
+					total_checked.Mult(3);
+				} else {
+					total_checked.Mult(6);
+				}
+			} else {
+				if (FLAGSEARCH == SEARCH_COMPRESS) {
+					total_checked.Mult(2);
+				}
+			}
 		}
+
+		consumed.Set(&total_checked);
+
+		// For random mode, show a rough percentage based on keys checked vs range
+		// This is an estimate since random sampling may revisit keys
+		if (g_rangeProgressSpan.IsZero()) {
+			permille = 0;
+		} else {
+			Int scaled;
+			scaled.Set(&consumed);
+			scaled.Mult(1000);
+			scaled.Div(&g_rangeProgressSpan);
+			permille = static_cast<int>(scaled.GetInt32());
+			if (permille > 1000) {
+				permille = 1000;
+			} else if (permille < 0) {
+				permille = 0;
+			}
+		}
+
+		// Format the consumed count as position for random mode
+		char *hex_consumed = consumed.GetBase16();
+		if (hex_consumed != NULL) {
+			snprintf(position, positionSize, "~%s checked", hex_consumed);
+			free(hex_consumed);
+		} else {
+			snprintf(position, positionSize, "random");
+		}
+
+	} else {
+		// Sequential mode: use next key position
+		if (!snapshot_range_next_key(nextKey)) {
+			return false;
+		}
+		if (nextKey.IsLower(&g_rangeProgressStart)) {
+			nextKey.Set(&g_rangeProgressStart);
+		}
+		consumed.Set(&nextKey);
+		consumed.Sub(&g_rangeProgressStart);
+		if (consumed.IsNegative()) {
+			consumed.SetInt32(0);
+		}
+		if (consumed.IsGreater(&g_rangeProgressSpan)) {
+			consumed.Set(&g_rangeProgressSpan);
+			nextKey.Set(&g_rangeProgressEnd);
+		}
+		if (g_rangeProgressSpan.IsZero()) {
+			permille = 1000;
+		} else {
+			Int scaled;
+			scaled.Set(&consumed);
+			scaled.Mult(1000);
+			scaled.Div(&g_rangeProgressSpan);
+			permille = static_cast<int>(scaled.GetInt32());
+			if (permille > 1000) {
+				permille = 1000;
+			} else if (permille < 0) {
+				permille = 0;
+			}
+		}
+		format_hex_position(nextKey, position, positionSize);
 	}
-	format_hex_position(nextKey, position, positionSize);
+
 	return true;
 }
 
