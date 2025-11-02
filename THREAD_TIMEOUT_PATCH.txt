@@ -1,0 +1,66 @@
+# Thread Timeout Patch
+# Apply this patch manually to keyhunt.cpp around line 2116-2139
+
+## Location 1: Thread waiting loop for bPload_2blooms (line ~2116)
+
+BEFORE the loop `for(j = 0 ; j < NTHREADS ; j++)`, ADD:
+
+```cpp
+// Add timeout to prevent infinite waiting
+static int wait_cycles = 0;
+const int MAX_WAIT_CYCLES = 30000; // ~30 seconds with 1ms sleep
+```
+
+INSIDE the loop, AFTER `FINISHED_THREADS_COUNTER++`, ADD:
+
+```cpp
+wait_cycles = 0; // Reset timeout on progress
+```
+
+AFTER the loop `for(j = 0 ; j < NTHREADS ; j++)`, BEFORE `}while(...)`, ADD:
+
+```cpp
+// Check for timeout
+if(++wait_cycles > MAX_WAIT_CYCLES) {
+    fprintf(stderr,"\n[E] Thread timeout: No progress in 30 seconds\n");
+    fprintf(stderr,"[E] Completed %lu/%lu threads, try reducing thread count\n",
+            FINISHED_THREADS_COUNTER, THREADCYCLES);
+    break;
+}
+
+usleep(1000); // 1ms sleep to prevent CPU spinning
+```
+
+## Location 2: Similar loop around line 2220 (thread_bPload)
+
+Apply the same pattern:
+1. Declare wait_cycles and MAX_WAIT_CYCLES before the loop
+2. Reset wait_cycles on progress
+3. Check timeout and break if exceeded
+4. Add usleep(1000) before the while condition
+
+## Location 3: Main processing loop around line 2610
+
+BEFORE `}while(salir == 0);`, ADD:
+
+```cpp
+usleep(10000); // 10ms sleep to prevent CPU spinning in main loop
+```
+
+## How to apply:
+
+1. Search for pattern: `}while(FINISHED_THREADS_COUNTER < THREADCYCLES);`
+2. There are 2 occurrences, apply the patch to both
+3. Search for main processing: `}while(salir == 0);`
+4. Add sleep before this condition
+
+---
+
+Alternative: Use this sed script to apply automatically:
+
+```bash
+# Backup first
+cp keyhunt.cpp keyhunt.cpp.backup
+
+# This is complex, better to apply manually by editing the file
+```

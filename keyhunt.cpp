@@ -825,11 +825,10 @@ int main(int argc, char **argv)	{
 	}
 	else	{
 		/*
-			what year is??
-			WTF linux without RNG ? 
-		*/
-		fprintf(stderr,"[E] Error getrandom() ?\n");
-		exit(EXIT_FAILURE);
+		 * Fallback: Use time-based seed if getrandom() fails
+		 * This can happen in containers, restricted environments, or systems with low entropy
+		 */
+		fprintf(stderr,"[W] Warning: getrandom() failed (bytes_read=%d), using fallback RNG\n", bytes_read);
 		rseed(clock() + time(NULL) + rand()*rand());
 	}
 #endif
@@ -840,7 +839,31 @@ int main(int argc, char **argv)	{
 
 	// Auto-detect system configuration and optimize parameters
 	system_info_t sysinfo;
-	sysinfo_init(&sysinfo);
+
+	// Check if user wants to skip system detection (useful for problematic systems)
+	if (getenv("KEYHUNT_SKIP_SYSINFO")) {
+		fprintf(stderr,"[W] Skipping system detection (KEYHUNT_SKIP_SYSINFO set)\n");
+		fprintf(stderr,"[I] Using safe default parameters\n");
+		memset(&sysinfo, 0, sizeof(sysinfo));
+		// Safe defaults
+		sysinfo.cpu_physical_cores = 4;
+		sysinfo.cpu_logical_cores = 8;
+		sysinfo.cache_l1_size = 32;
+		sysinfo.cache_l2_size = 256;
+		sysinfo.cache_l3_size = 8192;
+		sysinfo.ram_total = 8192;
+		sysinfo.ram_available = 4096;
+		sysinfo.has_avx2 = false;
+		sysinfo.has_avx512 = false;
+		sysinfo.has_sha_ni = false;
+		sysinfo.recommended_threads = 8;
+		sysinfo.recommended_batch_size = 1024;
+		sysinfo.recommended_workload = 8192;
+		sysinfo.recommended_n = 0x10000000000ULL;
+		sysinfo.recommended_kfactor = 1024;
+	} else {
+		sysinfo_init(&sysinfo);
+	}
 
 	// Detect AVX2 support for enhanced performance
 	g_avx2_available = ripemd160_avx2_available();
@@ -1465,6 +1488,9 @@ int main(int argc, char **argv)	{
 			printf("[I] Using auto-tuned K factor: %d\n", OPTIMAL_KFACTOR);
 		}
 
+	bsgs_recalculate_with_new_params:
+		// Label for auto-adjustment: recalculate all BSGS parameters
+
 		if(BSGS_N.HasSqrt())	{	//If the root is exact
 			BSGS_M.Set(&BSGS_N);
 			BSGS_M.ModSqrt();
@@ -1610,7 +1636,108 @@ int main(int argc, char **argv)	{
 		else	{
 			itemsbloom3 = 1000;
 		}
-		
+
+		// ==================================================================
+		// BSGS Memory Check: Validate parameters against available RAM
+		// ==================================================================
+		{
+			// Calculate required memory for BSGS
+			// bloom1: bsgs_m * 3.5 bytes per element
+			// bloom2: bsgs_m2 * 3.5 bytes (1/32 of bloom1)
+			// bloom3: bsgs_m3 * 3.5 bytes (1/1024 of bloom1)
+			// bP_table: (bsgs_m2 * 16) bytes for Point structures
+
+			uint64_t bloom1_bytes = (uint64_t)((double)bsgs_m * 3.5);
+			uint64_t bloom2_bytes = (uint64_t)((double)bsgs_m2 * 3.5);
+			uint64_t bloom3_bytes = (uint64_t)((double)bsgs_m3 * 3.5);
+			uint64_t bp_table_bytes = bsgs_m2 * 16;  // sizeof(Point) ≈ 16 bytes per element
+
+			uint64_t total_required_mb = (bloom1_bytes + bloom2_bytes + bloom3_bytes + bp_table_bytes) / (1024 * 1024);
+			uint64_t available_ram_mb = sysinfo.ram_available;
+
+			// Safety margin: require 80% available RAM
+			uint64_t safe_limit_mb = (available_ram_mb * 80) / 100;
+
+			if(total_required_mb > safe_limit_mb) {
+				fprintf(stderr,"\n");
+				fprintf(stderr,"[W] ========================================================\n");
+				fprintf(stderr,"[W] INSUFFICIENT MEMORY FOR BSGS PARAMETERS\n");
+				fprintf(stderr,"[W] ========================================================\n");
+				fprintf(stderr,"[W] Required RAM:  %" PRIu64 " MB (~%.1f GB)\n", total_required_mb, (double)total_required_mb/1024);
+				fprintf(stderr,"[W] Available RAM: %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
+				fprintf(stderr,"[W] Safe limit:    %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
+				fprintf(stderr,"[W]\n");
+				fprintf(stderr,"[W] Current parameters:\n");
+				fprintf(stderr,"[W]   N = 0x%" PRIx64 "\n", BSGS_N.GetInt64());
+				fprintf(stderr,"[W]   K = %i\n", KFACTOR);
+				fprintf(stderr,"[W]   M = %" PRIu64 " (sqrt(N))\n", bsgs_m/KFACTOR);
+				fprintf(stderr,"[W]   M * K = %" PRIu64 " elements\n", bsgs_m);
+				fprintf(stderr,"[W]\n");
+				fprintf(stderr,"[W] AUTO-ADJUSTING PARAMETERS...\n");
+				fprintf(stderr,"[W] --------------------------------------------------------\n");
+
+				// Find optimal N values that would fit
+				struct {
+					uint64_t n;
+					int k;
+				} suggestions[] = {
+					{0x40000000000ULL, 2048},   // ~15 GB
+					{0x10000000000ULL, 2048},   // ~7.5 GB
+					{0x10000000000ULL, 1024},   // ~3.7 GB
+					{0x4000000000ULL, 1024},    // ~1.8 GB
+				};
+
+				uint64_t new_n = 0;
+				int new_k = 0;
+
+				for(int i = 0; i < 4; i++) {
+					uint64_t test_m = (uint64_t)sqrt((double)suggestions[i].n);
+					uint64_t test_mk = test_m * suggestions[i].k;
+					uint64_t test_bloom1 = (uint64_t)((double)test_mk * 3.5);
+					uint64_t test_bloom2 = test_bloom1 / 32;
+					uint64_t test_bloom3 = test_bloom1 / 1024;
+					uint64_t test_bp = (test_mk / 32) * 16;
+					uint64_t test_total_mb = (test_bloom1 + test_bloom2 + test_bloom3 + test_bp) / (1024 * 1024);
+
+					if(test_total_mb <= safe_limit_mb) {
+						new_n = suggestions[i].n;
+						new_k = suggestions[i].k;
+						fprintf(stderr,"[I] Auto-adjusted to: N = 0x%" PRIx64 ", K = %d\n", new_n, new_k);
+						fprintf(stderr,"[I] New RAM requirement: %" PRIu64 " MB (~%.1f GB)\n",
+							test_total_mb, (double)test_total_mb/1024);
+						break;
+					}
+				}
+
+				if(new_n == 0) {
+					// Even smallest config doesn't fit
+					fprintf(stderr,"[E] ERROR: Insufficient RAM even for minimum configuration\n");
+					fprintf(stderr,"[E] Minimum requires: ~1.8 GB, Available: %" PRIu64 " MB\n", available_ram_mb);
+					fprintf(stderr,"[E] Cannot continue.\n");
+					fprintf(stderr,"[E] ========================================================\n");
+					exit(EXIT_FAILURE);
+				}
+
+				// Apply new parameters
+				KFACTOR = new_k;
+				BSGS_N.SetInt64(new_n);
+
+				// Must recalculate all BSGS values - go back to start of BSGS calculations
+				fprintf(stderr,"[I] Recalculating with optimized parameters...\n");
+				fprintf(stderr,"[W] ========================================================\n\n");
+
+				// Recalculate from scratch
+				goto bsgs_recalculate_with_new_params;
+			}
+			else {
+				// Parameters OK - show memory usage
+				fprintf(stderr,"[I] Memory check: %" PRIu64 " MB required, %" PRIu64 " MB available (%.1f%% used)\n",
+					total_required_mb, available_ram_mb,
+					(double)total_required_mb * 100.0 / (double)available_ram_mb);
+			}
+		}
+		// ==================================================================
+
 		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m);
 		bloom_bP = (struct bloom*)calloc(256,sizeof(struct bloom));
 		checkpointer((void *)bloom_bP,__FILE__,"calloc","bloom_bP" ,__LINE__ -1 );
