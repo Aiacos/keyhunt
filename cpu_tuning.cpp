@@ -82,24 +82,49 @@ void calculate_optimal_params(
         params->bloom_batch_size = 64;
     }
 
-    // Optimize CPU_GRP_SIZE based on cache
-    // We want the working set to fit in L2 cache if possible
-    if (features->l2_cache_size > 0) {
+    // Optimize CPU_GRP_SIZE based on cache - AGGRESSIVE TUNING
+    // Target: Use L3 cache for maximum batch size
+    // Larger batches = fewer ModInv calls = better performance
+
+    uint32_t target_cache = features->l3_cache_size;
+    if (target_cache == 0) {
+        target_cache = features->l2_cache_size;
+    }
+
+    if (target_cache > 0) {
         // Each point is ~64 bytes (Point structure)
-        // IntGroup needs additional memory
-        // Aim for 50% of L2 cache for points
-        uint32_t max_points = (features->l2_cache_size / 2) / 64;
+        // IntGroup needs ~8 bytes per element
+        // dx array needs ~32 bytes per element
+        // Total per point: ~104 bytes
 
-        // Round to nearest power of 2
-        uint32_t optimal_size = 1024;
-        while (optimal_size < max_points && optimal_size < 8192) {
-            optimal_size *= 2;
+        // Use 70% of cache for working set (leave room for other data)
+        uint32_t available_cache = (target_cache * 70) / 100;
+        uint32_t max_points = available_cache / 104;
+
+        // Round down to nearest power of 2
+        uint32_t optimal_size = 8192;  // Start from maximum
+        while (optimal_size > max_points && optimal_size > 1024) {
+            optimal_size /= 2;
         }
 
-        // Don't go below 1024 or above 8192
-        if (optimal_size >= 1024 && optimal_size <= 8192) {
-            params->cpu_grp_size = optimal_size;
+        // Prefer larger sizes for better ModInv amortization
+        // Minimum 2048 on modern CPUs, up to 16384 on high-end
+        if (features->l3_cache_size >= 16 * 1024 * 1024) {
+            // Large L3: aim for 8192 or 16384
+            if (optimal_size < 8192) optimal_size = 8192;
+        } else if (features->l3_cache_size >= 8 * 1024 * 1024) {
+            // Medium L3: aim for 4096
+            if (optimal_size < 4096) optimal_size = 4096;
+        } else if (features->l2_cache_size >= 1 * 1024 * 1024) {
+            // Good L2: aim for 2048
+            if (optimal_size < 2048) optimal_size = 2048;
         }
+
+        // Clamp to reasonable range: 1024-16384
+        if (optimal_size < 1024) optimal_size = 1024;
+        if (optimal_size > 16384) optimal_size = 16384;
+
+        params->cpu_grp_size = optimal_size;
     }
 
     // Adjust batch size for cache line alignment

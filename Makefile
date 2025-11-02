@@ -24,7 +24,7 @@ SHA3_OBJS := sha3/sha3.o sha3/keccak.o
 SECP256K1_OBJS := secp256k1/Int.o secp256k1/Point.o secp256k1/SECP256K1.o secp256k1/IntMod.o secp256k1/Random.o secp256k1/IntGroup.o
 GMP256K1_OBJS := gmp256k1/Int.o gmp256k1/Point.o gmp256k1/GMP256K1.o gmp256k1/IntMod.o gmp256k1/Random.o gmp256k1/IntGroup.o
 
-OPT_OBJS := bsgs_optimized.o bsgs_batched_loop.o cpu_tuning.o
+OPT_OBJS := bsgs_optimized.o bsgs_batched_loop.o cpu_tuning.o aggressive_opts.o
 
 COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(OPT_OBJS)
 
