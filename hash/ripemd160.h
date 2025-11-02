@@ -55,6 +55,19 @@ void ripemd160avx2_32(const uint8_t *i0, const uint8_t *i1, const uint8_t *i2, c
 int ripemd160_avx2_available(void);
 void ripemd160avx2_test();
 
+// AVX-512 implementation (16-way parallel) - requires AVX-512F support
+void ripemd160avx512_32(
+  const uint8_t *i0,  const uint8_t *i1,  const uint8_t *i2,  const uint8_t *i3,
+  const uint8_t *i4,  const uint8_t *i5,  const uint8_t *i6,  const uint8_t *i7,
+  const uint8_t *i8,  const uint8_t *i9,  const uint8_t *i10, const uint8_t *i11,
+  const uint8_t *i12, const uint8_t *i13, const uint8_t *i14, const uint8_t *i15,
+  uint8_t *d0,  uint8_t *d1,  uint8_t *d2,  uint8_t *d3,
+  uint8_t *d4,  uint8_t *d5,  uint8_t *d6,  uint8_t *d7,
+  uint8_t *d8,  uint8_t *d9,  uint8_t *d10, uint8_t *d11,
+  uint8_t *d12, uint8_t *d13, uint8_t *d14, uint8_t *d15);
+int ripemd160_avx512_available(void);
+void ripemd160avx512_test();
+
 std::string ripemd160_hex(unsigned char *digest);
 
 static inline bool ripemd160_comp_hash(uint8_t *h0, uint8_t *h1) {

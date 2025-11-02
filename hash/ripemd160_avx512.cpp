@@ -1,69 +1,65 @@
 /*
- * AVX2 optimized RIPEMD-160 implementation
- * Processes 8 hashes in parallel (2x faster than SSE2)
+ * AVX-512 optimized RIPEMD-160 implementation
+ * Processes 16 hashes in parallel (2x faster than AVX2)
  *
  * Based on VanitySearch by Jean Luc PONS
- * AVX2 optimization for keyhunt by Claude Code
+ * AVX-512 optimization for keyhunt
  */
 
-#include "ripemd160_avx2.h"
+#include "ripemd160_avx512.h"
 #include "ripemd160.h"
 #include <string.h>
 #include <immintrin.h>
 #include <cpuid.h>
 #include <stdio.h>
 
-// Check CPU support for AVX2
-int ripemd160_avx2_available(void) {
+// Check CPU support for AVX-512F
+int ripemd160_avx512_available(void) {
     unsigned int eax, ebx, ecx, edx;
 
-    // Check for AVX2 support (CPUID function 7, subleaf 0, EBX bit 5)
+    // Check for AVX-512F support (CPUID function 7, subleaf 0, EBX bit 16)
     if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
-        return (ebx & (1 << 5)) != 0;  // AVX2 bit
+        return (ebx & (1 << 16)) != 0;  // AVX-512F bit
     }
     return 0;
 }
 
-// Internal AVX2 RIPEMD-160 implementation
-namespace ripemd160avx2 {
+// Internal AVX-512 RIPEMD-160 implementation
+namespace ripemd160avx512 {
 
 #ifdef WIN64
-    static const __declspec(align(32)) uint32_t _init[] = {
+    static const __declspec(align(64)) uint32_t _init[] = {
 #else
-    static const uint32_t _init[] __attribute__ ((aligned (32))) = {
+    static const uint32_t _init[] __attribute__ ((aligned (64))) = {
 #endif
-        // 8 copies of initial state (for 8-way parallel processing)
+        // 16 copies of initial state (for 16-way parallel processing)
+        0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,
         0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,
         0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,
+        0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,
+        0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,
         0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,
         0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,
+        0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,
+        0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,
         0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul
     };
 
-// AVX2 macros for RIPEMD-160
-#define ROL(x,n) _mm256_or_si256(_mm256_slli_epi32(x, n), _mm256_srli_epi32(x, 32 - n))
+// AVX-512 macros for RIPEMD-160
+#define ROL(x,n) _mm512_or_si512(_mm512_slli_epi32(x, n), _mm512_srli_epi32(x, 32 - n))
 
-#ifdef WIN64
-#define not(x) _mm256_andnot_si256(x, _mm256_cmpeq_epi32(_mm256_setzero_si256(), _mm256_setzero_si256()))
-#define f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
-#define f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))
-#define f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x,not(y)),z)
-#define f4(x,y,z) _mm256_or_si256(_mm256_and_si256(x,z),_mm256_andnot_si256(z,y))
-#define f5(x,y,z) _mm256_xor_si256(x,_mm256_or_si256(y,not(z)))
-#else
-#define f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
-#define f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))
-#define f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x,~(y)),z)
-#define f4(x,y,z) _mm256_or_si256(_mm256_and_si256(x,z),_mm256_andnot_si256(z,y))
-#define f5(x,y,z) _mm256_xor_si256(x,_mm256_or_si256(y,~(z)))
-#endif
+#define f1(x,y,z) _mm512_xor_si512(x, _mm512_xor_si512(y, z))
+#define f2(x,y,z) _mm512_or_si512(_mm512_and_si512(x,y),_mm512_andnot_si512(x,z))
+#define f3(x,y,z) _mm512_xor_si512(_mm512_or_si512(x,_mm512_andnot_si512(y,_mm512_set1_epi32(-1))),z)
+#define f4(x,y,z) _mm512_or_si512(_mm512_and_si512(x,z),_mm512_andnot_si512(z,y))
+#define f5(x,y,z) _mm512_xor_si512(x,_mm512_or_si512(y,_mm512_andnot_si512(z,_mm512_set1_epi32(-1))))
 
-#define add3(x0, x1, x2) _mm256_add_epi32(_mm256_add_epi32(x0, x1), x2)
-#define add4(x0, x1, x2, x3) _mm256_add_epi32(_mm256_add_epi32(x0, x1), _mm256_add_epi32(x2, x3))
+#define add3(x0, x1, x2) _mm512_add_epi32(_mm512_add_epi32(x0, x1), x2)
+#define add4(x0, x1, x2, x3) _mm512_add_epi32(_mm512_add_epi32(x0, x1), _mm512_add_epi32(x2, x3))
 
 #define Round(a,b,c,d,e,f,x,k,r) \
-    u = add4(a,f,x,_mm256_set1_epi32(k)); \
-    a = _mm256_add_epi32(ROL(u, r),e); \
+    u = add4(a,f,x,_mm512_set1_epi32(k)); \
+    a = _mm512_add_epi32(ROL(u, r),e); \
     c = ROL(c, 10);
 
 #define R11(a,b,c,d,e,x,r) Round(a, b, c, d, e, f1(b, c, d), x, 0, r)
@@ -77,64 +73,54 @@ namespace ripemd160avx2 {
 #define R42(a,b,c,d,e,x,r) Round(a, b, c, d, e, f2(b, c, d), x, 0x7A6D76E9ul, r)
 #define R52(a,b,c,d,e,x,r) Round(a, b, c, d, e, f1(b, c, d), x, 0, r)
 
-// Optimized load: Load 8 32-bit words from 8 different message blocks
-// Note: _mm256_set_epi32 loads in reverse order (MSB first)
-#define LOADW(i) _mm256_set_epi32( \
-    *((const uint32_t *)blk[0]+i), \
-    *((const uint32_t *)blk[1]+i), \
-    *((const uint32_t *)blk[2]+i), \
-    *((const uint32_t *)blk[3]+i), \
-    *((const uint32_t *)blk[4]+i), \
-    *((const uint32_t *)blk[5]+i), \
-    *((const uint32_t *)blk[6]+i), \
-    *((const uint32_t *)blk[7]+i))
+// Load 16 32-bit words from 16 different message blocks
+#define LOADW(i) _mm512_set_epi32( \
+    *((const uint32_t *)blk[0]+i),  *((const uint32_t *)blk[1]+i),  *((const uint32_t *)blk[2]+i),  *((const uint32_t *)blk[3]+i), \
+    *((const uint32_t *)blk[4]+i),  *((const uint32_t *)blk[5]+i),  *((const uint32_t *)blk[6]+i),  *((const uint32_t *)blk[7]+i), \
+    *((const uint32_t *)blk[8]+i),  *((const uint32_t *)blk[9]+i),  *((const uint32_t *)blk[10]+i), *((const uint32_t *)blk[11]+i), \
+    *((const uint32_t *)blk[12]+i), *((const uint32_t *)blk[13]+i), *((const uint32_t *)blk[14]+i), *((const uint32_t *)blk[15]+i))
 
-// Optimized transpose load with prefetching
-static inline void transpose_and_load(__m256i *w, const uint8_t *blk[8]) {
-    // Prefetch all input blocks
-    _mm_prefetch((const char*)blk[0], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[1], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[2], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[3], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[4], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[5], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[6], _MM_HINT_T0);
-    _mm_prefetch((const char*)blk[7], _MM_HINT_T0);
+    // Optimized transpose load with prefetching
+    static inline void transpose_and_load(__m512i *w, const uint8_t *blk[16]) {
+        // Prefetch all input blocks
+        for (int i = 0; i < 16; i++) {
+            _mm_prefetch((const char*)blk[i], _MM_HINT_T0);
+        }
 
-    // Load word by word from each block
-    for (int i = 0; i < 8; i++) {
-        w[i] = LOADW(i);
+        // Load word by word from each block
+        for (int i = 0; i < 8; i++) {
+            w[i] = LOADW(i);
+        }
     }
-}
 
     // Initialize RIPEMD-160 state
-    void Initialize(__m256i *s) {
+    void Initialize(__m512i *s) {
         memcpy(s, _init, sizeof(_init));
     }
 
-    // Perform 8 RIPEMD-160 in parallel using AVX2
-    void Transform(__m256i *s, const uint8_t *blk[8]) {
+    // Perform 16 RIPEMD-160 in parallel using AVX-512
+    void Transform(__m512i *s, const uint8_t *blk[16]) {
 
-        __m256i a1 = _mm256_load_si256(s + 0);
-        __m256i b1 = _mm256_load_si256(s + 1);
-        __m256i c1 = _mm256_load_si256(s + 2);
-        __m256i d1 = _mm256_load_si256(s + 3);
-        __m256i e1 = _mm256_load_si256(s + 4);
-        __m256i a2 = a1;
-        __m256i b2 = b1;
-        __m256i c2 = c1;
-        __m256i d2 = d1;
-        __m256i e2 = e1;
-        __m256i u;
-        __m256i w[16];
+        __m512i a1 = _mm512_load_si512(s + 0);
+        __m512i b1 = _mm512_load_si512(s + 1);
+        __m512i c1 = _mm512_load_si512(s + 2);
+        __m512i d1 = _mm512_load_si512(s + 3);
+        __m512i e1 = _mm512_load_si512(s + 4);
+        __m512i a2 = a1;
+        __m512i b2 = b1;
+        __m512i c2 = c1;
+        __m512i d2 = d1;
+        __m512i e2 = e1;
+        __m512i u;
+        __m512i w[16];
 
         // Load message words with prefetching
         transpose_and_load(w, blk);
 
         // Padding for 32-byte input
-        const __m256i pad80 = _mm256_set1_epi32(0x00000080u);
-        const __m256i zero = _mm256_setzero_si256();
-        const __m256i bitlen = _mm256_set1_epi32(32 << 3);
+        const __m512i pad80 = _mm512_set1_epi32(0x00000080u);
+        const __m512i zero = _mm512_setzero_si512();
+        const __m512i bitlen = _mm512_set1_epi32(32 << 3);
 
         w[8] = pad80;
         w[9] = zero;
@@ -316,7 +302,7 @@ static inline void transpose_and_load(__m256i *w, const uint8_t *blk[8]) {
         R52(b2, c2, d2, e2, a2, w[11], 11);
 
         // Update state
-        __m256i t = s[0];
+        __m512i t = s[0];
         s[0] = add3(s[1], c1, d2);
         s[1] = add3(s[2], d1, e2);
         s[2] = add3(s[3], e1, a2);
@@ -324,16 +310,16 @@ static inline void transpose_and_load(__m256i *w, const uint8_t *blk[8]) {
         s[4] = add3(t, b1, c2);
     }
 
-} // namespace ripemd160avx2
+} // namespace ripemd160avx512
 
-// Unpack and deinterleave results from AVX2 registers
+// Unpack and deinterleave results from AVX-512 registers
 #ifdef WIN64
 #define DEPACK(d,i) \
-    ((uint32_t *)d)[0] = s[0].m256i_u32[i]; \
-    ((uint32_t *)d)[1] = s[1].m256i_u32[i]; \
-    ((uint32_t *)d)[2] = s[2].m256i_u32[i]; \
-    ((uint32_t *)d)[3] = s[3].m256i_u32[i]; \
-    ((uint32_t *)d)[4] = s[4].m256i_u32[i];
+    ((uint32_t *)d)[0] = s[0].m512i_u32[i]; \
+    ((uint32_t *)d)[1] = s[1].m512i_u32[i]; \
+    ((uint32_t *)d)[2] = s[2].m512i_u32[i]; \
+    ((uint32_t *)d)[3] = s[3].m512i_u32[i]; \
+    ((uint32_t *)d)[4] = s[4].m512i_u32[i];
 #else
 #define DEPACK(d,i) \
     ((uint32_t *)d)[0] = s0[i]; \
@@ -343,29 +329,21 @@ static inline void transpose_and_load(__m256i *w, const uint8_t *blk[8]) {
     ((uint32_t *)d)[4] = s4[i];
 #endif
 
-void ripemd160avx2_32(
-    const unsigned char *i0,
-    const unsigned char *i1,
-    const unsigned char *i2,
-    const unsigned char *i3,
-    const unsigned char *i4,
-    const unsigned char *i5,
-    const unsigned char *i6,
-    const unsigned char *i7,
-    unsigned char *d0,
-    unsigned char *d1,
-    unsigned char *d2,
-    unsigned char *d3,
-    unsigned char *d4,
-    unsigned char *d5,
-    unsigned char *d6,
-    unsigned char *d7) {
+void ripemd160avx512_32(
+    const unsigned char *i0,  const unsigned char *i1,  const unsigned char *i2,  const unsigned char *i3,
+    const unsigned char *i4,  const unsigned char *i5,  const unsigned char *i6,  const unsigned char *i7,
+    const unsigned char *i8,  const unsigned char *i9,  const unsigned char *i10, const unsigned char *i11,
+    const unsigned char *i12, const unsigned char *i13, const unsigned char *i14, const unsigned char *i15,
+    unsigned char *d0,  unsigned char *d1,  unsigned char *d2,  unsigned char *d3,
+    unsigned char *d4,  unsigned char *d5,  unsigned char *d6,  unsigned char *d7,
+    unsigned char *d8,  unsigned char *d9,  unsigned char *d10, unsigned char *d11,
+    unsigned char *d12, unsigned char *d13, unsigned char *d14, unsigned char *d15) {
 
-    __m256i s[5] __attribute__((aligned(32)));
-    const uint8_t *bs[] = { i0, i1, i2, i3, i4, i5, i6, i7 };
+    __m512i s[5] __attribute__((aligned(64)));
+    const uint8_t *bs[] = { i0, i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15 };
 
-    ripemd160avx2::Initialize(s);
-    ripemd160avx2::Transform(s, bs);
+    ripemd160avx512::Initialize(s);
+    ripemd160avx512::Transform(s, bs);
 
 #ifndef WIN64
     uint32_t *s0 = (uint32_t *)&s[0];
@@ -375,67 +353,57 @@ void ripemd160avx2_32(
     uint32_t *s4 = (uint32_t *)&s[4];
 #endif
 
-    // Unpack results (AVX2 order: MSB first)
-    DEPACK(d0, 7);
-    DEPACK(d1, 6);
-    DEPACK(d2, 5);
-    DEPACK(d3, 4);
-    DEPACK(d4, 3);
-    DEPACK(d5, 2);
-    DEPACK(d6, 1);
-    DEPACK(d7, 0);
+    // Unpack results (AVX-512 order: MSB first)
+    DEPACK(d0, 15);
+    DEPACK(d1, 14);
+    DEPACK(d2, 13);
+    DEPACK(d3, 12);
+    DEPACK(d4, 11);
+    DEPACK(d5, 10);
+    DEPACK(d6, 9);
+    DEPACK(d7, 8);
+    DEPACK(d8, 7);
+    DEPACK(d9, 6);
+    DEPACK(d10, 5);
+    DEPACK(d11, 4);
+    DEPACK(d12, 3);
+    DEPACK(d13, 2);
+    DEPACK(d14, 1);
+    DEPACK(d15, 0);
 }
 
-void ripemd160avx2_test() {
-    if (!ripemd160_avx2_available()) {
-        printf("AVX2 not available on this CPU\n");
+void ripemd160avx512_test() {
+    if (!ripemd160_avx512_available()) {
+        printf("AVX-512 not available on this CPU\n");
         return;
     }
 
-    unsigned char h0[20], h1[20], h2[20], h3[20];
-    unsigned char h4[20], h5[20], h6[20], h7[20];
-    unsigned char ch0[20], ch1[20], ch2[20], ch3[20];
-    unsigned char ch4[20], ch5[20], ch6[20], ch7[20];
-    unsigned char m0[64], m1[64], m2[64], m3[64];
-    unsigned char m4[64], m5[64], m6[64], m7[64];
+    unsigned char h[16][20], ch[16][20], m[16][64];
 
-    strcpy((char *)m0, "Test message 01 for AVX2 RMD160");
-    strcpy((char *)m1, "Test message 02 for AVX2 RMD160");
-    strcpy((char *)m2, "Test message 03 for AVX2 RMD160");
-    strcpy((char *)m3, "Test message 04 for AVX2 RMD160");
-    strcpy((char *)m4, "Test message 05 for AVX2 RMD160");
-    strcpy((char *)m5, "Test message 06 for AVX2 RMD160");
-    strcpy((char *)m6, "Test message 07 for AVX2 RMD160");
-    strcpy((char *)m7, "Test message 08 for AVX2 RMD160");
+    for (int i = 0; i < 16; i++) {
+        snprintf((char *)m[i], 64, "Test message %02d for AVX512 RMD160", i + 1);
+        ripemd160_32(m[i], ch[i]);
+    }
 
-    // Compute reference hashes using scalar version
-    ripemd160_32(m0, ch0);
-    ripemd160_32(m1, ch1);
-    ripemd160_32(m2, ch2);
-    ripemd160_32(m3, ch3);
-    ripemd160_32(m4, ch4);
-    ripemd160_32(m5, ch5);
-    ripemd160_32(m6, ch6);
-    ripemd160_32(m7, ch7);
-
-    // Compute AVX2 hashes
-    ripemd160avx2_32(m0, m1, m2, m3, m4, m5, m6, m7,
-                     h0, h1, h2, h3, h4, h5, h6, h7);
+    // Compute AVX-512 hashes
+    ripemd160avx512_32(
+        m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+        m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15],
+        h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7],
+        h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15]);
 
     // Verify results
-    if ((ripemd160_hex(h0) != ripemd160_hex(ch0)) ||
-        (ripemd160_hex(h1) != ripemd160_hex(ch1)) ||
-        (ripemd160_hex(h2) != ripemd160_hex(ch2)) ||
-        (ripemd160_hex(h3) != ripemd160_hex(ch3)) ||
-        (ripemd160_hex(h4) != ripemd160_hex(ch4)) ||
-        (ripemd160_hex(h5) != ripemd160_hex(ch5)) ||
-        (ripemd160_hex(h6) != ripemd160_hex(ch6)) ||
-        (ripemd160_hex(h7) != ripemd160_hex(ch7))) {
+    int failed = 0;
+    for (int i = 0; i < 16; i++) {
+        if (ripemd160_hex(h[i]) != ripemd160_hex(ch[i])) {
+            failed = 1;
+            printf("RIPEMD160 AVX-512 Result %d FAILED!\n", i);
+            printf("Expected: %s\n", ripemd160_hex(ch[i]).c_str());
+            printf("Got:      %s\n", ripemd160_hex(h[i]).c_str());
+        }
+    }
 
-        printf("RIPEMD160 AVX2 Results FAILED!\n");
-        printf("Expected: %s\n", ripemd160_hex(ch0).c_str());
-        printf("Got:      %s\n", ripemd160_hex(h0).c_str());
-    } else {
-        printf("RIPEMD160 AVX2 Results OK! (8-way parallel)\n");
+    if (!failed) {
+        printf("RIPEMD160 AVX-512 Results OK! (16-way parallel)\n");
     }
 }

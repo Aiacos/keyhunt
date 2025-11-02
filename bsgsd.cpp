@@ -1572,6 +1572,7 @@ int bsgs_searchbinary(struct bsgs_xvalue *buffer,char *data,int64_t array_length
 }
 
 void *thread_process_bsgs(void *vargp)	{
+	(void)vargp;  // Suppress unused parameter warning
 
 	FILE *filekey;
 	char xpoint_raw[32],*aux_c,*hextemp;
