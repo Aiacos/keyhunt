@@ -2,7 +2,7 @@ CXX ?= g++
 CC ?= gcc
 
 COMMON_FLAGS := -m64 -march=native -mtune=native -mssse3
-OPT_FLAGS := -Ofast -ftree-vectorize -fomit-frame-pointer -funroll-loops -pipe -DNDEBUG
+OPT_FLAGS := -O2 -ftree-vectorize -funroll-loops -pipe -DNDEBUG
 WARN_FLAGS := -Wall -Wextra
 
 CXXFLAGS ?=
