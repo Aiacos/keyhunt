@@ -109,7 +109,9 @@ Total RAM = (M * K * 3.5) + (M * K * 3.5 / 32) + (M * K * 3.5 / 1024) + (M / 32 
 - **Batched loop** (bsgs_batched_loop.cpp): Vectorized inner loops
 - **File caching** (`-S` flag): Save/load bloom filters and bP tables to avoid recomputation
 
-### Auto-Tuning System (sysinfo.c/h)
+### Auto-Tuning and Validation System
+
+### Hardware Detection (sysinfo.c/h)
 
 **Hardware detection** automatically configures optimal parameters:
 
@@ -123,11 +125,39 @@ Total RAM = (M * K * 3.5) + (M * K * 3.5 / 32) + (M * K * 3.5 / 1024) + (M / 32 
    - 75% of available RAM used as safe limit
 
 3. **Auto-tuned Parameters**:
-   - **Threads**: `physical_cores - 1` (leave 1 for OS)
-   - **Batch size**: Fit working set in L3 cache, aligned to SIMD width (8 for AVX2)
-   - **Workload**: Based on available RAM, rounded to power of 2
+   - **Threads**: All logical cores (hyperthreading enabled)
+   - **Batch size**: 1024 (proven optimal, aligned to AVX2)
+   - **N value**: Largest N that fits in 60% of available RAM
+   - **K factor**: Balanced K based on N and RAM
 
 **Override**: Use `-t N` to manually specify thread count. Auto-tuning can be bypassed with `KEYHUNT_SKIP_SYSINFO=1` environment variable.
+
+### Parameter Validation (parameter_validator.c/h)
+
+**NEW**: Intelligent parameter validation system that:
+
+1. **Validates User Parameters**:
+   - Checks threads against available CPU cores
+   - Validates N and K factor against available RAM (BSGS mode)
+   - Ensures batch size is properly aligned for AVX2
+
+2. **Auto-Correction**:
+   - Corrects dangerous values that would cause OOM or crashes
+   - Adjusts excessive thread counts to prevent overhead
+   - Scales down N/K combinations that exceed available RAM
+
+3. **User Feedback**:
+   - ✓ (green): Parameter is optimal
+   - i (blue): Parameter works but isn't optimal
+   - ! (yellow): Parameter was auto-corrected for safety
+   - ⚠ (red): Parameter may cause performance issues
+
+4. **Safety Guarantees**:
+   - Prevents out-of-memory crashes
+   - Avoids excessive context switching
+   - Ensures cache-aligned operations
+
+See [PARAMETER_VALIDATION.md](PARAMETER_VALIDATION.md) for detailed documentation and examples.
 
 ### Bloom Filter Implementation
 
@@ -222,8 +252,9 @@ This tool is designed for **educational purposes and authorized security testing
 ## Documentation Files
 
 - **README.md**: User documentation, examples, FAQ
+- **PARAMETER_VALIDATION.md**: **NEW** - Intelligent parameter validation and auto-tuning
 - **OPTIMIZATIONS.md**: AVX2/SIMD optimization details
 - **AUTO-TUNING.md**: Hardware detection and auto-configuration
 - **BSGS_MEMORY_CHECK.md**: Memory validation system
+- **PERFORMANCE_ANALYSIS.md**: Benchmark results and optimization phases
 - **CHANGELOG.md**: Version history and changes
-- **PERFORMANCE*.md**: Benchmark results and analysis

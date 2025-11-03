@@ -19,6 +19,7 @@ email: albertobsd@gmail.com
 #include "util.h"
 #include "workqueue.h"
 #include "sysinfo.h"
+#include "parameter_validator.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -1249,7 +1250,67 @@ int main(int argc, char **argv)	{
 			break;
 		}
 	}
-	
+
+	// ========== Parameter Validation and Auto-Tuning ==========
+	// Validate user parameters against hardware capabilities
+	// Auto-correct dangerous values, warn about suboptimal ones
+	{
+		// Parse user's N value if provided (needed for validation)
+		uint64_t user_n_value = 0;
+		if (FLAG_N && str_N) {
+			if (str_N[0] == '0' && str_N[1] == 'x') {
+				user_n_value = strtoull(str_N + 2, NULL, 16);
+			} else {
+				user_n_value = strtoull(str_N, NULL, 10);
+			}
+		}
+
+		// If user didn't specify threads (NTHREADS == 1 which is default),
+		// treat as auto (pass 0 to validator)
+		int threads_to_validate = NTHREADS;
+		if (NTHREADS == 1 && optind > 1) {
+			// User ran the program but didn't specify -t, so use auto
+			threads_to_validate = 0;
+		}
+
+		// Run comprehensive parameter validation
+		// This will auto-correct dangerous values and warn about suboptimal ones
+		uint32_t batch_size = CPU_GRP_SIZE;
+		bool validation_ok = validate_all_parameters(
+			&threads_to_validate,   // in/out: may be corrected
+			&user_n_value,          // in/out: may be corrected
+			&KFACTOR,               // in/out: may be corrected
+			&batch_size,            // in/out: may be corrected
+			&g_sysinfo,
+			true                    // auto_correct = true
+		);
+
+		// Apply validated parameters
+		NTHREADS = threads_to_validate;
+		CPU_GRP_SIZE = batch_size;
+
+		// Update N value if it was corrected
+		if (FLAG_N && user_n_value != 0) {
+			// Convert back to string for later parsing
+			char corrected_n[32];
+			snprintf(corrected_n, sizeof(corrected_n), "0x%llx", (unsigned long long)user_n_value);
+			str_N = strdup(corrected_n);
+		}
+
+		// If N wasn't specified and we're in BSGS mode, use recommended
+		if (!FLAG_N && FLAGMODE == MODE_BSGS && OPTIMAL_N > 0) {
+			char auto_n[32];
+			snprintf(auto_n, sizeof(auto_n), "0x%llx", (unsigned long long)OPTIMAL_N);
+			str_N = strdup(auto_n);
+			FLAG_N = 1;
+		}
+
+		if (!validation_ok) {
+			fprintf(stderr, "[W] Some parameters were auto-corrected for safety\n");
+		}
+	}
+	// ========== End Parameter Validation ==========
+
 	if(  FLAGBSGSMODE == MODE_BSGS && FLAGENDOMORPHISM)	{
 		fprintf(stderr,"[E] Endomorphism doesn't work with BSGS\n");
 		exit(EXIT_FAILURE);
