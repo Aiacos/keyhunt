@@ -108,8 +108,9 @@ make clean && make -j$(nproc)
 | **Baseline** | Original (-O2, SSE2 SHA256) | 63M | 1.0× | ✅ |
 | **Phase 1** | Inline Int operations + CPU_GRP_SIZE | 64M | 1.01× | ✅ Minor gain |
 | **Phase 2** | AVX2 8-way SHA256 implementation | 83M | 1.32× | ✅ **+31% faster** |
-| **Phase 2b** | Compiler optimization (-O3) | **86M** | **1.36×** | ✅ **+36% total** |
-| **Phase 3** | ModInv/ModMulK1 analysis | N/A | N/A | ✅ Already optimal |
+| **Phase 2b** | Compiler optimization (-O3) | 86M | 1.36× | ✅ **+36% total** |
+| **Phase 3** | Prefetch + Memory alignment | **88M** | **1.40×** | ✅ **+40% total** |
+| **Phase 3b** | Loop unrolling (tested) | 88M | 1.40× | ✅ No extra gain |
 | **Future** | GPU/distributed (10× target) | 630M+ | 10×+ | ⏸️ Out of scope |
 
 ### Phase 1 Results (Completed)
