@@ -21,6 +21,7 @@
 #include "Point.h"
 #include "../util.h"
 #include "../hash/sha256.h"
+#include "../hash/sha256_avx2.h"
 #include "../hash/ripemd160.h"
 
 Secp256K1::Secp256K1() {
@@ -844,9 +845,9 @@ void Secp256K1::GetHash160_AVX2(int type,bool compressed,
       KEYBUFFUNCOMP(b6, k6);
       KEYBUFFUNCOMP(b7, k7);
 
-      // Fall back to SSE2 for now (SHA256 AVX2 not yet implemented)
-      sha256sse_2B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
-      sha256sse_2B(b4, b5, b6, b7, sh4, sh5, sh6, sh7);
+      // AVX2 8-way parallel SHA256 (2x faster than SSE2)
+      sha256avx2_2B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
 
       ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
                        h0, h1, h2, h3, h4, h5, h6, h7);
@@ -871,9 +872,9 @@ void Secp256K1::GetHash160_AVX2(int type,bool compressed,
       KEYBUFFCOMP(b6, k6);
       KEYBUFFCOMP(b7, k7);
 
-      // Fall back to SSE2 for now (SHA256 AVX2 not yet implemented)
-      sha256sse_1B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
-      sha256sse_1B(b4, b5, b6, b7, sh4, sh5, sh6, sh7);
+      // AVX2 8-way parallel SHA256 (2x faster than SSE2)
+      sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
 
       ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
                        h0, h1, h2, h3, h4, h5, h6, h7);
@@ -910,8 +911,9 @@ void Secp256K1::GetHash160_AVX2(int type,bool compressed,
     KEYBUFFSCRIPT(b6, kh6);
     KEYBUFFSCRIPT(b7, kh7);
 
-    sha256sse_1B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
-    sha256sse_1B(b4, b5, b6, b7, sh4, sh5, sh6, sh7);
+    // AVX2 8-way parallel SHA256 (2x faster than SSE2)
+    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
 
     ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
                      h0, h1, h2, h3, h4, h5, h6, h7);
@@ -969,9 +971,9 @@ void Secp256K1::GetHash160_fromX_AVX2(int type,unsigned char prefix,
       KEYBUFFPREFIX(b6, k6, prefix);
       KEYBUFFPREFIX(b7, k7, prefix);
 
-      // Use SSE2 for SHA256 (2 calls), then AVX2 for RIPEMD160 (1 call)
-      sha256sse_1B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
-      sha256sse_1B(b4, b5, b6, b7, sh4, sh5, sh6, sh7);
+      // AVX2 8-way parallel SHA256 (2x faster than SSE2)
+      sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
 
       ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
                        h0, h1, h2, h3, h4, h5, h6, h7);

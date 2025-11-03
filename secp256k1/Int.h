@@ -299,4 +299,127 @@ static void inline shiftL(unsigned char n, uint64_t *d) {
 
 }
 
+// ------------------------------------------------
+// Performance-critical inline functions
+// ------------------------------------------------
+
+// Inline Set operation - used extensively in loops
+inline void Int::Set(Int *a) {
+#if NB64BLOCK == 5
+  bits64[0] = a->bits64[0];
+  bits64[1] = a->bits64[1];
+  bits64[2] = a->bits64[2];
+  bits64[3] = a->bits64[3];
+  bits64[4] = a->bits64[4];
+#else
+  for (int i = 0; i < NB64BLOCK; i++)
+    bits64[i] = a->bits64[i];
+#endif
+}
+
+// Inline Add operations - critical for key generation
+inline void Int::Add(Int *a) {
+  unsigned char c = 0;
+  c = _addcarry_u64(c, bits64[0], a->bits64[0], bits64 + 0);
+  c = _addcarry_u64(c, bits64[1], a->bits64[1], bits64 + 1);
+  c = _addcarry_u64(c, bits64[2], a->bits64[2], bits64 + 2);
+  c = _addcarry_u64(c, bits64[3], a->bits64[3], bits64 + 3);
+  c = _addcarry_u64(c, bits64[4], a->bits64[4], bits64 + 4);
+#if NB64BLOCK > 5
+  c = _addcarry_u64(c, bits64[5], a->bits64[5], bits64 + 5);
+  c = _addcarry_u64(c, bits64[6], a->bits64[6], bits64 + 6);
+  c = _addcarry_u64(c, bits64[7], a->bits64[7], bits64 + 7);
+  c = _addcarry_u64(c, bits64[8], a->bits64[8], bits64 + 8);
+#endif
+}
+
+inline void Int::Add(uint64_t a) {
+  unsigned char c = 0;
+  c = _addcarry_u64(c, bits64[0], a, bits64 + 0);
+  c = _addcarry_u64(c, bits64[1], 0, bits64 + 1);
+  c = _addcarry_u64(c, bits64[2], 0, bits64 + 2);
+  c = _addcarry_u64(c, bits64[3], 0, bits64 + 3);
+  c = _addcarry_u64(c, bits64[4], 0, bits64 + 4);
+#if NB64BLOCK > 5
+  c = _addcarry_u64(c, bits64[5], 0, bits64 + 5);
+  c = _addcarry_u64(c, bits64[6], 0, bits64 + 6);
+  c = _addcarry_u64(c, bits64[7], 0, bits64 + 7);
+  c = _addcarry_u64(c, bits64[8], 0, bits64 + 8);
+#endif
+}
+
+inline void Int::AddOne() {
+  unsigned char c = 0;
+  c = _addcarry_u64(c, bits64[0], 1, bits64 + 0);
+  c = _addcarry_u64(c, bits64[1], 0, bits64 + 1);
+  c = _addcarry_u64(c, bits64[2], 0, bits64 + 2);
+  c = _addcarry_u64(c, bits64[3], 0, bits64 + 3);
+  c = _addcarry_u64(c, bits64[4], 0, bits64 + 4);
+#if NB64BLOCK > 5
+  c = _addcarry_u64(c, bits64[5], 0, bits64 + 5);
+  c = _addcarry_u64(c, bits64[6], 0, bits64 + 6);
+  c = _addcarry_u64(c, bits64[7], 0, bits64 + 7);
+  c = _addcarry_u64(c, bits64[8], 0, bits64 + 8);
+#endif
+}
+
+// Inline Sub operations
+inline void Int::Sub(Int *a) {
+  unsigned char c = 0;
+  c = _subborrow_u64(c, bits64[0], a->bits64[0], bits64 + 0);
+  c = _subborrow_u64(c, bits64[1], a->bits64[1], bits64 + 1);
+  c = _subborrow_u64(c, bits64[2], a->bits64[2], bits64 + 2);
+  c = _subborrow_u64(c, bits64[3], a->bits64[3], bits64 + 3);
+  c = _subborrow_u64(c, bits64[4], a->bits64[4], bits64 + 4);
+#if NB64BLOCK > 5
+  c = _subborrow_u64(c, bits64[5], a->bits64[5], bits64 + 5);
+  c = _subborrow_u64(c, bits64[6], a->bits64[6], bits64 + 6);
+  c = _subborrow_u64(c, bits64[7], a->bits64[7], bits64 + 7);
+  c = _subborrow_u64(c, bits64[8], a->bits64[8], bits64 + 8);
+#endif
+}
+
+inline void Int::Sub(uint64_t a) {
+  unsigned char c = 0;
+  c = _subborrow_u64(c, bits64[0], a, bits64 + 0);
+  c = _subborrow_u64(c, bits64[1], 0, bits64 + 1);
+  c = _subborrow_u64(c, bits64[2], 0, bits64 + 2);
+  c = _subborrow_u64(c, bits64[3], 0, bits64 + 3);
+  c = _subborrow_u64(c, bits64[4], 0, bits64 + 4);
+#if NB64BLOCK > 5
+  c = _subborrow_u64(c, bits64[5], 0, bits64 + 5);
+  c = _subborrow_u64(c, bits64[6], 0, bits64 + 6);
+  c = _subborrow_u64(c, bits64[7], 0, bits64 + 7);
+  c = _subborrow_u64(c, bits64[8], 0, bits64 + 8);
+#endif
+}
+
+// Inline comparison operations - used in every bloom filter check
+inline bool Int::IsZero() {
+#if NB64BLOCK > 5
+  return (bits64[8] | bits64[7] | bits64[6] | bits64[5] | bits64[4] |
+          bits64[3] | bits64[2] | bits64[1] | bits64[0]) == 0;
+#else
+  return (bits64[4] | bits64[3] | bits64[2] | bits64[1] | bits64[0]) == 0;
+#endif
+}
+
+// IsOne kept in Int.cpp (uses IsEqual)
+
+inline bool Int::IsPositive() {
+  return (int64_t)(bits64[NB64BLOCK - 1]) >= 0;
+}
+
+inline bool Int::IsNegative() {
+  return (int64_t)(bits64[NB64BLOCK - 1]) < 0;
+}
+
+inline bool Int::IsEven() {
+  return (bits[0] & 0x1) == 0;
+}
+
+inline bool Int::IsOdd() {
+  return (bits[0] & 0x1) == 1;
+}
+
 #endif // BIGINTH

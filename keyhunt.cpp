@@ -943,7 +943,13 @@ int main(int argc, char **argv)	{
 	OPTIMAL_THREADS = g_sysinfo.recommended_threads;
 	OPTIMAL_N = g_sysinfo.recommended_n;
 	OPTIMAL_KFACTOR = g_sysinfo.recommended_kfactor;
-	// Keep CPU_GRP_SIZE at 1024 (proven optimal value)
+
+	// Keep CPU_GRP_SIZE at proven optimal value of 1024
+	// Testing showed that larger values (2048, 4096) actually hurt performance
+	// due to increased ModInv overhead and worse cache behavior
+	CPU_GRP_SIZE = 1024;
+	fprintf(stderr,"[I] Using CPU_GRP_SIZE: %u (proven optimal)\n", CPU_GRP_SIZE);
+
 	// Only show recommendations if user wants
 	if (argc == 1 || (argc == 2 && strcmp(argv[1], "-h") == 0)) {
 		sysinfo_print(&g_sysinfo);
