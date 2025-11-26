@@ -71,6 +71,27 @@ public:
   uint8_t *h0,uint8_t *h1,uint8_t *h2,uint8_t *h3,
   uint8_t *h4,uint8_t *h5,uint8_t *h6,uint8_t *h7);
 
+  // AVX-512 optimized versions (16-way parallel)
+  void GetHash160_AVX512(int type, bool compressed,
+    Point &k0, Point &k1, Point &k2, Point &k3,
+    Point &k4, Point &k5, Point &k6, Point &k7,
+    Point &k8, Point &k9, Point &k10, Point &k11,
+    Point &k12, Point &k13, Point &k14, Point &k15,
+    uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3,
+    uint8_t *h4, uint8_t *h5, uint8_t *h6, uint8_t *h7,
+    uint8_t *h8, uint8_t *h9, uint8_t *h10, uint8_t *h11,
+    uint8_t *h12, uint8_t *h13, uint8_t *h14, uint8_t *h15);
+
+  void GetHash160_fromX_AVX512(int type, unsigned char prefix,
+    Int *k0, Int *k1, Int *k2, Int *k3,
+    Int *k4, Int *k5, Int *k6, Int *k7,
+    Int *k8, Int *k9, Int *k10, Int *k11,
+    Int *k12, Int *k13, Int *k14, Int *k15,
+    uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3,
+    uint8_t *h4, uint8_t *h5, uint8_t *h6, uint8_t *h7,
+    uint8_t *h8, uint8_t *h9, uint8_t *h10, uint8_t *h11,
+    uint8_t *h12, uint8_t *h13, uint8_t *h14, uint8_t *h15);
+
 
   Point Add(Point &p1, Point &p2);
   Point Add2(Point &p1, Point &p2);

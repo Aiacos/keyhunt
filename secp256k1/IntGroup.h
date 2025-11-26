@@ -30,11 +30,16 @@ public:
 	void Set(Int *pts);
 	void ModInv();
 
-private:
+	// Optimized batch inversion with larger unroll factor
+	void ModInvOptimized();
 
+	// Get size
+	int GetSize() const { return size; }
+
+protected:
 	Int *ints;
-  Int *subp;
-  int size;
+	Int *subp;
+	int size;
 
 };
 

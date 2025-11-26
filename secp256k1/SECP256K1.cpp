@@ -990,3 +990,169 @@ void Secp256K1::GetHash160_fromX_AVX2(int type,unsigned char prefix,
   }
 }
 
+// AVX-512 optimized 16-way parallel GetHash160 from X coordinate
+void Secp256K1::GetHash160_fromX_AVX512(int type, unsigned char prefix,
+  Int *k0, Int *k1, Int *k2, Int *k3,
+  Int *k4, Int *k5, Int *k6, Int *k7,
+  Int *k8, Int *k9, Int *k10, Int *k11,
+  Int *k12, Int *k13, Int *k14, Int *k15,
+  uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3,
+  uint8_t *h4, uint8_t *h5, uint8_t *h6, uint8_t *h7,
+  uint8_t *h8, uint8_t *h9, uint8_t *h10, uint8_t *h11,
+  uint8_t *h12, uint8_t *h13, uint8_t *h14, uint8_t *h15) {
+
+  // Aligned buffers for SHA256 output
+  alignas(64) unsigned char sh0[64], sh1[64], sh2[64], sh3[64];
+  alignas(64) unsigned char sh4[64], sh5[64], sh6[64], sh7[64];
+  alignas(64) unsigned char sh8[64], sh9[64], sh10[64], sh11[64];
+  alignas(64) unsigned char sh12[64], sh13[64], sh14[64], sh15[64];
+
+  switch (type) {
+  case P2PKH:
+  {
+    uint32_t b0[16], b1[16], b2[16], b3[16];
+    uint32_t b4[16], b5[16], b6[16], b7[16];
+    uint32_t b8[16], b9[16], b10[16], b11[16];
+    uint32_t b12[16], b13[16], b14[16], b15[16];
+
+    // Prepare key buffers with prefix
+    KEYBUFFPREFIX(b0, k0, prefix);
+    KEYBUFFPREFIX(b1, k1, prefix);
+    KEYBUFFPREFIX(b2, k2, prefix);
+    KEYBUFFPREFIX(b3, k3, prefix);
+    KEYBUFFPREFIX(b4, k4, prefix);
+    KEYBUFFPREFIX(b5, k5, prefix);
+    KEYBUFFPREFIX(b6, k6, prefix);
+    KEYBUFFPREFIX(b7, k7, prefix);
+    KEYBUFFPREFIX(b8, k8, prefix);
+    KEYBUFFPREFIX(b9, k9, prefix);
+    KEYBUFFPREFIX(b10, k10, prefix);
+    KEYBUFFPREFIX(b11, k11, prefix);
+    KEYBUFFPREFIX(b12, k12, prefix);
+    KEYBUFFPREFIX(b13, k13, prefix);
+    KEYBUFFPREFIX(b14, k14, prefix);
+    KEYBUFFPREFIX(b15, k15, prefix);
+
+    // AVX2 SHA256 for first 8, then next 8
+    // (SHA-NI 2-way interleaved would be faster but requires different setup)
+    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
+    sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
+                  sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
+
+    // AVX-512 16-way RIPEMD160
+    ripemd160avx512_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                       sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15,
+                       h0, h1, h2, h3, h4, h5, h6, h7,
+                       h8, h9, h10, h11, h12, h13, h14, h15);
+  }
+  break;
+
+  case P2SH:
+  {
+    fprintf(stderr, "[E] Fixme unsupported case\n");
+    exit(0);
+  }
+  break;
+  }
+}
+
+// AVX-512 optimized 16-way parallel GetHash160 for full points
+void Secp256K1::GetHash160_AVX512(int type, bool compressed,
+  Point &k0, Point &k1, Point &k2, Point &k3,
+  Point &k4, Point &k5, Point &k6, Point &k7,
+  Point &k8, Point &k9, Point &k10, Point &k11,
+  Point &k12, Point &k13, Point &k14, Point &k15,
+  uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3,
+  uint8_t *h4, uint8_t *h5, uint8_t *h6, uint8_t *h7,
+  uint8_t *h8, uint8_t *h9, uint8_t *h10, uint8_t *h11,
+  uint8_t *h12, uint8_t *h13, uint8_t *h14, uint8_t *h15) {
+
+  alignas(64) unsigned char sh0_buf[64], sh1_buf[64], sh2_buf[64], sh3_buf[64];
+  alignas(64) unsigned char sh4_buf[64], sh5_buf[64], sh6_buf[64], sh7_buf[64];
+  alignas(64) unsigned char sh8_buf[64], sh9_buf[64], sh10_buf[64], sh11_buf[64];
+  alignas(64) unsigned char sh12_buf[64], sh13_buf[64], sh14_buf[64], sh15_buf[64];
+
+  switch (type) {
+  case P2PKH:
+  {
+    if (compressed) {
+      // Use KEYBUFFCOMP macro for compressed points
+      uint32_t b0[16], b1[16], b2[16], b3[16];
+      uint32_t b4[16], b5[16], b6[16], b7[16];
+      uint32_t b8[16], b9[16], b10[16], b11[16];
+      uint32_t b12[16], b13[16], b14[16], b15[16];
+
+      KEYBUFFCOMP(b0, k0);
+      KEYBUFFCOMP(b1, k1);
+      KEYBUFFCOMP(b2, k2);
+      KEYBUFFCOMP(b3, k3);
+      KEYBUFFCOMP(b4, k4);
+      KEYBUFFCOMP(b5, k5);
+      KEYBUFFCOMP(b6, k6);
+      KEYBUFFCOMP(b7, k7);
+      KEYBUFFCOMP(b8, k8);
+      KEYBUFFCOMP(b9, k9);
+      KEYBUFFCOMP(b10, k10);
+      KEYBUFFCOMP(b11, k11);
+      KEYBUFFCOMP(b12, k12);
+      KEYBUFFCOMP(b13, k13);
+      KEYBUFFCOMP(b14, k14);
+      KEYBUFFCOMP(b15, k15);
+
+      sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    sh0_buf, sh1_buf, sh2_buf, sh3_buf, sh4_buf, sh5_buf, sh6_buf, sh7_buf);
+      sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
+                    sh8_buf, sh9_buf, sh10_buf, sh11_buf, sh12_buf, sh13_buf, sh14_buf, sh15_buf);
+
+      ripemd160avx512_32(sh0_buf, sh1_buf, sh2_buf, sh3_buf, sh4_buf, sh5_buf, sh6_buf, sh7_buf,
+                         sh8_buf, sh9_buf, sh10_buf, sh11_buf, sh12_buf, sh13_buf, sh14_buf, sh15_buf,
+                         h0, h1, h2, h3, h4, h5, h6, h7,
+                         h8, h9, h10, h11, h12, h13, h14, h15);
+    } else {
+      // Uncompressed: 65-byte keys - use KEYBUFFUNCOMP macro
+      uint32_t b0[32], b1[32], b2[32], b3[32];
+      uint32_t b4[32], b5[32], b6[32], b7[32];
+      uint32_t b8[32], b9[32], b10[32], b11[32];
+      uint32_t b12[32], b13[32], b14[32], b15[32];
+
+      KEYBUFFUNCOMP(b0, k0);
+      KEYBUFFUNCOMP(b1, k1);
+      KEYBUFFUNCOMP(b2, k2);
+      KEYBUFFUNCOMP(b3, k3);
+      KEYBUFFUNCOMP(b4, k4);
+      KEYBUFFUNCOMP(b5, k5);
+      KEYBUFFUNCOMP(b6, k6);
+      KEYBUFFUNCOMP(b7, k7);
+      KEYBUFFUNCOMP(b8, k8);
+      KEYBUFFUNCOMP(b9, k9);
+      KEYBUFFUNCOMP(b10, k10);
+      KEYBUFFUNCOMP(b11, k11);
+      KEYBUFFUNCOMP(b12, k12);
+      KEYBUFFUNCOMP(b13, k13);
+      KEYBUFFUNCOMP(b14, k14);
+      KEYBUFFUNCOMP(b15, k15);
+
+      sha256avx2_2B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    sh0_buf, sh1_buf, sh2_buf, sh3_buf, sh4_buf, sh5_buf, sh6_buf, sh7_buf);
+      sha256avx2_2B(b8, b9, b10, b11, b12, b13, b14, b15,
+                    sh8_buf, sh9_buf, sh10_buf, sh11_buf, sh12_buf, sh13_buf, sh14_buf, sh15_buf);
+
+      ripemd160avx512_32(sh0_buf, sh1_buf, sh2_buf, sh3_buf, sh4_buf, sh5_buf, sh6_buf, sh7_buf,
+                         sh8_buf, sh9_buf, sh10_buf, sh11_buf, sh12_buf, sh13_buf, sh14_buf, sh15_buf,
+                         h0, h1, h2, h3, h4, h5, h6, h7,
+                         h8, h9, h10, h11, h12, h13, h14, h15);
+    }
+  }
+  break;
+
+  case P2SH:
+  case BECH32:
+  {
+    fprintf(stderr, "[E] Fixme unsupported case\n");
+    exit(0);
+  }
+  break;
+  }
+}
+

@@ -15,6 +15,7 @@ email: albertobsd@gmail.com
 #include "base58/libbase58.h"
 #include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
+#include "bloom/bloom_wrapper.h"
 #include "sha3/sha3.h"
 #include "util.h"
 #include "workqueue.h"
@@ -202,6 +203,7 @@ bool forceReadFileXPoint(char *fileName);
 bool processOneVanity();
 
 bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom);
+bool initBloomFilterExt(bloom_extended_t *bloom_arg, uint64_t items_bloom);
 
 void writeFileIfNeeded(const char *fileName);
 
@@ -282,7 +284,7 @@ int vanity_rmd_minimun_bytes_check_length = 999999;
 char **vanity_address_targets = NULL;
 struct bloom *vanity_bloom = NULL;
 
-struct bloom bloom;
+bloom_extended_t bloom;  /* Fast bloom filter wrapper */
 
 /* Pad shared counters to separate cache lines and reduce false sharing between threads. */
 struct thread_counter {
@@ -786,9 +788,18 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 	uint8_t verifyBuffer[20];
 	Point publickey;
 
+	// Prefetch distance for bloom filter checks
+	const size_t PREFETCH_DIST = 8;
+
 	for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
+		// Prefetch next hash data for bloom filter
+		if (idx + PREFETCH_DIST < CPU_GRP_SIZE) {
+			__builtin_prefetch(hashCompressed02[idx + PREFETCH_DIST], 0, 0);
+			__builtin_prefetch(hashCompressed03[idx + PREFETCH_DIST], 0, 0);
+		}
+
 		if (wantCompressed) {
-			if (bloom_check(&bloom, hashCompressed02[idx], MAXLENGTHADDRESS)) {
+			if (bloom_ext_check(&bloom, hashCompressed02[idx], MAXLENGTHADDRESS)) {
 				if (searchbinary(addressTable, hashCompressed02[idx], N)) {
 					Int candidate(keyCurrent);
 					publickey = secp->ComputePublicKey(&candidate);
@@ -800,7 +811,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 					writekey(true,&candidate);
 				}
 			}
-			if (bloom_check(&bloom, hashCompressed03[idx], MAXLENGTHADDRESS)) {
+			if (bloom_ext_check(&bloom, hashCompressed03[idx], MAXLENGTHADDRESS)) {
 				if (searchbinary(addressTable, hashCompressed03[idx], N)) {
 					Int candidate(keyCurrent);
 					publickey = secp->ComputePublicKey(&candidate);
@@ -815,7 +826,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 		}
 
 		if (wantUncompressed) {
-			if (bloom_check(&bloom, hashUncompressed[idx], MAXLENGTHADDRESS)) {
+			if (bloom_ext_check(&bloom, hashUncompressed[idx], MAXLENGTHADDRESS)) {
 				if (searchbinary(addressTable, hashUncompressed[idx], N)) {
 					Int candidate(keyCurrent);
 					writekey(false,&candidate);
@@ -3156,7 +3167,7 @@ void *thread_process_minikeys(void *vargp)	{
 					secp->GetHash160(P2PKH,false,publickey[0],publickey[1],publickey[2],publickey[3],(uint8_t*)publickeyhashrmd160_uncompress[0],(uint8_t*)publickeyhashrmd160_uncompress[1],(uint8_t*)publickeyhashrmd160_uncompress[2],(uint8_t*)publickeyhashrmd160_uncompress[3]);
 					
 					for(k = 0; k < 4; k++)	{
-						r = bloom_check(&bloom,publickeyhashrmd160_uncompress[k],20);
+						r = bloom_ext_check(&bloom,publickeyhashrmd160_uncompress[k],20);
 						if(r) {
 							r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 							if(r) {
@@ -3274,11 +3285,17 @@ void *thread_process(void *vargp)	{
 			
 				dx[i].ModSub(&Gn[i].x,&startP.x);  // For the first point
 				dx[i + 1].ModSub(&_2Gn.x,&startP.x); // For the next center point
-				grp->ModInv();
+				grp->ModInvOptimized();  // Use 8x unrolled version
 
 				pts[CPU_GRP_SIZE / 2] = startP;
 
 				for(i = 0; i<hLength; i++) {
+					// Prefetch next Gn element for better cache utilization
+					if (i + 4 < hLength) {
+						__builtin_prefetch(&Gn[i + 4], 0, 3);
+						__builtin_prefetch(&dx[i + 4], 0, 3);
+					}
+
 					pp = startP;
 					pn = startP;
 
@@ -3475,7 +3492,7 @@ void *thread_process(void *vargp)	{
 									if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH){
 										if(FLAGENDOMORPHISM)	{
 											for(l = 0;l < 6; l++)	{
-												r = bloom_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
+												r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -3538,7 +3555,7 @@ void *thread_process(void *vargp)	{
 										}
 										else	{
 											for(l = 0;l < 2; l++)	{
-												r = bloom_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
+												r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -3562,7 +3579,7 @@ void *thread_process(void *vargp)	{
 									if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH)	{
 										if(FLAGENDOMORPHISM)	{
 											for(l = 6;l < 12; l++)	{	//We check the array from 6 to 12(excluded) because we save the uncompressed information there
-												r = bloom_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);	//Check in Bloom filter
+												r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);	//Check in Bloom filter
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);		//Check in Array using Binary search
 													if(r) {
@@ -3606,7 +3623,7 @@ void *thread_process(void *vargp)	{
 											}
 										}
 										else	{
-											r = bloom_check(&bloom,publickeyhashrmd160_uncompress[k],MAXLENGTHADDRESS);
+											r = bloom_ext_check(&bloom,publickeyhashrmd160_uncompress[k],MAXLENGTHADDRESS);
 											if(r) {
 												r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 												if(r) {
@@ -3624,7 +3641,7 @@ void *thread_process(void *vargp)	{
 								if(FLAGENDOMORPHISM)	{
 									for(k = 0; k < 4;k++)	{
 										for(l = 0;l < 6; l++)	{
-											r = bloom_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
+											r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
 											if(r) {
 												r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 												if(r) {												
@@ -3670,7 +3687,7 @@ void *thread_process(void *vargp)	{
 								}
 								else	{
 									for(k = 0; k < 4;k++)	{
-										r = bloom_check(&bloom,publickeyhashrmd160_uncompress[k],MAXLENGTHADDRESS);
+										r = bloom_ext_check(&bloom,publickeyhashrmd160_uncompress[k],MAXLENGTHADDRESS);
 										if(r) {
 											r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 											if(r) {
@@ -3688,7 +3705,7 @@ void *thread_process(void *vargp)	{
 							for(k = 0; k < 4;k++)	{
 								if(FLAGENDOMORPHISM)	{
 									pts[(4*j)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -3700,7 +3717,7 @@ void *thread_process(void *vargp)	{
 										}
 									}
 									endomorphism_beta[(j*4)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -3714,7 +3731,7 @@ void *thread_process(void *vargp)	{
 									}
 									
 									endomorphism_beta2[(j*4)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -3728,7 +3745,7 @@ void *thread_process(void *vargp)	{
 								}
 								else	{
 									pts[(4*j)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -3873,11 +3890,17 @@ void *thread_process_vanity(void *vargp)	{
 			
 				dx[i].ModSub(&Gn[i].x,&startP.x);  // For the first point
 				dx[i + 1].ModSub(&_2Gn.x,&startP.x); // For the next center point
-				grp->ModInv();
+				grp->ModInvOptimized();  // Use 8x unrolled version
 
 				pts[CPU_GRP_SIZE / 2] = startP;
 
 				for(i = 0; i<hLength; i++) {
+					// Prefetch next Gn element for better cache utilization
+					if (i + 4 < hLength) {
+						__builtin_prefetch(&Gn[i + 4], 0, 3);
+						__builtin_prefetch(&dx[i + 4], 0, 3);
+					}
+
 					pp = startP;
 					pn = startP;
 
@@ -4539,7 +4562,7 @@ void *thread_process_bsgs(void *vargp)	{
 					dx[i].ModSub(&GSn[i].x,&startP.x);  // For the first point
 					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
 					// Grouped ModInv
-					grp->ModInv();
+					grp->ModInvOptimized();  // Use 8x unrolled version
 					/*
 					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
 					We compute key in the positive and negative way from the center of the group
@@ -4772,7 +4795,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
 
 					// Grouped ModInv
-					grp->ModInv();
+					grp->ModInvOptimized();  // Use 8x unrolled version
 					
 					/*
 					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
@@ -5099,7 +5122,7 @@ void *thread_bPload(void *vargp)	{
 		dx[i].ModSub(&Gn[i].x,&startP.x); // For the first point
 		dx[i + 1].ModSub(&_2Gn.x,&startP.x);// For the next center point
 		// Grouped ModInv
-		grp->ModInv();
+		grp->ModInvOptimized();  // Use 8x unrolled version
 
 		// We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
 		// We compute key in the positive and negative way from the center of the group
@@ -5288,7 +5311,7 @@ void *thread_bPload_2blooms(void *vargp)	{
 		dx[i].ModSub(&Gn[i].x,&startP.x); // For the first point
 		dx[i + 1].ModSub(&_2Gn.x,&startP.x);// For the next center point
 		// Grouped ModInv
-		grp->ModInv();
+		grp->ModInvOptimized();  // Use 8x unrolled version
 
 		// We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
 		// We compute key in the positive and negative way from the center of the group
@@ -5573,7 +5596,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
 
 					// Grouped ModInv
-					grp->ModInv();
+					grp->ModInvOptimized();  // Use 8x unrolled version
 					
 					/*
 					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
@@ -5827,7 +5850,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
 
 					// Grouped ModInv
-					grp->ModInv();
+					grp->ModInvOptimized();  // Use 8x unrolled version
 					
 					/*
 					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
@@ -6107,7 +6130,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 						dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
 
 						// Grouped ModInv
-						grp->ModInv();
+						grp->ModInvOptimized();  // Use 8x unrolled version
 						
 						/*
 						We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
@@ -6817,33 +6840,33 @@ bool readFileAddress(char *fileName)	{
 			}
 			
 			//read bloom filter structure
-			bytesRead = fread(&bloom,1,sizeof(struct bloom),fileDescriptor);
+			bytesRead = fread(&bloom.orig,1,sizeof(struct bloom),fileDescriptor);
 			if(bytesRead != sizeof(struct bloom))	{
 				fprintf(stderr,"[E] Error reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 			
-			printf("[+] Bloom filter for %" PRIu64 " elements.\n",bloom.entries);
-			
-			bloom.bf = (uint8_t*) malloc(bloom.bytes);
-			if(bloom.bf == NULL)	{
+			printf("[+] Bloom filter for %" PRIu64 " elements.\n",bloom.orig.entries);
+
+			bloom.orig.bf = (uint8_t*) malloc(bloom.orig.bytes);
+			if(bloom.orig.bf == NULL)	{
 				fprintf(stderr,"[E] Error allocating memory, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 
 			//read bloom filter data
-			bytesRead = fread(bloom.bf,1,bloom.bytes,fileDescriptor);
-			if(bytesRead != bloom.bytes)	{
+			bytesRead = fread(bloom.orig.bf,1,bloom.orig.bytes,fileDescriptor);
+			if(bytesRead != bloom.orig.bytes)	{
 				fprintf(stderr,"[E] Error reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 			if(FLAGSKIPCHECKSUM == 0){
-				
+
 				//calculate checksum of the current readed data
-				sha256((uint8_t*)bloom.bf,bloom.bytes,(uint8_t*)checksum);
+				sha256((uint8_t*)bloom.orig.bf,bloom.orig.bytes,(uint8_t*)checksum);
 				
 				//Compare checksums
 				/*
@@ -6862,10 +6885,10 @@ bool readFileAddress(char *fileName)	{
 			
 			/*
 			if(FLAGDEBUG) {
-				hextemp = tohex((char*)bloom.bf,32);
+				hextemp = tohex((char*)bloom.orig.bf,32);
 				printf("[D] first 32 bytes of the bloom : %s\n",hextemp);
 				bloom_print(&bloom);
-				printf("[D] bloom.bf points to %p\n",bloom.bf);
+				printf("[D] bloom.orig.bf points to %p\n",bloom.orig.bf);
 			}
 			*/
 			
@@ -6908,7 +6931,7 @@ bool readFileAddress(char *fileName)	{
 					return false;
 				}
 			}
-			//printf("[D] bloom.bf points to %p\n",bloom.bf);
+			//printf("[D] bloom.orig.bf points to %p\n",bloom.orig.bf);
 			FLAGREADEDFILE1 = 1;	/* We mark the file as readed*/
 			fclose(fileDescriptor);
 			MAXLENGTHADDRESS = sizeof(struct address_value);
@@ -6978,7 +7001,7 @@ bool forceReadFileAddress(char *fileName)	{
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ -1 );
 		
-	if(!initBloomFilter(&bloom,numberItems))
+	if(!initBloomFilterExt(&bloom,numberItems))
 		return false;
 
 	i = 0;
@@ -6995,7 +7018,7 @@ bool forceReadFileAddress(char *fileName)	{
 				b58tobin(rawvalue,&raw_value_length,aux,r);
 				if(raw_value_length == 25)	{
 					//hextemp = tohex((char*)rawvalue+1,20);
-					bloom_add(&bloom, rawvalue+1 ,sizeof(struct address_value));
+					bloom_ext_add(&bloom, rawvalue+1 ,sizeof(struct address_value));
 					memcpy(addressTable[i].value,rawvalue+1,sizeof(struct address_value));											
 					i++;
 					validAddress = true;
@@ -7003,7 +7026,7 @@ bool forceReadFileAddress(char *fileName)	{
 			}
 			if(r == 40 && isValidHex(aux))	{	//RMD
 				hexs2bin(aux,rawvalue);				
-				bloom_add(&bloom, rawvalue ,sizeof(struct address_value));
+				bloom_ext_add(&bloom, rawvalue ,sizeof(struct address_value));
 				memcpy(addressTable[i].value,rawvalue,sizeof(struct address_value));											
 				i++;
 				validAddress = true;
@@ -7051,11 +7074,11 @@ bool forceReadFileAddressEth(char *fileName)	{
 	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ -1 );
-	
-	
-	if(!initBloomFilter(&bloom,N))
+
+
+	if(!initBloomFilterExt(&bloom,N))
 		return false;
-	
+
 	i = 0;
 	while(i < numberItems)	{
 		validAddress = false;
@@ -7069,7 +7092,7 @@ bool forceReadFileAddressEth(char *fileName)	{
 				case 40:
 					if(isValidHex(aux)){
 						hexs2bin(aux,rawvalue);
-						bloom_add(&bloom, rawvalue ,sizeof(struct address_value));
+						bloom_ext_add(&bloom, rawvalue ,sizeof(struct address_value));
 						memcpy(addressTable[i].value,rawvalue,sizeof(struct address_value));											
 						i++;
 						validAddress = true;
@@ -7078,7 +7101,7 @@ bool forceReadFileAddressEth(char *fileName)	{
 				case 42:
 					if(isValidHex(aux+2)){
 						hexs2bin(aux+2,rawvalue);
-						bloom_add(&bloom, rawvalue ,sizeof(struct address_value));
+						bloom_ext_add(&bloom, rawvalue ,sizeof(struct address_value));
 						memcpy(addressTable[i].value,rawvalue,sizeof(struct address_value));											
 						i++;
 						validAddress = true;
@@ -7132,10 +7155,10 @@ bool forceReadFileXPoint(char *fileName)	{
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ - 1);
 	
 	N = numberItems;
-	
-	if(!initBloomFilter(&bloom,N))
+
+	if(!initBloomFilterExt(&bloom,N))
 		return false;
-	
+
 	i= 0;
 	while(i < N)	{
 		memset(aux,0,1000);
@@ -7152,7 +7175,7 @@ bool forceReadFileXPoint(char *fileName)	{
 						r = hexs2bin(aux,(uint8_t*) rawvalue);
 						if(r)	{
 							memcpy(addressTable[i].value,rawvalue,20);
-							bloom_add(&bloom,rawvalue,MAXLENGTHADDRESS);
+							bloom_ext_add(&bloom,rawvalue,MAXLENGTHADDRESS);
 						}
 						else	{
 							fprintf(stderr,"[E] error hexs2bin\n");
@@ -7162,7 +7185,7 @@ bool forceReadFileXPoint(char *fileName)	{
 						r = hexs2bin(aux+2, (uint8_t*)rawvalue);
 						if(r)	{
 							memcpy(addressTable[i].value,rawvalue,20);
-							bloom_add(&bloom,rawvalue,MAXLENGTHADDRESS);
+							bloom_ext_add(&bloom,rawvalue,MAXLENGTHADDRESS);
 						}
 						else	{
 							fprintf(stderr,"[E] error hexs2bin\n");
@@ -7172,7 +7195,7 @@ bool forceReadFileXPoint(char *fileName)	{
 						r = hexs2bin(aux, (uint8_t*) rawvalue);
 						if(r)	{
 								memcpy(addressTable[i].value,rawvalue+2,20);
-								bloom_add(&bloom,rawvalue,MAXLENGTHADDRESS);
+								bloom_ext_add(&bloom,rawvalue,MAXLENGTHADDRESS);
 						}
 						else	{
 							fprintf(stderr,"[E] error hexs2bin\n");
@@ -7274,6 +7297,56 @@ bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
 	return r;
 }
 
+/*
+ * Initialize bloom filter using the fast extended wrapper
+ * This provides ~2x speedup on bloom lookups
+ */
+bool initBloomFilterExt(bloom_extended_t *bloom_arg, uint64_t items_bloom) {
+	bool r = true;
+	uint64_t effective_items = items_bloom <= 10000 ? 10000 : FLAGBLOOMMULTIPLIER * items_bloom;
+
+	printf("[+] Bloom filter for %" PRIu64 " elements.\n", items_bloom);
+
+	if (bloom_ext_init(bloom_arg, effective_items, 0.000001) != 0) {
+		fprintf(stderr, "[E] error bloom_init for %" PRIu64 " elements.\n", effective_items);
+		return false;
+	}
+
+	uint64_t bloom_bytes = bloom_ext_bytes(bloom_arg);
+	printf("[+] Loading data to the bloomfilter total: %.2f MB\n", (double)bloom_bytes / 1048576.0);
+
+	if (bloom_ext_is_fast(bloom_arg)) {
+		printf("[+] Using FAST bloom filter (XXH3 + bitmask optimization)\n");
+	}
+
+	// Memory check
+	uint64_t bloom_mb = bloom_bytes / (1024 * 1024);
+	uint64_t available_ram_mb = g_sysinfo.ram_available;
+	uint64_t safe_limit_mb = (available_ram_mb * 80) / 100;
+
+	if (bloom_mb > safe_limit_mb) {
+		fprintf(stderr, "\n");
+		fprintf(stderr, "[W] ========================================================\n");
+		fprintf(stderr, "[W] INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
+		fprintf(stderr, "[W] ========================================================\n");
+		fprintf(stderr, "[W] Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb / 1024);
+		fprintf(stderr, "[W] Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb / 1024);
+		fprintf(stderr, "[W] Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
+		fprintf(stderr, "[W]\n");
+		fprintf(stderr, "[W] Try reducing -z parameter or input file size\n");
+		fprintf(stderr, "[W] ========================================================\n\n");
+
+		bloom_ext_free(bloom_arg);
+		r = false;
+	} else {
+		double percent_used = (double)bloom_mb * 100.0 / (double)available_ram_mb;
+		fprintf(stderr, "[I] Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
+			bloom_mb, available_ram_mb, percent_used);
+	}
+
+	return r;
+}
+
 void writeFileIfNeeded(const char *fileName)	{
 	//printf("[D] FLAGSAVEREADFILE %i, FLAGREADEDFILE1 %i\n",FLAGSAVEREADFILE,FLAGREADEDFILE1);
 	if(FLAGSAVEREADFILE && !FLAGREADEDFILE1)	{
@@ -7310,7 +7383,7 @@ void writeFileIfNeeded(const char *fileName)	{
 			
 			
 
-			sha256((uint8_t*)bloom.bf,bloom.bytes,(uint8_t*)bloomChecksum);
+			sha256((uint8_t*)bloom.orig.bf,bloom.orig.bytes,(uint8_t*)bloomChecksum);
 			printf(".");
 			bytesWrite = fwrite(bloomChecksum,1,32,fileDescriptor);
 			if(bytesWrite != 32)	{
@@ -7318,16 +7391,16 @@ void writeFileIfNeeded(const char *fileName)	{
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
-			
-			bytesWrite = fwrite(&bloom,1,sizeof(struct bloom),fileDescriptor);
+
+			bytesWrite = fwrite(&bloom.orig,1,sizeof(struct bloom),fileDescriptor);
 			if(bytesWrite != sizeof(struct bloom))	{
 				fprintf(stderr,"[E] Error writing file, code line %i\n",__LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
-			
-			bytesWrite = fwrite(bloom.bf,1,bloom.bytes,fileDescriptor);
-			if(bytesWrite != bloom.bytes)	{
+
+			bytesWrite = fwrite(bloom.orig.bf,1,bloom.orig.bytes,fileDescriptor);
+			if(bytesWrite != bloom.orig.bytes)	{
 				fprintf(stderr,"[E] Error writing file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				exit(EXIT_FAILURE);
@@ -7336,7 +7409,7 @@ void writeFileIfNeeded(const char *fileName)	{
 			
 			/*
 			if(FLAGDEBUG)	{
-				hextemp = tohex((char*)bloom.bf,32);
+				hextemp = tohex((char*)bloom.orig.bf,32);
 				printf("\n[D] first 32 bytes bloom : %s\n",hextemp);
 				bloom_print(&bloom);
 				free(hextemp);

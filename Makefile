@@ -18,13 +18,14 @@ LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
 LDLIBS ?=
 LDLIBS += -lm -lpthread
 
-BLOOM_OBJS := oldbloom/bloom.o bloom/bloom.o
-HASH_OBJS := hash/ripemd160.o hash/ripemd160_sse.o hash/ripemd160_avx2.o hash/ripemd160_avx512.o hash/sha256.o hash/sha256_sse.o hash/sha256_avx2.o
+BLOOM_OBJS := oldbloom/bloom.o bloom/bloom.o bloom/bloom_simd.o
+HASH_OBJS := hash/ripemd160.o hash/ripemd160_sse.o hash/ripemd160_avx2.o hash/ripemd160_avx512.o hash/sha256.o hash/sha256_sse.o hash/sha256_avx2.o hash/sha256_shani.o
 SHA3_OBJS := sha3/sha3.o sha3/keccak.o
 SECP256K1_OBJS := secp256k1/Int.o secp256k1/Point.o secp256k1/SECP256K1.o secp256k1/IntMod.o secp256k1/Random.o secp256k1/IntGroup.o
 GMP256K1_OBJS := gmp256k1/Int.o gmp256k1/Point.o gmp256k1/GMP256K1.o gmp256k1/IntMod.o gmp256k1/Random.o gmp256k1/IntGroup.o
+BSGS_OBJS := bsgs/bsgs_ops.o bsgs/bsgs_fast.o
 
-COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS)
+COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS)
 
 KEYHUNT_OBJS := keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 BSGSD_OBJS := bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
@@ -48,6 +49,7 @@ keyhunt_legacy: $(LEGACY_OBJS)
 clean:
 	$(RM) keyhunt keyhunt_legacy bsgsd
 	$(RM) $(KEYHUNT_OBJS) $(BSGSD_OBJS) $(LEGACY_OBJS) parameter_validator.o
+	$(RM) $(BSGS_OBJS) bloom/bloom_simd.o hash/sha256_shani.o
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -77,3 +79,18 @@ hash/sha256_avx2.o: hash/sha256_avx2.cpp
 # AVX-512 optimized builds
 hash/ripemd160_avx512.o: hash/ripemd160_avx512.cpp
 	$(CXX) $(CXXFLAGS) -mavx512f -mavx512dq -c $< -o $@
+
+# SHA-NI optimized builds (Intel SHA Extensions)
+hash/sha256_shani.o: hash/sha256_shani.cpp
+	$(CXX) $(CXXFLAGS) -msha -msse4.1 -c $< -o $@
+
+# SIMD bloom filter (AVX2/AVX-512)
+bloom/bloom_simd.o: bloom/bloom_simd.cpp
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
+# BSGS optimized modules
+bsgs/bsgs_ops.o: bsgs/bsgs_ops.cpp
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
+bsgs/bsgs_fast.o: bsgs/bsgs_fast.cpp
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
