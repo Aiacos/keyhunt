@@ -985,6 +985,15 @@ int gpu_full_search(const gpu_search_config_t *config) {
     uint64_t key_offset = 0;
     int total_found = 0;
 
+    // Timing for speed calculation
+    cudaEvent_t start_event, current_event;
+    cudaEventCreate(&start_event);
+    cudaEventCreate(&current_event);
+    cudaEventRecord(start_event);
+
+    uint64_t last_report_keys = 0;
+    float last_report_time = 0.0f;
+
     printf("[+] GPU full search: %d blocks x %d threads x %lu keys/thread = %lu keys/launch\n",
            blocks, threads_per_block, (unsigned long)keys_per_thread, (unsigned long)keys_per_launch);
     printf("[+] Range size: %lu keys\n", (unsigned long)range_size);
@@ -1064,16 +1073,63 @@ int gpu_full_search(const gpu_search_config_t *config) {
             cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
         }
 
-        // Progress output every few batches
+        // Progress output with speed calculation
         if ((key_offset % (keys_per_launch * 10)) == 0 || key_offset >= range_size) {
-            printf("\r[+] Progress: %lu / %lu keys (%.1f%%), found: %d   ",
+            cudaEventRecord(current_event);
+            cudaEventSynchronize(current_event);
+
+            float elapsed_ms = 0.0f;
+            cudaEventElapsedTime(&elapsed_ms, start_event, current_event);
+            float elapsed_sec = elapsed_ms / 1000.0f;
+
+            // Calculate speed
+            double speed = 0.0;
+            const char *speed_unit = "keys/s";
+
+            if (elapsed_sec > 0.1f) {
+                speed = (double)total_keys / elapsed_sec;
+
+                if (speed >= 1e9) {
+                    speed /= 1e9;
+                    speed_unit = "Gkeys/s";
+                } else if (speed >= 1e6) {
+                    speed /= 1e6;
+                    speed_unit = "Mkeys/s";
+                } else if (speed >= 1e3) {
+                    speed /= 1e3;
+                    speed_unit = "Kkeys/s";
+                }
+            }
+
+            printf("\r[+] GPU: %.2f %s | %lu / %lu keys (%.1f%%) | found: %d   ",
+                   speed, speed_unit,
                    (unsigned long)key_offset, (unsigned long)range_size,
                    (double)key_offset * 100.0 / (double)range_size, total_found);
             fflush(stdout);
+
+            last_report_keys = total_keys;
+            last_report_time = elapsed_sec;
         }
     }
 
-    printf("\n");
+    // Final timing
+    cudaEventRecord(current_event);
+    cudaEventSynchronize(current_event);
+    float total_elapsed_ms = 0.0f;
+    cudaEventElapsedTime(&total_elapsed_ms, start_event, current_event);
+    float total_elapsed_sec = total_elapsed_ms / 1000.0f;
+
+    double final_speed = (total_elapsed_sec > 0) ? (double)total_keys / total_elapsed_sec : 0.0;
+    const char *final_unit = "keys/s";
+    if (final_speed >= 1e9) { final_speed /= 1e9; final_unit = "Gkeys/s"; }
+    else if (final_speed >= 1e6) { final_speed /= 1e6; final_unit = "Mkeys/s"; }
+    else if (final_speed >= 1e3) { final_speed /= 1e3; final_unit = "Kkeys/s"; }
+
+    printf("\n[+] GPU search completed in %.2f seconds (avg: %.2f %s)\n",
+           total_elapsed_sec, final_speed, final_unit);
+
+    cudaEventDestroy(start_event);
+    cudaEventDestroy(current_event);
     cudaFree(d_should_stop);
     return total_found;
 }
