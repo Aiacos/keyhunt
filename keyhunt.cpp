@@ -202,6 +202,18 @@ static int gpu_upload_targets_from_addressTable(int64_t count);
 static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *userdata);
 static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count);
 
+// Hybrid mode: GPU thread wrapper
+typedef struct {
+	Int start_key;
+	Int end_key;
+	Int stride;
+	int64_t target_count;
+	volatile int result;
+	volatile int completed;
+} gpu_hybrid_args_t;
+
+static void *gpu_hybrid_thread(void *arg);
+
 bool isBase58(char c);
 bool isValidBase58String(char *str);
 
@@ -356,9 +368,13 @@ int FLAGPRECALCUTED_P_FILE = 0;
 int FLAGGPU = 0;
 // GPU full search mode: 0=off (hash-only), 1=full ECC+hash+match on GPU
 int FLAGGPU_FULL = 0;
+// GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
+int FLAGGPU_HYBRID = 0;
 // Volatile stats for GPU search
 volatile uint64_t g_gpu_keys_checked = 0;
 volatile int g_gpu_should_stop = 0;
+// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
+int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
 
 int bitrange;
 char *str_N;
@@ -1075,7 +1091,12 @@ int main(int argc, char **argv)	{
 	Int total,pretotal,debugcount_mpz,seconds,div_pretotal,int_aux,int_r,int_q,int58;
 	struct bPload *bPload_temp_ptr;
 	size_t rsize;
-	
+
+	// Hybrid mode variables (GPU + CPU parallel)
+	pthread_t gpu_thread_id = 0;
+	gpu_hybrid_args_t gpu_hybrid_args = {};
+	int gpu_hybrid_started = 0;
+
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	DWORD s;
 	write_keys = CreateMutex(NULL, FALSE, NULL);
@@ -1296,8 +1317,13 @@ int main(int argc, char **argv)	{
 						FLAGGPU = 1;
 						FLAGGPU_FULL = 1;  // Full GPU mode
 						printf("[+] GPU full mode (ECC + hash160 + matching on GPU)\n");
+					} else if (strcasecmp(optarg, "hybrid") == 0) {
+						FLAGGPU = 1;
+						FLAGGPU_FULL = 1;
+						FLAGGPU_HYBRID = 1;  // Hybrid mode: GPU + CPU in parallel
+						printf("[+] GPU hybrid mode (GPU + CPU in parallel for maximum throughput)\n");
 					} else {
-						fprintf(stderr,"[W] Invalid -G value '%s', use: off|auto|hash|full\n", optarg);
+						fprintf(stderr,"[W] Invalid -G value '%s', use: off|auto|hash|full|hybrid\n", optarg);
 					}
 				}
 			break;
@@ -3091,7 +3117,7 @@ int main(int argc, char **argv)	{
 		// ============================================================================
 		// GPU Full Search Mode (ECC + hash160 + matching entirely on GPU)
 		// ============================================================================
-		if (FLAGGPU_FULL && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
+		if (FLAGGPU_FULL && !FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
 			printf("[+] Running GPU full search mode...\n");
 
 			// Reset stats
@@ -3117,6 +3143,75 @@ int main(int argc, char **argv)	{
 				// GPU search failed, fall back to CPU
 				fprintf(stderr, "[W] GPU search failed, falling back to CPU threads\n");
 				FLAGGPU_FULL = 0;
+			}
+		}
+
+		// ============================================================================
+		// GPU Hybrid Mode (GPU + CPU in parallel for maximum throughput)
+		// ============================================================================
+		if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
+			Int gpu_range_end;  // GPU gets the first portion of the range
+			printf("[+] Running GPU+CPU hybrid mode...\n");
+
+			// Calculate range split point: GPU gets g_gpu_range_percent% of range
+			Int range_diff, gpu_portion;
+			range_diff.Set(&n_range_end);
+			range_diff.Sub(&n_range_start);
+
+			// GPU gets g_gpu_range_percent% of the range
+			gpu_portion.Set(&range_diff);
+			gpu_portion.Mult(g_gpu_range_percent);
+			Int divisor;
+			divisor.SetInt32(100);
+			gpu_portion.Div(&divisor);
+
+			// GPU range: n_range_start to (n_range_start + gpu_portion)
+			gpu_range_end.Set(&n_range_start);
+			gpu_range_end.Add(&gpu_portion);
+
+			// Store original CPU start for later
+			Int cpu_range_start;
+			cpu_range_start.Set(&gpu_range_end);
+			cpu_range_start.AddOne();  // CPU starts right after GPU ends
+
+			printf("[+] GPU handles %d%% of range, CPU handles %d%%\n",
+				   g_gpu_range_percent, 100 - g_gpu_range_percent);
+
+			char *hextemp = n_range_start.GetBase16();
+			printf("[+] GPU range: 0x%s", hextemp);
+			free(hextemp);
+			hextemp = gpu_range_end.GetBase16();
+			printf(" - 0x%s\n", hextemp);
+			free(hextemp);
+			hextemp = cpu_range_start.GetBase16();
+			printf("[+] CPU range: 0x%s", hextemp);
+			free(hextemp);
+			hextemp = n_range_end.GetBase16();
+			printf(" - 0x%s\n", hextemp);
+			free(hextemp);
+
+			// Setup GPU thread arguments
+			gpu_hybrid_args.start_key.Set(&n_range_start);
+			gpu_hybrid_args.end_key.Set(&gpu_range_end);
+			gpu_hybrid_args.stride.Set(&stride);
+			gpu_hybrid_args.target_count = N;
+			gpu_hybrid_args.result = 0;
+			gpu_hybrid_args.completed = 0;
+
+			// Reset GPU stats
+			g_gpu_keys_checked = 0;
+			g_gpu_should_stop = 0;
+
+			// Start GPU thread
+			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
+			if (err != 0) {
+				fprintf(stderr, "[W] Failed to start GPU thread, falling back to GPU-only\n");
+				FLAGGPU_HYBRID = 0;
+			} else {
+				gpu_hybrid_started = 1;
+				// Update n_range_start for CPU threads to use CPU's portion
+				n_range_start.Set(&cpu_range_start);
+				printf("[+] GPU thread started, CPU threads will process remaining range\n");
 			}
 		}
 
@@ -3272,6 +3367,19 @@ int main(int argc, char **argv)	{
 			}
 		}
 	}while(continue_flag);
+
+	// Wait for GPU thread if hybrid mode was started
+	if (FLAGGPU_HYBRID && gpu_hybrid_started) {
+		printf("\n[+] Waiting for GPU thread to complete...\n");
+		pthread_join(gpu_thread_id, NULL);
+
+		printf("[+] GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
+		printf("[+] GPU keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
+
+		// Cleanup GPU
+		gpu_backend_shutdown();
+	}
+
 	printf("\nEnd\n");
 #ifndef _WIN64
 	shutdown_work_queue();
@@ -7226,6 +7334,17 @@ static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *
 
 	// Use existing writekey function
 	writekey(compressed ? true : false, &key);
+}
+
+// GPU hybrid thread function
+static void *gpu_hybrid_thread(void *arg) {
+	gpu_hybrid_args_t *args = (gpu_hybrid_args_t *)arg;
+
+	// Run GPU search on its portion of the range
+	args->result = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
+	args->completed = 1;
+
+	return NULL;
 }
 
 // Run full GPU search with CPU fallback
