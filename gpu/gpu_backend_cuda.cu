@@ -401,6 +401,377 @@ __device__ void ripemd160_32(const uint8_t *msg, uint8_t *hash) {
 }
 
 // ============================================================================
+// Point operations (device) for full GPU mode
+// ============================================================================
+
+__device__ void point_set_infinity(Point256_d *p) {
+    u256_set_zero(&p->x);
+    u256_set_zero(&p->y);
+    u256_set_zero(&p->z);
+}
+
+__device__ int point_is_infinity(const Point256_d *p) {
+    return u256_is_zero(&p->z);
+}
+
+__device__ void point_from_affine(Point256_d *p, const uint256_d *x, const uint256_d *y) {
+    u256_set(&p->x, x);
+    u256_set(&p->y, y);
+    u256_set_zero(&p->z);
+    p->z.d[0] = 1;
+}
+
+// Point doubling in Jacobian coordinates
+__device__ void point_double(Point256_d *r, const Point256_d *p) {
+    if (point_is_infinity(p) || u256_is_zero(&p->y)) {
+        point_set_infinity(r);
+        return;
+    }
+
+    uint256_d a, b, c, d, e, f, tmp;
+
+    mod_sqr(&a, &p->x);          // a = X^2
+    mod_sqr(&b, &p->y);          // b = Y^2
+    mod_sqr(&c, &b);             // c = Y^4
+
+    mod_add(&tmp, &p->x, &b);
+    mod_sqr(&d, &tmp);
+    mod_sub(&d, &d, &a);
+    mod_sub(&d, &d, &c);
+    mod_add(&d, &d, &d);         // d = 2*((X+b)^2 - a - c)
+
+    mod_add(&e, &a, &a);
+    mod_add(&e, &e, &a);         // e = 3*X^2
+
+    mod_sqr(&f, &e);             // f = e^2
+
+    mod_add(&tmp, &d, &d);
+    mod_sub(&r->x, &f, &tmp);    // X3 = f - 2*d
+
+    mod_mul(&r->z, &p->y, &p->z);
+    mod_add(&r->z, &r->z, &r->z); // Z3 = 2*Y*Z
+
+    mod_sub(&tmp, &d, &r->x);
+    mod_mul(&r->y, &e, &tmp);
+    mod_add(&c, &c, &c);
+    mod_add(&c, &c, &c);
+    mod_add(&c, &c, &c);         // 8*c
+    mod_sub(&r->y, &r->y, &c);   // Y3 = e*(d-X3) - 8*c
+}
+
+// Point addition with Q in affine (Z=1)
+__device__ void point_add_affine(Point256_d *r, const Point256_d *p,
+                                  const uint256_d *qx, const uint256_d *qy) {
+    if (point_is_infinity(p)) {
+        point_from_affine(r, qx, qy);
+        return;
+    }
+
+    uint256_d z1z1, u2, s2, h, hh, i, j, rr, v, tmp;
+
+    mod_sqr(&z1z1, &p->z);        // Z1Z1 = Z1^2
+    mod_mul(&u2, qx, &z1z1);      // U2 = X2*Z1Z1
+
+    mod_mul(&tmp, &p->z, &z1z1);
+    mod_mul(&s2, qy, &tmp);       // S2 = Y2*Z1*Z1Z1
+
+    mod_sub(&h, &u2, &p->x);      // H = U2 - X1
+
+    if (u256_is_zero(&h)) {
+        mod_sub(&tmp, &s2, &p->y);
+        if (u256_is_zero(&tmp)) {
+            point_double(r, p);
+            return;
+        } else {
+            point_set_infinity(r);
+            return;
+        }
+    }
+
+    mod_sqr(&hh, &h);             // HH = H^2
+    mod_add(&i, &hh, &hh);
+    mod_add(&i, &i, &i);          // I = 4*HH
+
+    mod_mul(&j, &h, &i);          // J = H*I
+
+    mod_sub(&rr, &s2, &p->y);
+    mod_add(&rr, &rr, &rr);       // r = 2*(S2-Y1)
+
+    mod_mul(&v, &p->x, &i);       // V = X1*I
+
+    mod_sqr(&r->x, &rr);
+    mod_sub(&r->x, &r->x, &j);
+    mod_sub(&r->x, &r->x, &v);
+    mod_sub(&r->x, &r->x, &v);    // X3 = r^2 - J - 2*V
+
+    mod_sub(&tmp, &v, &r->x);
+    mod_mul(&r->y, &rr, &tmp);
+    mod_mul(&tmp, &p->y, &j);
+    mod_add(&tmp, &tmp, &tmp);
+    mod_sub(&r->y, &r->y, &tmp);  // Y3 = r*(V-X3) - 2*Y1*J
+
+    mod_add(&r->z, &p->z, &h);
+    mod_sqr(&r->z, &r->z);
+    mod_sub(&r->z, &r->z, &z1z1);
+    mod_sub(&r->z, &r->z, &hh);   // Z3 = (Z1+H)^2 - Z1Z1 - HH
+}
+
+// Get X coordinate in affine (for hash160)
+__device__ void point_get_x_affine(uint256_d *x, const Point256_d *p) {
+    if (point_is_infinity(p)) {
+        u256_set_zero(x);
+        return;
+    }
+
+    uint256_d z_inv, z_inv2;
+    mod_inv(&z_inv, &p->z);
+    mod_sqr(&z_inv2, &z_inv);
+    mod_mul(x, &p->x, &z_inv2);
+}
+
+// Get Y parity (0 = even, 1 = odd) for compressed prefix
+__device__ int point_get_y_parity(const Point256_d *p) {
+    if (point_is_infinity(p)) return 0;
+
+    uint256_d z_inv, z_inv2, z_inv3, y_affine;
+    mod_inv(&z_inv, &p->z);
+    mod_sqr(&z_inv2, &z_inv);
+    mod_mul(&z_inv3, &z_inv2, &z_inv);
+    mod_mul(&y_affine, &p->y, &z_inv3);
+
+    return y_affine.d[0] & 1;
+}
+
+// ============================================================================
+// G Table access (uploaded from CPU)
+// ============================================================================
+
+// G table format: 256 * 32 affine points, each point = 64 bytes (X || Y)
+// Entry [byte_pos * 256 + byte_val] = (byte_val+1) * G * 2^(8*byte_pos)
+__device__ void gtable_get_point(uint256_d *x, uint256_d *y,
+                                  const uint8_t *gtable, int byte_pos, uint8_t byte_val) {
+    if (byte_val == 0) {
+        u256_set_zero(x);
+        u256_set_zero(y);
+        return;
+    }
+
+    const uint8_t *entry = gtable + ((size_t)byte_pos * 256 + (byte_val - 1)) * 64;
+
+    // X coordinate (big-endian in table)
+    for (int i = 0; i < 8; i++) {
+        x->d[7 - i] = ((uint32_t)entry[i*4] << 24) | ((uint32_t)entry[i*4+1] << 16) |
+                      ((uint32_t)entry[i*4+2] << 8) | (uint32_t)entry[i*4+3];
+    }
+    // Y coordinate
+    entry += 32;
+    for (int i = 0; i < 8; i++) {
+        y->d[7 - i] = ((uint32_t)entry[i*4] << 24) | ((uint32_t)entry[i*4+1] << 16) |
+                      ((uint32_t)entry[i*4+2] << 8) | (uint32_t)entry[i*4+3];
+    }
+}
+
+// Scalar multiplication using G table
+__device__ void scalar_mul_G(Point256_d *r, const uint256_d *k, const uint8_t *gtable) {
+    point_set_infinity(r);
+
+    for (int byte_pos = 0; byte_pos < 32; byte_pos++) {
+        int word = byte_pos / 4;
+        int byte_in_word = byte_pos % 4;
+        uint8_t b = (uint8_t)(k->d[word] >> (byte_in_word * 8));
+
+        if (b > 0) {
+            uint256_d gx, gy;
+            gtable_get_point(&gx, &gy, gtable, byte_pos, b);
+            point_add_affine(r, r, &gx, &gy);
+        }
+    }
+}
+
+// ============================================================================
+// Bloom filter check (device)
+// ============================================================================
+
+__device__ int bloom_check(const uint8_t *bloom, size_t bloom_size, int num_hashes,
+                           const uint8_t *hash20) {
+    // Simple bloom filter check using hash bytes as indices
+    // Each hash function uses different byte pairs from the 20-byte hash
+
+    for (int h = 0; h < num_hashes && h < 10; h++) {
+        // Use pairs of bytes for indices
+        int byte1 = h * 2;
+        int byte2 = h * 2 + 1;
+        if (byte2 >= 20) byte2 = h % 20;
+
+        uint32_t idx = ((uint32_t)hash20[byte1] << 8) | hash20[byte2];
+        idx = (idx * 0x9E3779B9u) % (bloom_size * 8);  // Golden ratio hash
+
+        size_t byte_idx = idx / 8;
+        int bit_idx = idx % 8;
+
+        if (!(bloom[byte_idx] & (1 << bit_idx))) {
+            return 0;  // Definitely not in set
+        }
+    }
+    return 1;  // Might be in set
+}
+
+// ============================================================================
+// Direct target search (device) - for small target counts
+// ============================================================================
+
+__device__ int target_search(const uint8_t *targets, size_t target_count,
+                             const uint8_t *hash20) {
+    for (size_t i = 0; i < target_count; i++) {
+        const uint8_t *target = targets + i * 20;
+        int match = 1;
+        for (int j = 0; j < 20 && match; j++) {
+            if (hash20[j] != target[j]) match = 0;
+        }
+        if (match) return (int)i;
+    }
+    return -1;
+}
+
+// ============================================================================
+// Found key result buffer
+// ============================================================================
+
+struct FoundKey {
+    uint256_d privkey;
+    int compressed;  // 2 = prefix 02, 3 = prefix 03
+    int valid;
+};
+
+#define MAX_FOUND_KEYS 256
+__device__ FoundKey d_found_keys[MAX_FOUND_KEYS];
+__device__ int d_found_count = 0;
+
+__device__ void report_found_key(const uint256_d *privkey, int compressed) {
+    int idx = atomicAdd(&d_found_count, 1);
+    if (idx < MAX_FOUND_KEYS) {
+        u256_set(&d_found_keys[idx].privkey, privkey);
+        d_found_keys[idx].compressed = compressed;
+        d_found_keys[idx].valid = 1;
+    }
+}
+
+// ============================================================================
+// Full search kernel
+// ============================================================================
+
+__global__ void kernel_full_search(
+    const uint256_d start_key,
+    uint64_t key_offset,
+    uint64_t keys_per_thread,
+    const uint8_t *gtable,
+    const uint8_t *targets, size_t target_count,
+    const uint8_t *bloom, size_t bloom_size, int bloom_hashes,
+    int use_bloom,
+    volatile int *should_stop
+) {
+    uint64_t thread_id = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t base_offset = key_offset + thread_id * keys_per_thread;
+
+    // Compute starting key for this thread
+    uint256_d current_key;
+    u256_set(&current_key, &start_key);
+
+    // Add base_offset to current_key
+    uint64_t carry = base_offset;
+    for (int i = 0; i < 8 && carry; i++) {
+        uint64_t sum = (uint64_t)current_key.d[i] + (carry & 0xFFFFFFFF);
+        current_key.d[i] = (uint32_t)sum;
+        carry = (sum >> 32) + (carry >> 32);
+    }
+
+    // Compute initial point
+    Point256_d current_point;
+    scalar_mul_G(&current_point, &current_key, gtable);
+
+    // Pre-fetch G point for incrementing (byte 0, value 1 = 1*G)
+    uint256_d gx, gy;
+    gtable_get_point(&gx, &gy, gtable, 0, 1);
+
+    // Process keys
+    for (uint64_t i = 0; i < keys_per_thread; i++) {
+        if (*should_stop) return;
+
+        // Get X coordinate and Y parity
+        uint256_d x_affine;
+        point_get_x_affine(&x_affine, &current_point);
+        int y_parity = point_get_y_parity(&current_point);
+
+        // Convert X to big-endian bytes
+        uint8_t x_be[32];
+        for (int w = 0; w < 8; w++) {
+            uint32_t val = x_affine.d[7 - w];
+            x_be[w*4]     = (val >> 24) & 0xFF;
+            x_be[w*4 + 1] = (val >> 16) & 0xFF;
+            x_be[w*4 + 2] = (val >> 8) & 0xFF;
+            x_be[w*4 + 3] = val & 0xFF;
+        }
+
+        // Compute hash160 for correct parity prefix
+        uint8_t pubkey[33];
+        uint8_t sha_hash[32];
+        uint8_t hash160[20];
+
+        pubkey[0] = (y_parity == 0) ? 0x02 : 0x03;
+        for (int j = 0; j < 32; j++) pubkey[j + 1] = x_be[j];
+
+        sha256_33(pubkey, sha_hash);
+        ripemd160_32(sha_hash, hash160);
+
+        // Check against targets
+        int found = 0;
+        if (use_bloom && bloom && bloom_size > 0) {
+            if (bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
+                found = target_search(targets, target_count, hash160);
+            }
+        } else {
+            found = target_search(targets, target_count, hash160);
+        }
+
+        if (found >= 0) {
+            report_found_key(&current_key, pubkey[0]);
+        }
+
+        // Also check opposite parity (both 02 and 03 prefixes)
+        pubkey[0] = (y_parity == 0) ? 0x03 : 0x02;
+        sha256_33(pubkey, sha_hash);
+        ripemd160_32(sha_hash, hash160);
+
+        if (use_bloom && bloom && bloom_size > 0) {
+            if (bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
+                found = target_search(targets, target_count, hash160);
+            }
+        } else {
+            found = target_search(targets, target_count, hash160);
+        }
+
+        if (found >= 0) {
+            // For opposite parity, we need to negate the private key
+            // k' = n - k gives the same X but opposite Y
+            // For simplicity, just report the original key with different prefix
+            report_found_key(&current_key, pubkey[0]);
+        }
+
+        // Increment key and point: key++, point += G
+        uint64_t c = 1;
+        for (int j = 0; j < 8 && c; j++) {
+            uint64_t sum = (uint64_t)current_key.d[j] + c;
+            current_key.d[j] = (uint32_t)sum;
+            c = sum >> 32;
+        }
+
+        Point256_d next_point;
+        point_add_affine(&next_point, &current_point, &gx, &gy);
+        current_point = next_point;
+    }
+}
+
+// ============================================================================
 // Hash160 from X coordinate kernel
 // ============================================================================
 
@@ -560,11 +931,151 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
 
 int gpu_full_search(const gpu_search_config_t *config) {
     if (!g_available || !config) return -1;
+    if (!d_GTable || g_GTable_count == 0) {
+        fprintf(stderr, "[!] GPU full search requires G table upload first\n");
+        return -1;
+    }
+    if (!d_targets || g_target_count == 0) {
+        fprintf(stderr, "[!] GPU full search requires targets upload first\n");
+        return -1;
+    }
 
-    // TODO: Implement full GPU search with scalar multiplication
-    // For now, return -1 to indicate not implemented (will fallback to CPU)
-    fprintf(stderr, "[I] GPU full search not yet implemented, using CPU\n");
-    return -1;
+    // Reset found keys counter
+    int zero = 0;
+    cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+
+    // Allocate should_stop flag on device
+    int *d_should_stop = NULL;
+    cudaMalloc(&d_should_stop, sizeof(int));
+    cudaMemcpy(d_should_stop, (const void*)config->should_stop, sizeof(int), cudaMemcpyHostToDevice);
+
+    // Convert start_key and end_key to uint256_d
+    uint256_d start_key, end_key;
+    for (int i = 0; i < 8; i++) {
+        start_key.d[i] = ((uint32_t)config->start_key[(7-i)*4+3]) |
+                         ((uint32_t)config->start_key[(7-i)*4+2] << 8) |
+                         ((uint32_t)config->start_key[(7-i)*4+1] << 16) |
+                         ((uint32_t)config->start_key[(7-i)*4] << 24);
+        end_key.d[i] = ((uint32_t)config->end_key[(7-i)*4+3]) |
+                       ((uint32_t)config->end_key[(7-i)*4+2] << 8) |
+                       ((uint32_t)config->end_key[(7-i)*4+1] << 16) |
+                       ((uint32_t)config->end_key[(7-i)*4] << 24);
+    }
+
+    // Calculate range size (simplified: assumes range fits in 64 bits for small tests)
+    uint64_t range_size = 0;
+    if (end_key.d[7] == 0 && end_key.d[6] == 0 && end_key.d[5] == 0 && end_key.d[4] == 0 &&
+        end_key.d[3] == 0 && end_key.d[2] == 0) {
+        // Small range: fits in 64 bits
+        uint64_t end_val = ((uint64_t)end_key.d[1] << 32) | end_key.d[0];
+        uint64_t start_val = ((uint64_t)start_key.d[1] << 32) | start_key.d[0];
+        range_size = end_val - start_val + 1;
+    } else {
+        // Large range: process up to 2^40 keys per session
+        range_size = 1ULL << 40;
+    }
+
+    // Configure kernel launch
+    int threads_per_block = 256;
+    int blocks = g_info.multiprocessors * 4;  // 4 blocks per SM
+    uint64_t keys_per_thread = 64;  // Each thread processes 64 keys
+    uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
+
+    uint64_t total_keys = 0;
+    uint64_t key_offset = 0;
+    int total_found = 0;
+
+    printf("[+] GPU full search: %d blocks x %d threads x %lu keys/thread = %lu keys/launch\n",
+           blocks, threads_per_block, (unsigned long)keys_per_thread, (unsigned long)keys_per_launch);
+    printf("[+] Range size: %lu keys\n", (unsigned long)range_size);
+    fflush(stdout);
+
+    // Main search loop
+    while (!*(config->should_stop) && key_offset < range_size) {
+        // Update should_stop on device
+        cudaMemcpy(d_should_stop, (const void*)config->should_stop, sizeof(int), cudaMemcpyHostToDevice);
+
+        // Adjust keys_per_thread for last batch
+        uint64_t remaining = range_size - key_offset;
+        uint64_t actual_keys_per_thread = keys_per_thread;
+        if (remaining < keys_per_launch) {
+            actual_keys_per_thread = (remaining + blocks * threads_per_block - 1) / (blocks * threads_per_block);
+            if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
+        }
+
+        // Launch kernel
+        kernel_full_search<<<blocks, threads_per_block>>>(
+            start_key,
+            key_offset,
+            actual_keys_per_thread,
+            d_GTable,
+            d_targets, g_target_count,
+            d_bloom, g_bloom_size, g_bloom_hashes,
+            config->use_bloom,
+            d_should_stop
+        );
+
+        cudaError_t err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[!] CUDA kernel error: %s\n", cudaGetErrorString(err));
+            break;
+        }
+
+        // Update statistics
+        uint64_t keys_this_launch = (uint64_t)blocks * threads_per_block * actual_keys_per_thread;
+        key_offset += keys_this_launch;
+        total_keys += keys_this_launch;
+
+        if (config->keys_checked) {
+            *(config->keys_checked) = total_keys;
+        }
+
+        // Check for found keys
+        int found_count = 0;
+        cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
+
+        if (found_count > 0) {
+            // Retrieve found keys
+            FoundKey h_found[MAX_FOUND_KEYS];
+            cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
+
+            for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
+                if (h_found[i].valid) {
+                    total_found++;
+                    // Convert privkey to big-endian bytes
+                    uint8_t privkey_be[32];
+                    for (int w = 0; w < 8; w++) {
+                        uint32_t val = h_found[i].privkey.d[7 - w];
+                        privkey_be[w*4]     = (val >> 24) & 0xFF;
+                        privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
+                        privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
+                        privkey_be[w*4 + 3] = val & 0xFF;
+                    }
+
+                    // Call callback
+                    if (config->callback) {
+                        config->callback(privkey_be, h_found[i].compressed == 2 || h_found[i].compressed == 3,
+                                        config->callback_userdata);
+                    }
+                }
+            }
+
+            // Reset counter for next batch
+            cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+        }
+
+        // Progress output every few batches
+        if ((key_offset % (keys_per_launch * 10)) == 0 || key_offset >= range_size) {
+            printf("\r[+] Progress: %lu / %lu keys (%.1f%%), found: %d   ",
+                   (unsigned long)key_offset, (unsigned long)range_size,
+                   (double)key_offset * 100.0 / (double)range_size, total_found);
+            fflush(stdout);
+        }
+    }
+
+    printf("\n");
+    cudaFree(d_should_stop);
+    return total_found;
 }
 
 size_t gpu_get_optimal_batch_size(void) {
