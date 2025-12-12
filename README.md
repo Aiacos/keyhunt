@@ -105,12 +105,22 @@ If you have an NVIDIA GPU and the CUDA toolkit installed, the build system can c
 
 Use the `-G` flag to control GPU usage:
 
-| Flag | Description |
-|------|-------------|
-| `-G off` | Disable GPU, use CPU only |
-| `-G auto` | Auto-detect best mode (default) |
-| `-G hash` | GPU computes SHA256+RIPEMD160 (CPU generates ECC points) |
-| `-G full` | Full GPU search - ECC + hashing + matching (planned) |
+| Flag | Description | Performance (RTX 2080 SUPER) |
+|------|-------------|------------------------------|
+| `-G off` | Disable GPU, use CPU only | ~5-10 Mkeys/s per thread |
+| `-G auto` | Auto-detect best mode (default) | Uses full mode if available |
+| `-G hash` | GPU computes SHA256+RIPEMD160 (CPU generates ECC points) | ~50-100 Mkeys/s |
+| `-G full` | Full GPU search - ECC + hashing + matching on GPU | ~320-330 Mkeys/s |
+| `-G hybrid` | GPU + CPU in parallel for maximum throughput | ~400+ Mkeys/s combined |
+
+**Recommended for address/rmd160 searches:**
+- Single GPU: `-G full -l compress` (~325 Mkeys/s)
+- Maximum throughput: `-G hybrid -l compress` (~400 Mkeys/s GPU+CPU combined)
+
+Example with hybrid mode:
+```bash
+./keyhunt -m address -f targets.txt -b 66 -G hybrid -l compress
+```
 
 ### Build with CUDA
 
