@@ -36,7 +36,23 @@ static uint8_t *d_bloom = NULL;         // Bloom filter data
 static size_t g_bloom_size = 0;
 static int g_bloom_hashes = 0;
 
-// Single context for hash160-from-X mode (simplified, not thread-safe)
+// ============================================================================
+// Multi-stream async execution infrastructure
+// ============================================================================
+
+// Full search multi-stream context
+#define NUM_SEARCH_STREAMS 2
+typedef struct {
+    cudaStream_t stream;
+    cudaEvent_t start_event;
+    cudaEvent_t end_event;
+    int *d_should_stop;
+    int in_use;
+} search_stream_t;
+static search_stream_t g_search_streams[NUM_SEARCH_STREAMS];
+static int g_search_streams_initialized = 0;
+
+// Legacy single stream for compatibility
 static cudaStream_t g_stream = NULL;
 static uint8_t *d_x32 = NULL;
 static uint8_t *d_out02 = NULL;
@@ -1040,6 +1056,39 @@ __global__ void kernel_hash160_fromX(const uint8_t *x32_be, size_t count,
 }
 
 // ============================================================================
+// Multi-stream infrastructure functions
+// ============================================================================
+
+static void init_search_streams(void) {
+    if (g_search_streams_initialized) return;
+
+    for (int i = 0; i < NUM_SEARCH_STREAMS; i++) {
+        cudaStreamCreate(&g_search_streams[i].stream);
+        cudaEventCreate(&g_search_streams[i].start_event);
+        cudaEventCreate(&g_search_streams[i].end_event);
+        cudaMalloc(&g_search_streams[i].d_should_stop, sizeof(int));
+        g_search_streams[i].in_use = 0;
+    }
+    g_search_streams_initialized = 1;
+}
+
+static void cleanup_search_streams(void) {
+    if (!g_search_streams_initialized) return;
+
+    for (int i = 0; i < NUM_SEARCH_STREAMS; i++) {
+        if (g_search_streams[i].stream) {
+            cudaStreamSynchronize(g_search_streams[i].stream);
+            cudaStreamDestroy(g_search_streams[i].stream);
+        }
+        if (g_search_streams[i].start_event) cudaEventDestroy(g_search_streams[i].start_event);
+        if (g_search_streams[i].end_event) cudaEventDestroy(g_search_streams[i].end_event);
+        if (g_search_streams[i].d_should_stop) cudaFree(g_search_streams[i].d_should_stop);
+        memset(&g_search_streams[i], 0, sizeof(search_stream_t));
+    }
+    g_search_streams_initialized = 0;
+}
+
+// ============================================================================
 // Backend API implementation
 // ============================================================================
 
@@ -1077,22 +1126,64 @@ int gpu_backend_available(void) {
     return g_available;
 }
 
+// Forward declarations for cleanup
+static void cleanup_pinned_memory(void);
+
 void gpu_backend_shutdown(void) {
+    // Clean up multi-stream search infrastructure
+    cleanup_search_streams();
+
+    // Clean up persistent device memory
     if (d_GTable) { cudaFree(d_GTable); d_GTable = NULL; }
     if (d_targets) { cudaFree(d_targets); d_targets = NULL; }
     if (d_bloom) { cudaFree(d_bloom); d_bloom = NULL; }
+
+    // Clean up legacy single-stream context
     if (d_x32) { cudaFree(d_x32); d_x32 = NULL; }
     if (d_out02) { cudaFree(d_out02); d_out02 = NULL; }
     if (d_out03) { cudaFree(d_out03); d_out03 = NULL; }
     if (g_stream) { cudaStreamDestroy(g_stream); g_stream = NULL; }
+    g_capacity = 0;
+
+    // Clean up pinned memory pool
+    cleanup_pinned_memory();
+
     g_available = 0;
+}
+
+// Pinned memory pool for hash160 batch operations
+static uint8_t *h_x32_pinned = NULL;
+static uint8_t *h_out02_pinned = NULL;
+static uint8_t *h_out03_pinned = NULL;
+static size_t g_pinned_capacity = 0;
+
+static void ensure_pinned_memory(size_t count) {
+    if (count <= g_pinned_capacity) return;
+
+    // Free old pinned memory
+    if (h_x32_pinned) cudaFreeHost(h_x32_pinned);
+    if (h_out02_pinned) cudaFreeHost(h_out02_pinned);
+    if (h_out03_pinned) cudaFreeHost(h_out03_pinned);
+
+    // Allocate new pinned memory
+    cudaMallocHost(&h_x32_pinned, count * 32);
+    cudaMallocHost(&h_out02_pinned, count * 20);
+    cudaMallocHost(&h_out03_pinned, count * 20);
+    g_pinned_capacity = count;
+}
+
+static void cleanup_pinned_memory(void) {
+    if (h_x32_pinned) { cudaFreeHost(h_x32_pinned); h_x32_pinned = NULL; }
+    if (h_out02_pinned) { cudaFreeHost(h_out02_pinned); h_out02_pinned = NULL; }
+    if (h_out03_pinned) { cudaFreeHost(h_out03_pinned); h_out03_pinned = NULL; }
+    g_pinned_capacity = 0;
 }
 
 int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
                             uint8_t *out02, uint8_t *out03) {
     if (!g_available || count == 0) return 1;
 
-    // Allocate/reallocate device memory if needed
+    // Ensure device memory is allocated
     if (count > g_capacity) {
         if (d_x32) cudaFree(d_x32);
         if (d_out02) cudaFree(d_out02);
@@ -1106,19 +1197,27 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
         if (!g_stream) cudaStreamCreate(&g_stream);
     }
 
-    // Copy input to device
-    cudaMemcpyAsync(d_x32, x32_be, count * 32, cudaMemcpyHostToDevice, g_stream);
+    // Ensure pinned host memory for faster transfers
+    ensure_pinned_memory(count);
+
+    // Copy to pinned memory, then async transfer to device
+    memcpy(h_x32_pinned, x32_be, count * 32);
+    cudaMemcpyAsync(d_x32, h_x32_pinned, count * 32, cudaMemcpyHostToDevice, g_stream);
 
     // Launch kernel
     int threads = 256;
     int blocks = (count + threads - 1) / threads;
     kernel_hash160_fromX<<<blocks, threads, 0, g_stream>>>(d_x32, count, d_out02, d_out03);
 
-    // Copy results back
-    cudaMemcpyAsync(out02, d_out02, count * 20, cudaMemcpyDeviceToHost, g_stream);
-    cudaMemcpyAsync(out03, d_out03, count * 20, cudaMemcpyDeviceToHost, g_stream);
+    // Copy results to pinned memory, then to output
+    cudaMemcpyAsync(h_out02_pinned, d_out02, count * 20, cudaMemcpyDeviceToHost, g_stream);
+    cudaMemcpyAsync(h_out03_pinned, d_out03, count * 20, cudaMemcpyDeviceToHost, g_stream);
 
     cudaStreamSynchronize(g_stream);
+
+    // Copy from pinned to output (fast memcpy from page-locked memory)
+    memcpy(out02, h_out02_pinned, count * 20);
+    memcpy(out03, h_out03_pinned, count * 20);
 
     return (cudaGetLastError() == cudaSuccess) ? 0 : 1;
 }
@@ -1182,14 +1281,12 @@ int gpu_full_search(const gpu_search_config_t *config) {
         return -1;
     }
 
+    // Initialize multi-stream infrastructure
+    init_search_streams();
+
     // Reset found keys counter
     int zero = 0;
     cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
-
-    // Allocate should_stop flag on device
-    int *d_should_stop = NULL;
-    cudaMalloc(&d_should_stop, sizeof(int));
-    cudaMemcpy(d_should_stop, (const void*)config->should_stop, sizeof(int), cudaMemcpyHostToDevice);
 
     // Convert start_key and end_key to uint256_d
     uint256_d start_key, end_key;
@@ -1219,7 +1316,6 @@ int gpu_full_search(const gpu_search_config_t *config) {
 
     // Configure kernel launch
     // Uses optimized point_add_affine increment (only 1 scalar_mul_G per batch)
-    // Performance: ~10+ Mkeys/s with 8 keys/thread, scales with more keys
     int threads_per_block = 256;
     int blocks = g_info.multiprocessors * 16;
     uint64_t keys_per_thread = 512;  // More keys per thread = more increments, less scalar_mul_G
@@ -1228,6 +1324,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
     uint64_t total_keys = 0;
     uint64_t key_offset = 0;
     int total_found = 0;
+    int pending_stream = -1;  // Track which stream has a pending kernel
 
     // Timing for speed calculation
     cudaEvent_t start_event, current_event;
@@ -1235,15 +1332,24 @@ int gpu_full_search(const gpu_search_config_t *config) {
     cudaEventCreate(&current_event);
     cudaEventRecord(start_event);
 
-    printf("[+] GPU full search: %d blocks x %d threads x %lu keys/thread = %lu keys/launch\n",
+    printf("[+] GPU multi-stream search: %d blocks x %d threads x %lu keys/thread = %lu keys/launch\n",
            blocks, threads_per_block, (unsigned long)keys_per_thread, (unsigned long)keys_per_launch);
-    printf("[+] Range size: %lu keys\n", (unsigned long)range_size);
+    printf("[+] Range size: %lu keys (using %d async streams)\n",
+           (unsigned long)range_size, NUM_SEARCH_STREAMS);
     fflush(stdout);
 
-    // Main search loop
+    // Double-buffering main search loop
+    // Stream 0: currently executing kernel
+    // Stream 1: preparing/launching next kernel while stream 0 executes
+    int current_stream_idx = 0;
+
     while (!*(config->should_stop) && key_offset < range_size) {
-        // Update should_stop on device
-        cudaMemcpy(d_should_stop, (const void*)config->should_stop, sizeof(int), cudaMemcpyHostToDevice);
+        search_stream_t *stream = &g_search_streams[current_stream_idx];
+
+        // Update should_stop on device (async on this stream)
+        int should_stop_val = *(config->should_stop);
+        cudaMemcpyAsync(stream->d_should_stop, &should_stop_val, sizeof(int),
+                        cudaMemcpyHostToDevice, stream->stream);
 
         // Adjust keys_per_thread for last batch
         uint64_t remaining = range_size - key_offset;
@@ -1253,8 +1359,11 @@ int gpu_full_search(const gpu_search_config_t *config) {
             if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
         }
 
-        // Launch kernel
-        kernel_full_search<<<blocks, threads_per_block>>>(
+        // Record start event for this kernel
+        cudaEventRecord(stream->start_event, stream->stream);
+
+        // Launch kernel on this stream (non-blocking)
+        kernel_full_search<<<blocks, threads_per_block, 0, stream->stream>>>(
             start_key,
             key_offset,
             actual_keys_per_thread,
@@ -1262,17 +1371,64 @@ int gpu_full_search(const gpu_search_config_t *config) {
             d_targets, g_target_count,
             d_bloom, g_bloom_size, g_bloom_hashes,
             config->use_bloom,
-            d_should_stop
+            stream->d_should_stop
         );
 
-        cudaError_t err = cudaDeviceSynchronize();
-        if (err != cudaSuccess) {
-            fprintf(stderr, "[!] CUDA kernel error: %s\n", cudaGetErrorString(err));
-            break;
+        // Record end event
+        cudaEventRecord(stream->end_event, stream->stream);
+        stream->in_use = 1;
+
+        // Calculate keys for this launch
+        uint64_t keys_this_launch = (uint64_t)blocks * threads_per_block * actual_keys_per_thread;
+
+        // If there's a previous stream pending, wait for it and check results
+        if (pending_stream >= 0 && pending_stream != current_stream_idx) {
+            search_stream_t *prev_stream = &g_search_streams[pending_stream];
+
+            // Wait for previous stream to complete
+            cudaError_t err = cudaStreamSynchronize(prev_stream->stream);
+            if (err != cudaSuccess) {
+                fprintf(stderr, "\n[!] CUDA kernel error: %s\n", cudaGetErrorString(err));
+                break;
+            }
+            prev_stream->in_use = 0;
+
+            // Check for found keys (do this while next kernel is running)
+            int found_count = 0;
+            cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
+
+            if (found_count > 0) {
+                // Retrieve found keys
+                FoundKey h_found[MAX_FOUND_KEYS];
+                cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
+
+                for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
+                    if (h_found[i].valid) {
+                        total_found++;
+                        // Convert privkey to big-endian bytes
+                        uint8_t privkey_be[32];
+                        for (int w = 0; w < 8; w++) {
+                            uint32_t val = h_found[i].privkey.d[7 - w];
+                            privkey_be[w*4]     = (val >> 24) & 0xFF;
+                            privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
+                            privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
+                            privkey_be[w*4 + 3] = val & 0xFF;
+                        }
+
+                        // Call callback
+                        if (config->callback) {
+                            config->callback(privkey_be, h_found[i].compressed == 2 || h_found[i].compressed == 3,
+                                            config->callback_userdata);
+                        }
+                    }
+                }
+
+                // Reset counter for next batch
+                cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+            }
         }
 
-        // Update statistics
-        uint64_t keys_this_launch = (uint64_t)blocks * threads_per_block * actual_keys_per_thread;
+        // Update offset for next iteration
         key_offset += keys_this_launch;
         total_keys += keys_this_launch;
 
@@ -1280,41 +1436,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
             *(config->keys_checked) = total_keys;
         }
 
-        // Check for found keys
-        int found_count = 0;
-        cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
-
-        if (found_count > 0) {
-            // Retrieve found keys
-            FoundKey h_found[MAX_FOUND_KEYS];
-            cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
-
-            for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
-                if (h_found[i].valid) {
-                    total_found++;
-                    // Convert privkey to big-endian bytes
-                    uint8_t privkey_be[32];
-                    for (int w = 0; w < 8; w++) {
-                        uint32_t val = h_found[i].privkey.d[7 - w];
-                        privkey_be[w*4]     = (val >> 24) & 0xFF;
-                        privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
-                        privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
-                        privkey_be[w*4 + 3] = val & 0xFF;
-                    }
-
-                    // Call callback
-                    if (config->callback) {
-                        config->callback(privkey_be, h_found[i].compressed == 2 || h_found[i].compressed == 3,
-                                        config->callback_userdata);
-                    }
-                }
-            }
-
-            // Reset counter for next batch
-            cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
-        }
-
-        // Progress output with speed calculation
+        // Progress output (less frequently to reduce overhead)
         if ((key_offset % (keys_per_launch * 10)) == 0 || key_offset >= range_size) {
             cudaEventRecord(current_event);
             cudaEventSynchronize(current_event);
@@ -1348,6 +1470,43 @@ int gpu_full_search(const gpu_search_config_t *config) {
                    (double)key_offset * 100.0 / (double)range_size, total_found);
             fflush(stdout);
         }
+
+        // Mark this stream as pending and switch to other stream
+        pending_stream = current_stream_idx;
+        current_stream_idx = (current_stream_idx + 1) % NUM_SEARCH_STREAMS;
+    }
+
+    // Wait for last pending stream
+    if (pending_stream >= 0) {
+        cudaStreamSynchronize(g_search_streams[pending_stream].stream);
+        g_search_streams[pending_stream].in_use = 0;
+
+        // Final check for found keys
+        int found_count = 0;
+        cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
+
+        if (found_count > 0) {
+            FoundKey h_found[MAX_FOUND_KEYS];
+            cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
+
+            for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
+                if (h_found[i].valid) {
+                    total_found++;
+                    uint8_t privkey_be[32];
+                    for (int w = 0; w < 8; w++) {
+                        uint32_t val = h_found[i].privkey.d[7 - w];
+                        privkey_be[w*4]     = (val >> 24) & 0xFF;
+                        privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
+                        privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
+                        privkey_be[w*4 + 3] = val & 0xFF;
+                    }
+                    if (config->callback) {
+                        config->callback(privkey_be, h_found[i].compressed == 2 || h_found[i].compressed == 3,
+                                        config->callback_userdata);
+                    }
+                }
+            }
+        }
     }
 
     // Final timing
@@ -1368,7 +1527,6 @@ int gpu_full_search(const gpu_search_config_t *config) {
 
     cudaEventDestroy(start_event);
     cudaEventDestroy(current_event);
-    cudaFree(d_should_stop);
     return total_found;
 }
 
