@@ -83,7 +83,7 @@ struct checksumsha256	{
 };
 
 struct bsgs_xvalue	{
-	uint8_t value[6];
+	uint64_t value;    // 8 bytes instead of 6 - same memory due to padding, faster comparison
 	uint64_t index;
 };
 
@@ -367,7 +367,7 @@ char *range_end;
 char *str_stride;
 Int stride;
 
-uint64_t BSGS_XVALUE_RAM = 6;
+uint64_t BSGS_XVALUE_RAM = 8;  // Optimized: 8 bytes for uint64_t comparison
 
 // Global system information (for memory checks across all modes)
 system_info_t g_sysinfo;
@@ -4932,7 +4932,7 @@ void bsgs_introsort(struct bsgs_xvalue *arr,uint32_t depthLimit, int64_t n) {
 	}
 }
 
-/*	OK	*/
+/*	OK - Optimized with uint64_t comparison	*/
 void bsgs_insertionsort(struct bsgs_xvalue *arr, int64_t n) {
 	int64_t j;
 	int64_t i;
@@ -4940,7 +4940,7 @@ void bsgs_insertionsort(struct bsgs_xvalue *arr, int64_t n) {
 	for(i = 1; i < n ; i++ ) {
 		key = arr[i];
 		j= i-1;
-		while(j >= 0 && memcmp(arr[j].value,key.value,BSGS_XVALUE_RAM) > 0) {
+		while(j >= 0 && arr[j].value > key.value) {
 			arr[j+1] = arr[j];
 			j--;
 		}
@@ -4948,6 +4948,7 @@ void bsgs_insertionsort(struct bsgs_xvalue *arr, int64_t n) {
 	}
 }
 
+/*	Optimized with uint64_t comparison	*/
 int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n)	{
 	struct bsgs_xvalue pivot;
 	int64_t r,left,right;
@@ -4956,10 +4957,10 @@ int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n)	{
 	left = 0;
 	right = n-1;
 	do {
-		while(left	< right && memcmp(arr[left].value,pivot.value,BSGS_XVALUE_RAM) <= 0 )	{
+		while(left < right && arr[left].value <= pivot.value) {
 			left++;
 		}
-		while(right >= left && memcmp(arr[right].value,pivot.value,BSGS_XVALUE_RAM) > 0)	{
+		while(right >= left && arr[right].value > pivot.value) {
 			right--;
 		}
 		if(left < right)	{
@@ -4980,13 +4981,14 @@ int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n)	{
 	return right;
 }
 
+/*	Optimized with uint64_t comparison	*/
 void bsgs_heapify(struct bsgs_xvalue *arr, int64_t n, int64_t i) {
 	int64_t largest = i;
 	int64_t l = 2 * i + 1;
 	int64_t r = 2 * i + 2;
-	if (l < n && memcmp(arr[l].value,arr[largest].value,BSGS_XVALUE_RAM) > 0)
+	if (l < n && arr[l].value > arr[largest].value)
 		largest = l;
-	if (r < n && memcmp(arr[r].value,arr[largest].value,BSGS_XVALUE_RAM) > 0)
+	if (r < n && arr[r].value > arr[largest].value)
 		largest = r;
 	if (largest != i) {
 		bsgs_swap(&arr[i],&arr[largest]);
@@ -5005,27 +5007,32 @@ void bsgs_myheapsort(struct bsgs_xvalue	*arr, int64_t n)	{
 	}
 }
 
+/*	Optimized with uint64_t comparison	*/
 int bsgs_searchbinary(struct bsgs_xvalue *buffer,char *data,int64_t array_length,uint64_t *r_value) {
 	int64_t min,max,half,current;
-	int r = 0,rcmp;
+	int r = 0;
 	min = 0;
 	current = 0;
 	max = array_length;
 	half = array_length;
+
+	// Load search key as uint64_t (bytes 16-23 of X coordinate)
+	uint64_t search_key;
+	memcpy(&search_key, data + 16, 8);
+
 	while(!r && half >= 1) {
 		half = (max - min)/2;
-		rcmp = memcmp(data+16,buffer[current+half].value,BSGS_XVALUE_RAM);
-		if(rcmp == 0)	{
+		uint64_t table_value = buffer[current+half].value;
+		if(search_key == table_value) {
 			*r_value = buffer[current+half].index;
 			r = 1;
 		}
-		else	{
-			if(rcmp < 0) {
-				max = (max-half);
-			}
-			else	{
-				min = (min+half);
-			}
+		else if(search_key < table_value) {
+			max = (max-half);
+			current = min;
+		}
+		else {
+			min = (min+half);
 			current = min;
 		}
 	}
@@ -5778,7 +5785,7 @@ void *thread_bPload(void *vargp)	{
 			*/
 			if(i_counter < bsgs_m3)	{
 				if(!FLAGREADEDFILE3)	{
-					memcpy(bPtable[i_counter].value,rawvalue+16,BSGS_XVALUE_RAM);
+					memcpy(&bPtable[i_counter].value, rawvalue+16, 8);  // Copy 8 bytes to uint64_t
 					bPtable[i_counter].index = i_counter;
 				}
 				if(!FLAGREADEDFILE4)	{
@@ -5961,7 +5968,7 @@ void *thread_bPload_2blooms(void *vargp)	{
 			bloom_bP_index = (uint8_t)rawvalue[0];
 			if(i_counter < bsgs_m3)	{
 				if(!FLAGREADEDFILE3)	{
-					memcpy(bPtable[i_counter].value,rawvalue+16,BSGS_XVALUE_RAM);
+					memcpy(&bPtable[i_counter].value, rawvalue+16, 8);  // Copy 8 bytes to uint64_t
 					bPtable[i_counter].index = i_counter;
 				}
 				if(!FLAGREADEDFILE4)	{
