@@ -30,6 +30,13 @@ typedef struct {
     bool has_avx512;
     bool has_sha_ni;
 
+    // GPU information (primary GPU)
+    int gpu_count;             // Number of GPUs detected
+    bool has_nvidia;           // NVIDIA driver present
+    bool has_cuda;             // CUDA-capable GPU available (NVIDIA)
+    uint64_t gpu_vram_mb;      // Total VRAM for primary GPU
+    char gpu_name[128];        // Model name for primary GPU
+
     // Auto-tuning recommendations
     int recommended_threads;
     uint32_t recommended_batch_size;

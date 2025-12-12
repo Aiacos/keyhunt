@@ -97,6 +97,8 @@ public:
 	int GetBit(uint32_t n);
 	unsigned char GetByte(int n);
 	void Get32Bytes(unsigned char *buff);
+	void GetHi16Bytes(unsigned char *buff);
+	void GetLo16Bytes(unsigned char *buff);
 	void Set32Bytes(unsigned char *buff);
 
 	char* GetBase2();

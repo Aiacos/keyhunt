@@ -9,6 +9,7 @@
 
 #ifdef __linux__
 #include <sys/sysinfo.h>
+#include <dlfcn.h>
 #endif
 
 // Helper function to read integer from file
@@ -208,6 +209,19 @@ static void detect_memory(system_info_t *info) {
 }
 
 // Detect CPU features (AVX2, AVX-512, SHA-NI)
+// Note: /proc/cpuinfo "flags" lines can exceed small fixed buffers.
+static bool token_present(const char *line, const char *token) {
+    const size_t token_len = strlen(token);
+    const char *p = line;
+    while ((p = strcasestr(p, token)) != NULL) {
+        bool left_ok = (p == line) || isspace((unsigned char)p[-1]) || p[-1] == ':';
+        bool right_ok = isspace((unsigned char)p[token_len]) || p[token_len] == '\0';
+        if (left_ok && right_ok) return true;
+        p += token_len;
+    }
+    return false;
+}
+
 static void detect_cpu_features(system_info_t *info) {
     info->has_avx2 = false;
     info->has_avx512 = false;
@@ -215,32 +229,182 @@ static void detect_cpu_features(system_info_t *info) {
 
 #ifdef __linux__
     FILE *f = fopen("/proc/cpuinfo", "r");
-    if (f) {
-        char line[512];
-        while (fgets(line, sizeof(line), f)) {
-            // Look for "flags" or "Features" line (ARM uses "Features")
-            if (strncmp(line, "flags", 5) == 0 || strncmp(line, "Features", 8) == 0) {
-                // Convert to lowercase for easier matching
-                char *p = line;
-                while (*p) {
-                    *p = tolower(*p);
-                    p++;
-                }
+    if (!f) return;
 
-                // Check for features
-                if (strstr(line, "avx2")) {
-                    info->has_avx2 = true;
-                    // Debug: printf("[DEBUG] AVX2 found in flags\n");
-                }
-                if (strstr(line, "avx512f")) info->has_avx512 = true;  // AVX-512 Foundation
-                if (strstr(line, "sha_ni") || strstr(line, "sha")) info->has_sha_ni = true;
+    char *line = NULL;
+    size_t cap = 0;
+    while (getline(&line, &cap, f) != -1) {
+        if (strncmp(line, "flags", 5) == 0 || strncmp(line, "Features", 8) == 0) {
+            if (token_present(line, "avx2")) info->has_avx2 = true;
+            if (token_present(line, "avx512f")) info->has_avx512 = true;
+            // Intel uses "sha_ni", some platforms report "sha".
+            if (token_present(line, "sha_ni") || token_present(line, "sha")) info->has_sha_ni = true;
+        }
+    }
+    free(line);
+    fclose(f);
+#endif
+}
 
-                // Don't break - continue to check other "flags" lines (multi-core systems)
+// Detect NVIDIA GPU via NVML (if available) to get count/name/VRAM
+static void detect_nvidia_gpu_nvml(system_info_t *info) {
+#ifdef __linux__
+    typedef int nvmlReturn_t;
+    typedef struct nvmlDevice_st *nvmlDevice_t;
+    typedef struct nvmlMemory_st {
+        unsigned long long total;
+        unsigned long long free;
+        unsigned long long used;
+    } nvmlMemory_t;
+
+    void *lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY);
+    if (!lib) {
+        lib = dlopen("libnvidia-ml.so", RTLD_LAZY);
+    }
+    if (!lib) return;
+
+    nvmlReturn_t (*nvmlInit_v2)(void) =
+        (nvmlReturn_t (*)(void))dlsym(lib, "nvmlInit_v2");
+    nvmlReturn_t (*nvmlInit)(void) =
+        (nvmlReturn_t (*)(void))dlsym(lib, "nvmlInit");
+    nvmlReturn_t (*nvmlShutdown)(void) =
+        (nvmlReturn_t (*)(void))dlsym(lib, "nvmlShutdown");
+
+    nvmlReturn_t (*nvmlDeviceGetCount_v2)(unsigned int *) =
+        (nvmlReturn_t (*)(unsigned int *))dlsym(lib, "nvmlDeviceGetCount_v2");
+    nvmlReturn_t (*nvmlDeviceGetCount)(unsigned int *) =
+        (nvmlReturn_t (*)(unsigned int *))dlsym(lib, "nvmlDeviceGetCount");
+
+    nvmlReturn_t (*nvmlDeviceGetHandleByIndex_v2)(unsigned int, nvmlDevice_t *) =
+        (nvmlReturn_t (*)(unsigned int, nvmlDevice_t *))dlsym(lib, "nvmlDeviceGetHandleByIndex_v2");
+    nvmlReturn_t (*nvmlDeviceGetHandleByIndex)(unsigned int, nvmlDevice_t *) =
+        (nvmlReturn_t (*)(unsigned int, nvmlDevice_t *))dlsym(lib, "nvmlDeviceGetHandleByIndex");
+
+    nvmlReturn_t (*nvmlDeviceGetName)(nvmlDevice_t, char *, unsigned int) =
+        (nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int))dlsym(lib, "nvmlDeviceGetName");
+    nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *) =
+        (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *))dlsym(lib, "nvmlDeviceGetMemoryInfo");
+
+    if ((!nvmlInit_v2 && !nvmlInit) ||
+        (!nvmlDeviceGetCount_v2 && !nvmlDeviceGetCount) ||
+        (!nvmlDeviceGetHandleByIndex_v2 && !nvmlDeviceGetHandleByIndex)) {
+        dlclose(lib);
+        return;
+    }
+
+    nvmlReturn_t init_rc = nvmlInit_v2 ? nvmlInit_v2() : nvmlInit();
+    if (init_rc != 0) {
+        dlclose(lib);
+        return;
+    }
+
+    unsigned int count = 0;
+    nvmlReturn_t count_rc = nvmlDeviceGetCount_v2
+        ? nvmlDeviceGetCount_v2(&count)
+        : nvmlDeviceGetCount(&count);
+
+    if (count_rc != 0 || count == 0) {
+        if (nvmlShutdown) nvmlShutdown();
+        dlclose(lib);
+        return;
+    }
+
+    info->gpu_count = (int)count;
+    info->has_nvidia = true;
+    info->has_cuda = true;
+
+    nvmlDevice_t dev;
+    nvmlReturn_t handle_rc = nvmlDeviceGetHandleByIndex_v2
+        ? nvmlDeviceGetHandleByIndex_v2(0, &dev)
+        : nvmlDeviceGetHandleByIndex(0, &dev);
+
+    if (handle_rc == 0) {
+        if (nvmlDeviceGetName) {
+            char name[128] = {0};
+            if (nvmlDeviceGetName(dev, name, (unsigned int)sizeof(name)) == 0) {
+                strncpy(info->gpu_name, name, sizeof(info->gpu_name) - 1);
+                info->gpu_name[sizeof(info->gpu_name) - 1] = '\0';
             }
         }
-        fclose(f);
+        if (nvmlDeviceGetMemoryInfo) {
+            nvmlMemory_t mem;
+            if (nvmlDeviceGetMemoryInfo(dev, &mem) == 0) {
+                info->gpu_vram_mb = (uint64_t)(mem.total / (1024ULL * 1024ULL));
+            }
+        }
     }
+
+    if (nvmlShutdown) nvmlShutdown();
+    dlclose(lib);
+#else
+    (void)info;
 #endif
+}
+
+// Detect NVIDIA GPU via /proc/driver (fallback for systems without NVML)
+static void detect_nvidia_gpu_proc(system_info_t *info) {
+#ifdef __linux__
+    DIR *dir = opendir("/proc/driver/nvidia/gpus");
+    if (!dir) return;
+
+    struct dirent *entry;
+    int count = 0;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        count++;
+        if (count == 1 && info->gpu_name[0] == '\0') {
+            char path[512];
+            snprintf(path, sizeof(path),
+                     "/proc/driver/nvidia/gpus/%s/information",
+                     entry->d_name);
+            FILE *f = fopen(path, "r");
+            if (f) {
+                char line[256];
+                while (fgets(line, sizeof(line), f)) {
+                    if (strncmp(line, "Model:", 6) == 0) {
+                        char *colon = strchr(line, ':');
+                        if (colon) {
+                            colon++;
+                            while (*colon && isspace((unsigned char)*colon)) colon++;
+                            strncpy(info->gpu_name, colon, sizeof(info->gpu_name) - 1);
+                            info->gpu_name[sizeof(info->gpu_name) - 1] = '\0';
+                            size_t len = strlen(info->gpu_name);
+                            while (len > 0 && isspace((unsigned char)info->gpu_name[len - 1])) {
+                                info->gpu_name[--len] = '\0';
+                            }
+                        }
+                        break;
+                    }
+                }
+                fclose(f);
+            }
+        }
+    }
+
+    closedir(dir);
+
+    if (count > 0) {
+        info->gpu_count = count;
+        info->has_nvidia = true;
+        info->has_cuda = true;
+    }
+#else
+    (void)info;
+#endif
+}
+
+// Detect GPU (currently NVIDIA/CUDA only)
+static void detect_gpu(system_info_t *info) {
+    info->gpu_count = 0;
+    info->gpu_vram_mb = 0;
+    info->gpu_name[0] = '\0';
+    info->has_nvidia = false;
+    info->has_cuda = false;
+
+    detect_nvidia_gpu_nvml(info);
+    if (info->gpu_count == 0) {
+        detect_nvidia_gpu_proc(info);
+    }
 }
 
 // Calculate optimal parameters
@@ -361,6 +525,9 @@ void sysinfo_init(system_info_t *info) {
     // Detect CPU features
     detect_cpu_features(info);
 
+    // Detect GPU
+    detect_gpu(info);
+
     // Calculate optimal parameters
     calculate_optimal_params(info);
 }
@@ -373,6 +540,20 @@ void sysinfo_print(const system_info_t *info) {
            info->cache_l1_size, info->cache_l2_size, info->cache_l3_size);
     printf("    ├─ RAM: %lu MB total, %lu MB available\n",
            info->ram_total, info->ram_available);
+    if (info->gpu_count > 0) {
+        if (info->gpu_vram_mb > 0) {
+            printf("    ├─ GPU: %s x%d (%llu MB VRAM)\n",
+                   info->gpu_name[0] ? info->gpu_name : "NVIDIA GPU",
+                   info->gpu_count,
+                   (unsigned long long)info->gpu_vram_mb);
+        } else {
+            printf("    ├─ GPU: %s x%d\n",
+                   info->gpu_name[0] ? info->gpu_name : "NVIDIA GPU",
+                   info->gpu_count);
+        }
+    } else {
+        printf("    ├─ GPU: none detected\n");
+    }
     printf("    └─ Features: AVX2=%s, AVX-512=%s, SHA-NI=%s\n",
            info->has_avx2 ? "yes" : "no",
            info->has_avx512 ? "yes" : "no",

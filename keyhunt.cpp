@@ -9,6 +9,7 @@ email: albertobsd@gmail.com
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <chrono>
 #include <vector>
 #include <algorithm>
 #include <inttypes.h>
@@ -21,6 +22,7 @@ email: albertobsd@gmail.com
 #include "workqueue.h"
 #include "sysinfo.h"
 #include "parameter_validator.h"
+#include "gpu/gpu_backend.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -34,10 +36,12 @@ email: albertobsd@gmail.com
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
 #include <windows.h>
+#define strcasecmp _stricmp
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/random.h>
+#include <strings.h>
 #endif
 
 #ifdef __unix__
@@ -192,6 +196,12 @@ void writekeyeth(Int *key);
 
 void checkpointer(void *ptr,const char *file,const char *function,const  char *name,int line);
 
+// GPU Full Search helper functions (forward declarations)
+static int gpu_upload_gtable_from_secp();
+static int gpu_upload_targets_from_addressTable(int64_t count);
+static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *userdata);
+static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count);
+
 bool isBase58(char c);
 bool isValidBase58String(char *str);
 
@@ -321,6 +331,7 @@ int FLAGPROGRESSBAR = 0;
 int KFACTOR = 1;
 int MAXLENGTHADDRESS = -1;
 int NTHREADS = 1;
+int FLAGTHREADS = 0;
 
 int FLAGSAVEREADFILE = 0;
 int FLAGREADEDFILE1 = 0;
@@ -341,6 +352,13 @@ int FLAGRAWDATA	= 0;
 int FLAGRANDOM = 0;
 int FLAG_N = 0;
 int FLAGPRECALCUTED_P_FILE = 0;
+// GPU usage flag: 0=off, 1=on, -1=auto
+int FLAGGPU = 0;
+// GPU full search mode: 0=off (hash-only), 1=full ECC+hash+match on GPU
+int FLAGGPU_FULL = 0;
+// Volatile stats for GPU search
+volatile uint64_t g_gpu_keys_checked = 0;
+volatile int g_gpu_should_stop = 0;
 
 int bitrange;
 char *str_N;
@@ -353,7 +371,9 @@ uint64_t BSGS_XVALUE_RAM = 6;
 
 // Global system information (for memory checks across all modes)
 system_info_t g_sysinfo;
-uint64_t BSGS_BUFFERXPOINTLENGTH = 32;
+gpu_backend_info_t g_gpu_backend_info;
+// Only the first 16 bytes of X are used in BSGS bloom filters to reduce hash cost.
+uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
 uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
 
 /*
@@ -371,9 +391,10 @@ struct address_value *addressTable;
 
 struct oldbloom oldbloom_bP;
 
-struct bloom *bloom_bP;
-struct bloom *bloom_bPx2nd; //2nd Bloom filter check
-struct bloom *bloom_bPx3rd; //3rd Bloom filter check
+// BSGS bloom filters use extended wrapper to enable fast bloom
+bloom_extended_t *bloom_bP;
+bloom_extended_t *bloom_bPx2nd; //2nd Bloom filter check
+bloom_extended_t *bloom_bPx3rd; //3rd Bloom filter check
 
 struct checksumsha256 *bloom_bP_checksums;
 struct checksumsha256 *bloom_bPx2nd_checksums;
@@ -726,42 +747,129 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 	alignas(32) char hashCompressed03[CPU_GRP_SIZE][20];
 	alignas(32) char hashUncompressed[CPU_GRP_SIZE][20];
 
-	if (wantCompressed) {
-		if (g_avx2_available) {
-			// AVX2 path: process 8 hashes at a time
-			for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
-				secp->GetHash160_fromX_AVX2(P2PKH, 0x02,
-					&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
-					&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
-					(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
-					(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
-					(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
-					(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7]);
-				secp->GetHash160_fromX_AVX2(P2PKH, 0x03,
-					&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
-					&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
-					(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
-					(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3],
-					(uint8_t*)hashCompressed03[idx + 4], (uint8_t*)hashCompressed03[idx + 5],
-					(uint8_t*)hashCompressed03[idx + 6], (uint8_t*)hashCompressed03[idx + 7]);
-			}
-		} else {
-			// SSE2 fallback: process 4 hashes at a time
-			for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
-				secp->GetHash160_fromX(P2PKH, 0x02,
-					&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
-					(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
-					(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
-				secp->GetHash160_fromX(P2PKH, 0x03,
-					&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
-					(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
-					(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3]);
+		if (wantCompressed) {
+			if (wantUncompressed) {
+				// Y is available: compute only the actual compressed hash (single parity)
+				if (g_sysinfo.has_avx512) {
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
+						secp->GetHash160_AVX512(P2PKH, true,
+							pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+							pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+							pts[idx + 8], pts[idx + 9], pts[idx + 10], pts[idx + 11],
+							pts[idx + 12], pts[idx + 13], pts[idx + 14], pts[idx + 15],
+							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+							(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+							(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7],
+							(uint8_t*)hashCompressed02[idx + 8], (uint8_t*)hashCompressed02[idx + 9],
+							(uint8_t*)hashCompressed02[idx + 10], (uint8_t*)hashCompressed02[idx + 11],
+							(uint8_t*)hashCompressed02[idx + 12], (uint8_t*)hashCompressed02[idx + 13],
+							(uint8_t*)hashCompressed02[idx + 14], (uint8_t*)hashCompressed02[idx + 15]);
+					}
+				} else if (g_avx2_available) {
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
+						secp->GetHash160_AVX2(P2PKH, true,
+							pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+							pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+							(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+							(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7]);
+					}
+				} else {
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+						secp->GetHash160(P2PKH, true,
+							pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
+					}
+				}
+			} else {
+				// Compressed-only: Y is not computed, so check both parities from X
+				if (FLAGGPU == 1 && gpu_backend_available()) {
+					alignas(32) uint8_t x32_be[CPU_GRP_SIZE * 32];
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
+						pts[idx].x.Get32Bytes(x32_be + idx * 32);
+					}
+					if (gpu_hash160_fromX_batch(x32_be, CPU_GRP_SIZE,
+							(uint8_t*)hashCompressed02[0], (uint8_t*)hashCompressed03[0]) != 0) {
+						// Fallback to CPU path if GPU hashing fails for any reason.
+						fprintf(stderr, "[W] GPU hash160 failed; falling back to CPU.\n");
+						goto cpu_compress_only_hash;
+					}
+				} else {
+cpu_compress_only_hash:
+				if (g_sysinfo.has_avx512) {
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
+						secp->GetHash160_fromX_02_03_AVX512(P2PKH,
+							&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+							&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
+							&pts[idx + 8].x, &pts[idx + 9].x, &pts[idx + 10].x, &pts[idx + 11].x,
+							&pts[idx + 12].x, &pts[idx + 13].x, &pts[idx + 14].x, &pts[idx + 15].x,
+							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+							(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+							(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7],
+							(uint8_t*)hashCompressed02[idx + 8], (uint8_t*)hashCompressed02[idx + 9],
+							(uint8_t*)hashCompressed02[idx + 10], (uint8_t*)hashCompressed02[idx + 11],
+							(uint8_t*)hashCompressed02[idx + 12], (uint8_t*)hashCompressed02[idx + 13],
+							(uint8_t*)hashCompressed02[idx + 14], (uint8_t*)hashCompressed02[idx + 15],
+							(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+							(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3],
+							(uint8_t*)hashCompressed03[idx + 4], (uint8_t*)hashCompressed03[idx + 5],
+							(uint8_t*)hashCompressed03[idx + 6], (uint8_t*)hashCompressed03[idx + 7],
+							(uint8_t*)hashCompressed03[idx + 8], (uint8_t*)hashCompressed03[idx + 9],
+							(uint8_t*)hashCompressed03[idx + 10], (uint8_t*)hashCompressed03[idx + 11],
+							(uint8_t*)hashCompressed03[idx + 12], (uint8_t*)hashCompressed03[idx + 13],
+							(uint8_t*)hashCompressed03[idx + 14], (uint8_t*)hashCompressed03[idx + 15]);
+					}
+				} else if (g_avx2_available) {
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
+						secp->GetHash160_fromX_02_03_AVX2(P2PKH,
+							&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+							&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
+							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+							(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+							(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7],
+							(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+							(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3],
+							(uint8_t*)hashCompressed03[idx + 4], (uint8_t*)hashCompressed03[idx + 5],
+						(uint8_t*)hashCompressed03[idx + 6], (uint8_t*)hashCompressed03[idx + 7]);
+					}
+				} else {
+					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+						secp->GetHash160_fromX_02_03(P2PKH,
+							&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+							(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+							(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3]);
+					}
+				}
+				}
 			}
 		}
-	}
 
 	if (wantUncompressed) {
-		if (g_avx2_available) {
+		if (g_sysinfo.has_avx512) {
+			// AVX-512 path: process 16 hashes at a time
+			for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
+				secp->GetHash160_AVX512(P2PKH, false,
+					pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+					pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+					pts[idx + 8], pts[idx + 9], pts[idx + 10], pts[idx + 11],
+					pts[idx + 12], pts[idx + 13], pts[idx + 14], pts[idx + 15],
+					(uint8_t*)hashUncompressed[idx], (uint8_t*)hashUncompressed[idx + 1],
+					(uint8_t*)hashUncompressed[idx + 2], (uint8_t*)hashUncompressed[idx + 3],
+					(uint8_t*)hashUncompressed[idx + 4], (uint8_t*)hashUncompressed[idx + 5],
+					(uint8_t*)hashUncompressed[idx + 6], (uint8_t*)hashUncompressed[idx + 7],
+					(uint8_t*)hashUncompressed[idx + 8], (uint8_t*)hashUncompressed[idx + 9],
+					(uint8_t*)hashUncompressed[idx + 10], (uint8_t*)hashUncompressed[idx + 11],
+					(uint8_t*)hashUncompressed[idx + 12], (uint8_t*)hashUncompressed[idx + 13],
+					(uint8_t*)hashUncompressed[idx + 14], (uint8_t*)hashUncompressed[idx + 15]);
+			}
+		} else if (g_avx2_available) {
 			// AVX2 path: process 8 hashes at a time
 			for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
 				secp->GetHash160_AVX2(P2PKH,false,
@@ -787,6 +895,8 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 	keyCurrent.Set(&key_mpz);
 	uint8_t verifyBuffer[20];
 	Point publickey;
+	const bool direct_single_target = (N == 1);
+	const uint8_t *single_target = direct_single_target ? addressTable[0].value : nullptr;
 
 	// Prefetch distance for bloom filter checks
 	const size_t PREFETCH_DIST = 8;
@@ -794,42 +904,97 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 	for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
 		// Prefetch next hash data for bloom filter
 		if (idx + PREFETCH_DIST < CPU_GRP_SIZE) {
-			__builtin_prefetch(hashCompressed02[idx + PREFETCH_DIST], 0, 0);
-			__builtin_prefetch(hashCompressed03[idx + PREFETCH_DIST], 0, 0);
+				if (wantCompressed) {
+					__builtin_prefetch(hashCompressed02[idx + PREFETCH_DIST], 0, 0);
+					if (!wantUncompressed) {
+						__builtin_prefetch(hashCompressed03[idx + PREFETCH_DIST], 0, 0);
+					}
+				}
+			if (wantUncompressed) {
+				__builtin_prefetch(hashUncompressed[idx + PREFETCH_DIST], 0, 0);
+			}
 		}
 
-		if (wantCompressed) {
-			if (bloom_ext_check(&bloom, hashCompressed02[idx], MAXLENGTHADDRESS)) {
-				if (searchbinary(addressTable, hashCompressed02[idx], N)) {
-					Int candidate(keyCurrent);
-					publickey = secp->ComputePublicKey(&candidate);
-					secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
-					if(memcmp(hashCompressed02[idx], verifyBuffer, 20) != 0) {
-						candidate.Neg();
-						candidate.Add(&secp->order);
+			if (wantCompressed) {
+				if (wantUncompressed) {
+					// Actual compressed hash only (single parity)
+					if (direct_single_target) {
+						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
+							Int candidate(keyCurrent);
+							writekey(true,&candidate);
+						}
+					} else {
+						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed02[idx])) {
+							if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+								Int candidate(keyCurrent);
+								writekey(true,&candidate);
+							}
+						}
 					}
-					writekey(true,&candidate);
+				} else {
+					// Dual parity check from X
+					if (direct_single_target) {
+						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
+							Int candidate(keyCurrent);
+							publickey = secp->ComputePublicKey(&candidate);
+							secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
+							if(memcmp(hashCompressed02[idx], verifyBuffer, 20) != 0) {
+								candidate.Neg();
+								candidate.Add(&secp->order);
+							}
+							writekey(true,&candidate);
+						}
+						if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
+							Int candidate(keyCurrent);
+							publickey = secp->ComputePublicKey(&candidate);
+							secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
+							if(memcmp(hashCompressed03[idx], verifyBuffer, 20) != 0) {
+								candidate.Neg();
+								candidate.Add(&secp->order);
+							}
+							writekey(true,&candidate);
+						}
+					} else {
+						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed02[idx])) {
+							if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+								Int candidate(keyCurrent);
+								publickey = secp->ComputePublicKey(&candidate);
+								secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
+								if(memcmp(hashCompressed02[idx], verifyBuffer, 20) != 0) {
+									candidate.Neg();
+									candidate.Add(&secp->order);
+								}
+								writekey(true,&candidate);
+							}
+						}
+						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed03[idx])) {
+							if (searchbinary(addressTable, hashCompressed03[idx], N)) {
+								Int candidate(keyCurrent);
+								publickey = secp->ComputePublicKey(&candidate);
+								secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
+								if(memcmp(hashCompressed03[idx], verifyBuffer, 20) != 0) {
+									candidate.Neg();
+									candidate.Add(&secp->order);
+								}
+								writekey(true,&candidate);
+							}
+						}
+					}
 				}
 			}
-			if (bloom_ext_check(&bloom, hashCompressed03[idx], MAXLENGTHADDRESS)) {
-				if (searchbinary(addressTable, hashCompressed03[idx], N)) {
-					Int candidate(keyCurrent);
-					publickey = secp->ComputePublicKey(&candidate);
-					secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
-					if(memcmp(hashCompressed03[idx], verifyBuffer, 20) != 0) {
-						candidate.Neg();
-						candidate.Add(&secp->order);
-					}
-					writekey(true,&candidate);
-				}
-			}
-		}
 
 		if (wantUncompressed) {
-			if (bloom_ext_check(&bloom, hashUncompressed[idx], MAXLENGTHADDRESS)) {
-				if (searchbinary(addressTable, hashUncompressed[idx], N)) {
+			if (direct_single_target) {
+				if (memcmp(hashUncompressed[idx], single_target, 20) == 0) {
 					Int candidate(keyCurrent);
 					writekey(false,&candidate);
+				}
+			} else {
+				if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashUncompressed[idx])) {
+					if (searchbinary(addressTable, hashUncompressed[idx], N)) {
+						Int candidate(keyCurrent);
+						writekey(false,&candidate);
+					}
 				}
 			}
 		}
@@ -839,6 +1004,149 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 
 	key_mpz.Set(&keyCurrent);
 	count += CPU_GRP_SIZE;
+}
+
+static bool gpu_selftest_hash160_fromX() {
+	const size_t kCount = 16;
+	alignas(32) uint8_t x32_be[kCount * 32];
+	Int xs[kCount];
+
+	for (size_t i = 0; i < kCount; ++i) {
+		uint8_t bytes[32];
+		for (size_t j = 0; j < 32; ++j) {
+			bytes[j] = (uint8_t)((i * 17 + j) & 0xFF);
+		}
+		xs[i].Set32Bytes(bytes);
+		memcpy(x32_be + i * 32, bytes, 32);
+	}
+
+	alignas(32) uint8_t cpu02[kCount][20];
+	alignas(32) uint8_t cpu03[kCount][20];
+	for (size_t i = 0; i < kCount; i += 4) {
+		secp->GetHash160_fromX(P2PKH, 0x02, &xs[i], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+			cpu02[i], cpu02[i + 1], cpu02[i + 2], cpu02[i + 3]);
+		secp->GetHash160_fromX(P2PKH, 0x03, &xs[i], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+			cpu03[i], cpu03[i + 1], cpu03[i + 2], cpu03[i + 3]);
+	}
+
+	alignas(32) uint8_t gpu02[kCount][20];
+	alignas(32) uint8_t gpu03[kCount][20];
+	if (gpu_hash160_fromX_batch(x32_be, kCount, gpu02[0], gpu03[0]) != 0) {
+		fprintf(stderr, "[E] GPU self-test failed: CUDA hash160 call failed\n");
+		return false;
+	}
+
+	for (size_t i = 0; i < kCount; ++i) {
+		if (memcmp(cpu02[i], gpu02[i], 20) != 0) {
+			fprintf(stderr, "[E] GPU self-test failed: mismatch prefix 02 at index %zu\n", i);
+			return false;
+		}
+		if (memcmp(cpu03[i], gpu03[i], 20) != 0) {
+			fprintf(stderr, "[E] GPU self-test failed: mismatch prefix 03 at index %zu\n", i);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool gpu_autotune_enable_hash160_fromX() {
+	// Benchmark hash160-from-X using the same batch size the main loop uses.
+	// This keeps the measurement representative (kernel launch + transfers + cache behavior).
+	const size_t kBatch = CPU_GRP_SIZE; // 1024
+	const int kIters = 256;
+
+	std::vector<uint8_t> x32_be(kBatch * 32);
+	std::vector<Int> xs(kBatch);
+	for (size_t i = 0; i < kBatch; ++i) {
+		uint8_t *p = &x32_be[i * 32];
+		for (size_t j = 0; j < 32; ++j) {
+			p[j] = (uint8_t)((i * 131u + j * 17u) & 0xFF);
+		}
+		xs[i].Set32Bytes(p);
+	}
+
+	alignas(32) uint8_t cpu02[CPU_GRP_SIZE][20];
+	alignas(32) uint8_t cpu03[CPU_GRP_SIZE][20];
+	alignas(32) uint8_t gpu02[CPU_GRP_SIZE][20];
+	alignas(32) uint8_t gpu03[CPU_GRP_SIZE][20];
+
+	auto cpu_run_once = [&]() {
+		if (g_sysinfo.has_avx512) {
+			for (size_t i = 0; i < kBatch; i += 16) {
+				secp->GetHash160_fromX_AVX512(P2PKH, 0x02,
+					&xs[i + 0], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+					&xs[i + 4], &xs[i + 5], &xs[i + 6], &xs[i + 7],
+					&xs[i + 8], &xs[i + 9], &xs[i + 10], &xs[i + 11],
+					&xs[i + 12], &xs[i + 13], &xs[i + 14], &xs[i + 15],
+					cpu02[i + 0], cpu02[i + 1], cpu02[i + 2], cpu02[i + 3],
+					cpu02[i + 4], cpu02[i + 5], cpu02[i + 6], cpu02[i + 7],
+					cpu02[i + 8], cpu02[i + 9], cpu02[i + 10], cpu02[i + 11],
+					cpu02[i + 12], cpu02[i + 13], cpu02[i + 14], cpu02[i + 15]);
+				secp->GetHash160_fromX_AVX512(P2PKH, 0x03,
+					&xs[i + 0], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+					&xs[i + 4], &xs[i + 5], &xs[i + 6], &xs[i + 7],
+					&xs[i + 8], &xs[i + 9], &xs[i + 10], &xs[i + 11],
+					&xs[i + 12], &xs[i + 13], &xs[i + 14], &xs[i + 15],
+					cpu03[i + 0], cpu03[i + 1], cpu03[i + 2], cpu03[i + 3],
+					cpu03[i + 4], cpu03[i + 5], cpu03[i + 6], cpu03[i + 7],
+					cpu03[i + 8], cpu03[i + 9], cpu03[i + 10], cpu03[i + 11],
+					cpu03[i + 12], cpu03[i + 13], cpu03[i + 14], cpu03[i + 15]);
+			}
+			return;
+		}
+		if (g_avx2_available) {
+			for (size_t i = 0; i < kBatch; i += 8) {
+				secp->GetHash160_fromX_AVX2(P2PKH, 0x02,
+					&xs[i + 0], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+					&xs[i + 4], &xs[i + 5], &xs[i + 6], &xs[i + 7],
+					cpu02[i + 0], cpu02[i + 1], cpu02[i + 2], cpu02[i + 3],
+					cpu02[i + 4], cpu02[i + 5], cpu02[i + 6], cpu02[i + 7]);
+				secp->GetHash160_fromX_AVX2(P2PKH, 0x03,
+					&xs[i + 0], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+					&xs[i + 4], &xs[i + 5], &xs[i + 6], &xs[i + 7],
+					cpu03[i + 0], cpu03[i + 1], cpu03[i + 2], cpu03[i + 3],
+					cpu03[i + 4], cpu03[i + 5], cpu03[i + 6], cpu03[i + 7]);
+			}
+			return;
+		}
+		for (size_t i = 0; i < kBatch; i += 4) {
+			secp->GetHash160_fromX(P2PKH, 0x02, &xs[i], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+				cpu02[i + 0], cpu02[i + 1], cpu02[i + 2], cpu02[i + 3]);
+			secp->GetHash160_fromX(P2PKH, 0x03, &xs[i], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+				cpu03[i + 0], cpu03[i + 1], cpu03[i + 2], cpu03[i + 3]);
+		}
+	};
+
+	auto gpu_run_once = [&]() {
+		return gpu_hash160_fromX_batch(x32_be.data(), kBatch, gpu02[0], gpu03[0]);
+	};
+
+	// Warmup (especially important for first CUDA call).
+	cpu_run_once();
+	if (gpu_run_once() != 0) return false;
+
+	auto t0 = std::chrono::steady_clock::now();
+	for (int i = 0; i < kIters; ++i) cpu_run_once();
+	auto t1 = std::chrono::steady_clock::now();
+	for (int i = 0; i < kIters; ++i) {
+		if (gpu_run_once() != 0) return false;
+	}
+	auto t2 = std::chrono::steady_clock::now();
+
+	const double cpu_s = std::chrono::duration<double>(t1 - t0).count();
+	const double gpu_s = std::chrono::duration<double>(t2 - t1).count();
+	if (cpu_s <= 0.0 || gpu_s <= 0.0) return false;
+
+	const double total_keys = (double)kBatch * (double)kIters;
+	const double cpu_mkeys = (total_keys / cpu_s) / 1e6;
+	const double gpu_mkeys = (total_keys / gpu_s) / 1e6;
+	const double cpu_total_mkeys = cpu_mkeys * (double)NTHREADS;
+	fprintf(stderr, "[I] GPU autotune (hash160-from-X): CPU %.1f Mkeys/s/thread, ~%.1f Mkeys/s total (%d threads) vs GPU %.1f Mkeys/s (shared)\n",
+		cpu_mkeys, cpu_total_mkeys, NTHREADS, gpu_mkeys);
+
+	// Require a small margin before enabling GPU in auto mode.
+	return gpu_mkeys > (cpu_total_mkeys * 1.05);
 }
 
 int main(int argc, char **argv)	{
@@ -939,12 +1247,14 @@ int main(int argc, char **argv)	{
 		g_sysinfo.recommended_workload = 8192;
 		g_sysinfo.recommended_n = 0x10000000000ULL;
 		g_sysinfo.recommended_kfactor = 1024;
-	} else {
-		sysinfo_init(&g_sysinfo);
-	}
+		} else {
+			sysinfo_init(&g_sysinfo);
+		}
+		// Probe CUDA backend (if built)
+		gpu_backend_init(&g_gpu_backend_info);
 
-	// Detect AVX2 support for enhanced performance
-	g_avx2_available = ripemd160_avx2_available();
+		// Detect AVX2 support for enhanced performance
+		g_avx2_available = ripemd160_avx2_available();
 	if (g_avx2_available) {
 		printf("[+] AVX2 detected: Using optimized 8-way parallel RIPEMD160\n");
 	} else {
@@ -1069,9 +1379,30 @@ int main(int argc, char **argv)	{
 				FLAGFILE = 1;
 				fileName = optarg;
 			break;
-			case 'I':
-				FLAGSTRIDE = 1;
-				str_stride = optarg;
+			case 'G':
+				if (optarg) {
+					if (strcasecmp(optarg, "off") == 0 || strcasecmp(optarg, "no") == 0 || strcmp(optarg, "0") == 0) {
+						FLAGGPU = 0;
+						FLAGGPU_FULL = 0;
+					} else if (strcasecmp(optarg, "auto") == 0) {
+						FLAGGPU = -1;  // Will be resolved later based on availability
+						FLAGGPU_FULL = -1;  // Auto-detect: use full if available
+					} else if (strcasecmp(optarg, "hash") == 0) {
+						FLAGGPU = 1;
+						FLAGGPU_FULL = 0;  // Hash-only mode
+						printf("[+] GPU hash-only mode (CPU generates points, GPU hashes)\n");
+					} else if (strcasecmp(optarg, "full") == 0 || strcasecmp(optarg, "on") == 0 || strcasecmp(optarg, "yes") == 0 || strcmp(optarg, "1") == 0) {
+						FLAGGPU = 1;
+						FLAGGPU_FULL = 1;  // Full GPU mode
+						printf("[+] GPU full mode (ECC + hash160 + matching on GPU)\n");
+					} else {
+						fprintf(stderr,"[W] Invalid -G value '%s', use: off|auto|hash|full\n", optarg);
+					}
+				}
+			break;
+				case 'I':
+					FLAGSTRIDE = 1;
+					str_stride = optarg;
 			break;
 			case 'k':
 				KFACTOR = (int)strtol(optarg,NULL,10);
@@ -1217,6 +1548,7 @@ int main(int argc, char **argv)	{
 				if(NTHREADS <= 0)	{
 					NTHREADS = 1;
 				}
+				FLAGTHREADS = 1;
 				printf((NTHREADS > 1) ? "[+] Threads : %u (user-specified)\n": "[+] Thread : %u (user-specified)\n",NTHREADS);
 			break;
 			case 'v':
@@ -1260,7 +1592,8 @@ int main(int argc, char **argv)	{
 				exit(EXIT_FAILURE);
 			break;
 		}
-	}
+
+		}
 
 	// ========== Parameter Validation and Auto-Tuning ==========
 	// Validate user parameters against hardware capabilities
@@ -1276,13 +1609,8 @@ int main(int argc, char **argv)	{
 			}
 		}
 
-		// If user didn't specify threads (NTHREADS == 1 which is default),
-		// treat as auto (pass 0 to validator)
-		int threads_to_validate = NTHREADS;
-		if (NTHREADS == 1 && optind > 1) {
-			// User ran the program but didn't specify -t, so use auto
-			threads_to_validate = 0;
-		}
+		// If user didn't specify -t, treat default (1) as "auto" for validation.
+		int threads_to_validate = FLAGTHREADS ? NTHREADS : 0;
 
 		// Run comprehensive parameter validation
 		// This will auto-correct dangerous values and warn about suboptimal ones
@@ -1357,6 +1685,93 @@ int main(int argc, char **argv)	{
 	if(FLAGMODE == MODE_ADDRESS && FLAGCRYPTO == CRYPTO_NONE) {	//When none crypto is defined the default search is for Bitcoin
 		FLAGCRYPTO = CRYPTO_BTC;
 		printf("[+] Setting search for btc adddress\n");
+	}
+
+	// ============================================================================
+	// GPU Mode Resolution and Validation
+	// ============================================================================
+	{
+		int gpu_available = gpu_backend_available();
+		int mode_supports_gpu = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
+								FLAGCRYPTO == CRYPTO_BTC &&
+								!FLAGENDOMORPHISM &&
+								FLAGSEARCH == SEARCH_COMPRESS;
+
+		// Show GPU backend status
+		if (FLAGGPU != 0 || FLAGGPU_FULL != 0) {
+			if (gpu_available) {
+				printf("[+] CUDA backend: %s (%d MPs, %lu MB VRAM)\n",
+					g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "NVIDIA GPU",
+					g_gpu_backend_info.multiprocessors,
+					(unsigned long)g_gpu_backend_info.vram_mb);
+			} else {
+#ifdef HAVE_CUDA_BACKEND
+				fprintf(stderr, "[W] CUDA backend compiled but no GPU detected\n");
+#else
+				fprintf(stderr, "[W] CUDA backend not compiled (nvcc not found at build time)\n");
+				fprintf(stderr, "[I] To enable GPU: install CUDA toolkit, ensure 'nvcc' is in PATH, rebuild\n");
+#endif
+			}
+		}
+
+		// Resolve auto mode (-G auto)
+		if (FLAGGPU == -1 || FLAGGPU_FULL == -1) {
+			if (gpu_available && mode_supports_gpu) {
+				// Auto: prefer full GPU mode if available
+				FLAGGPU = 1;
+				FLAGGPU_FULL = 1;
+				printf("[+] GPU auto: using full mode (ECC + hash160 + matching on GPU)\n");
+			} else {
+				FLAGGPU = 0;
+				FLAGGPU_FULL = 0;
+				if (!gpu_available) {
+					fprintf(stderr, "[I] GPU auto: falling back to CPU (no GPU available)\n");
+				} else if (!mode_supports_gpu) {
+					fprintf(stderr, "[I] GPU auto: falling back to CPU (mode not supported)\n");
+				}
+			}
+		}
+
+		// Validate explicit GPU requests
+		if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
+			fprintf(stderr, "[W] GPU requested but not available, falling back to CPU\n");
+			FLAGGPU = 0;
+			FLAGGPU_FULL = 0;
+		}
+
+		// Validate mode support
+		if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !mode_supports_gpu) {
+			fprintf(stderr, "[W] GPU not supported for this mode/options, using CPU\n");
+			FLAGGPU = 0;
+			FLAGGPU_FULL = 0;
+		}
+
+		// Show final GPU mode
+		if (FLAGGPU_FULL == 1) {
+			printf("[+] GPU mode: FULL (secp256k1 + SHA256 + RIPEMD160 + matching on GPU)\n");
+		} else if (FLAGGPU == 1) {
+			printf("[+] GPU mode: HASH (CPU generates points, GPU computes hash160)\n");
+		}
+
+		// GPU self-test if requested
+		if (FLAGGPU == 1 && getenv("KEYHUNT_GPU_SELFTEST")) {
+			if (!gpu_selftest_hash160_fromX()) {
+				fprintf(stderr, "[W] Disabling GPU due to failed self-test\n");
+				FLAGGPU = 0;
+				FLAGGPU_FULL = 0;
+			} else {
+				printf("[✓] GPU self-test passed\n");
+			}
+		}
+
+		// Cap threads for GPU mode
+		if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !FLAGTHREADS) {
+			int gpu_threads = g_sysinfo.cpu_physical_cores > 0 ? g_sysinfo.cpu_physical_cores : g_sysinfo.recommended_threads;
+			if (gpu_threads > 0 && gpu_threads < NTHREADS) {
+				NTHREADS = gpu_threads;
+				printf("[I] GPU active: using %d CPU threads\n", NTHREADS);
+			}
+		}
 	}
 	if(FLAGRANGE) {
 		n_range_start.SetBase16(range_start);
@@ -1512,6 +1927,29 @@ int main(int argc, char **argv)	{
 			_sort(addressTable,N);
 			printf(" done! %" PRIu64 " values were loaded and sorted\n",N);
 			writeFileIfNeeded(fileName);
+		}
+
+		// GPU Full Search initialization (upload G table and targets)
+		if (FLAGGPU_FULL == 1) {
+			printf("[+] Initializing GPU full search...\n");
+
+			// Upload precomputed G table to GPU
+			if (gpu_upload_gtable_from_secp() == 0) {
+				printf("[+] G table uploaded to GPU (8192 points)\n");
+			} else {
+				fprintf(stderr, "[E] Failed to upload G table to GPU\n");
+				FLAGGPU_FULL = 0;
+				FLAGGPU = 0;
+			}
+
+			// Upload targets to GPU
+			if (FLAGGPU_FULL && gpu_upload_targets_from_addressTable(N) == 0) {
+				printf("[+] Targets uploaded to GPU (%" PRIu64 " hashes)\n", N);
+			} else if (FLAGGPU_FULL) {
+				fprintf(stderr, "[E] Failed to upload targets to GPU\n");
+				FLAGGPU_FULL = 0;
+				FLAGGPU = 0;
+			}
 		}
 	}
 	
@@ -1882,11 +2320,11 @@ int main(int argc, char **argv)	{
 		}
 		// ==================================================================
 
-		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m);
-		bloom_bP = (struct bloom*)calloc(256,sizeof(struct bloom));
-		checkpointer((void *)bloom_bP,__FILE__,"calloc","bloom_bP" ,__LINE__ -1 );
-		bloom_bP_checksums = (struct checksumsha256*)calloc(256,sizeof(struct checksumsha256));
-		checkpointer((void *)bloom_bP_checksums,__FILE__,"calloc","bloom_bP_checksums" ,__LINE__ -1 );
+			printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m);
+			bloom_bP = (bloom_extended_t*)calloc(256,sizeof(bloom_extended_t));
+			checkpointer((void *)bloom_bP,__FILE__,"calloc","bloom_bP" ,__LINE__ -1 );
+			bloom_bP_checksums = (struct checksumsha256*)calloc(256,sizeof(struct checksumsha256));
+			checkpointer((void *)bloom_bP_checksums,__FILE__,"calloc","bloom_bP_checksums" ,__LINE__ -1 );
 		
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		bloom_bP_mutex = (HANDLE*) calloc(256,sizeof(HANDLE));
@@ -1899,19 +2337,19 @@ int main(int argc, char **argv)	{
 
 		fflush(stdout);
 		bloom_bP_totalbytes = 0;
-		for(i=0; i< 256; i++)	{
+			for(i=0; i< 256; i++)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
-			bloom_bP_mutex[i] = CreateMutex(NULL, FALSE, NULL);
+				bloom_bP_mutex[i] = CreateMutex(NULL, FALSE, NULL);
 #else
-			pthread_mutex_init(&bloom_bP_mutex[i],NULL);
+				pthread_mutex_init(&bloom_bP_mutex[i],NULL);
 #endif
-			if(bloom_init2(&bloom_bP[i],itemsbloom,0.000001)	== 1){
-				fprintf(stderr,"[E] error bloom_init _ [%" PRIu64 "]\n",i);
-				exit(EXIT_FAILURE);
+				if(bloom_ext_init(&bloom_bP[i],itemsbloom,0.000001)	!= 0){
+					fprintf(stderr,"[E] error bloom_init _ [%" PRIu64 "]\n",i);
+					exit(EXIT_FAILURE);
+				}
+				bloom_bP_totalbytes += bloom_ext_bytes(&bloom_bP[i]);
+				//if(FLAGDEBUG) bloom_print(&bloom_bP[i]);
 			}
-			bloom_bP_totalbytes += bloom_bP[i].bytes;
-			//if(FLAGDEBUG) bloom_print(&bloom_bP[i]);
-		}
 		printf(": %.2f MB\n",(float)((float)(uint64_t)bloom_bP_totalbytes/(float)(uint64_t)1048576));
 
 
@@ -1923,24 +2361,24 @@ int main(int argc, char **argv)	{
 		bloom_bPx2nd_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
 #endif
 		checkpointer((void *)bloom_bPx2nd_mutex,__FILE__,"calloc","bloom_bPx2nd_mutex" ,__LINE__ -1 );
-		bloom_bPx2nd = (struct bloom*)calloc(256,sizeof(struct bloom));
-		checkpointer((void *)bloom_bPx2nd,__FILE__,"calloc","bloom_bPx2nd" ,__LINE__ -1 );
-		bloom_bPx2nd_checksums = (struct checksumsha256*) calloc(256,sizeof(struct checksumsha256));
-		checkpointer((void *)bloom_bPx2nd_checksums,__FILE__,"calloc","bloom_bPx2nd_checksums" ,__LINE__ -1 );
-		bloom_bP2_totalbytes = 0;
-		for(i=0; i< 256; i++)	{
+			bloom_bPx2nd = (bloom_extended_t*)calloc(256,sizeof(bloom_extended_t));
+			checkpointer((void *)bloom_bPx2nd,__FILE__,"calloc","bloom_bPx2nd" ,__LINE__ -1 );
+			bloom_bPx2nd_checksums = (struct checksumsha256*) calloc(256,sizeof(struct checksumsha256));
+			checkpointer((void *)bloom_bPx2nd_checksums,__FILE__,"calloc","bloom_bPx2nd_checksums" ,__LINE__ -1 );
+			bloom_bP2_totalbytes = 0;
+			for(i=0; i< 256; i++)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
 			bloom_bPx2nd_mutex[i] = CreateMutex(NULL, FALSE, NULL);
 #else
 			pthread_mutex_init(&bloom_bPx2nd_mutex[i],NULL);
 #endif
-			if(bloom_init2(&bloom_bPx2nd[i],itemsbloom2,0.000001)	== 1){
-				fprintf(stderr,"[E] error bloom_init _ [%" PRIu64 "]\n",i);
-				exit(EXIT_FAILURE);
+				if(bloom_ext_init(&bloom_bPx2nd[i],itemsbloom2,0.000001)	!= 0){
+					fprintf(stderr,"[E] error bloom_init _ [%" PRIu64 "]\n",i);
+					exit(EXIT_FAILURE);
+				}
+				bloom_bP2_totalbytes += bloom_ext_bytes(&bloom_bPx2nd[i]);
+				//if(FLAGDEBUG) bloom_print(&bloom_bPx2nd[i]);
 			}
-			bloom_bP2_totalbytes += bloom_bPx2nd[i].bytes;
-			//if(FLAGDEBUG) bloom_print(&bloom_bPx2nd[i]);
-		}
 		printf(": %.2f MB\n",(float)((float)(uint64_t)bloom_bP2_totalbytes/(float)(uint64_t)1048576));
 		
 
@@ -1950,10 +2388,10 @@ int main(int argc, char **argv)	{
 		bloom_bPx3rd_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
 #endif
 		checkpointer((void *)bloom_bPx3rd_mutex,__FILE__,"calloc","bloom_bPx3rd_mutex" ,__LINE__ -1 );
-		bloom_bPx3rd = (struct bloom*)calloc(256,sizeof(struct bloom));
-		checkpointer((void *)bloom_bPx3rd,__FILE__,"calloc","bloom_bPx3rd" ,__LINE__ -1 );
-		bloom_bPx3rd_checksums = (struct checksumsha256*) calloc(256,sizeof(struct checksumsha256));
-		checkpointer((void *)bloom_bPx3rd_checksums,__FILE__,"calloc","bloom_bPx3rd_checksums" ,__LINE__ -1 );
+			bloom_bPx3rd = (bloom_extended_t*)calloc(256,sizeof(bloom_extended_t));
+			checkpointer((void *)bloom_bPx3rd,__FILE__,"calloc","bloom_bPx3rd" ,__LINE__ -1 );
+			bloom_bPx3rd_checksums = (struct checksumsha256*) calloc(256,sizeof(struct checksumsha256));
+			checkpointer((void *)bloom_bPx3rd_checksums,__FILE__,"calloc","bloom_bPx3rd_checksums" ,__LINE__ -1 );
 		
 		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m3);
 		bloom_bP3_totalbytes = 0;
@@ -1963,13 +2401,13 @@ int main(int argc, char **argv)	{
 #else
 			pthread_mutex_init(&bloom_bPx3rd_mutex[i],NULL);
 #endif
-			if(bloom_init2(&bloom_bPx3rd[i],itemsbloom3,0.000001)	== 1){
-				fprintf(stderr,"[E] error bloom_init [%" PRIu64 "]\n",i);
-				exit(EXIT_FAILURE);
+				if(bloom_ext_init(&bloom_bPx3rd[i],itemsbloom3,0.000001)	!= 0){
+					fprintf(stderr,"[E] error bloom_init [%" PRIu64 "]\n",i);
+					exit(EXIT_FAILURE);
+				}
+				bloom_bP3_totalbytes += bloom_ext_bytes(&bloom_bPx3rd[i]);
+				//if(FLAGDEBUG) bloom_print(&bloom_bPx3rd[i]);
 			}
-			bloom_bP3_totalbytes += bloom_bPx3rd[i].bytes;
-			//if(FLAGDEBUG) bloom_print(&bloom_bPx3rd[i]);
-		}
 		printf(": %.2f MB\n",(float)((float)(uint64_t)bloom_bP3_totalbytes/(float)(uint64_t)1048576));
 		//if(FLAGDEBUG) printf("[D] bloom_bP3_totalbytes : %" PRIu64 "\n",bloom_bP3_totalbytes);
 
@@ -2043,35 +2481,35 @@ int main(int argc, char **argv)	{
 		if(FLAGSAVEREADFILE)	{
 			/*Reading file for 1st bloom filter */
 
-			snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_4_%" PRIu64 ".blm",bsgs_m);
-			fd_aux1 = fopen(buffer_bloom_file,"rb");
-			if(fd_aux1 != NULL)	{
-				printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
-				fflush(stdout);
-				for(i = 0; i < 256;i++)	{
-					bf_ptr = (char*) bloom_bP[i].bf;	/*We need to save the current bf pointer*/
-					readed = fread(&bloom_bP[i],sizeof(struct bloom),1,fd_aux1);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					bloom_bP[i].bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
-					readed = fread(bloom_bP[i].bf,bloom_bP[i].bytes,1,fd_aux1);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					readed = fread(&bloom_bP_checksums[i],sizeof(struct checksumsha256),1,fd_aux1);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					if(FLAGSKIPCHECKSUM == 0)	{
-						sha256((uint8_t*)bloom_bP[i].bf,bloom_bP[i].bytes,(uint8_t*)rawvalue);
-						if(memcmp(bloom_bP_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bP_checksums[i].backup,rawvalue,32) != 0 )	{	/* Verification */
-							fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_11_%" PRIu64 ".blm",bsgs_m);
+				fd_aux1 = fopen(buffer_bloom_file,"rb");
+				if(fd_aux1 != NULL)	{
+					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
+					fflush(stdout);
+					for(i = 0; i < 256;i++)	{
+						bf_ptr = (char*)bloom_ext_get_bf(&bloom_bP[i]);	/*We need to save the current bf pointer*/
+						readed = fread(&bloom_bP[i].orig,sizeof(struct bloom),1,fd_aux1);
+						if(readed != 1)	{
+							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
+						bloom_bP[i].orig.bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
+						readed = fread(bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,1,fd_aux1);
+						if(readed != 1)	{
+							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							exit(EXIT_FAILURE);
+						}
+						readed = fread(&bloom_bP_checksums[i],sizeof(struct checksumsha256),1,fd_aux1);
+					if(readed != 1)	{
+						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+						exit(EXIT_FAILURE);
+						}
+						if(FLAGSKIPCHECKSUM == 0)	{
+							sha256((uint8_t*)bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,(uint8_t*)rawvalue);
+							if(memcmp(bloom_bP_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bP_checksums[i].backup,rawvalue,32) != 0 )	{	/* Verification */
+								fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
 					}
 					if(i % 64 == 0 )	{
 						printf(".");
@@ -2089,92 +2527,40 @@ int main(int argc, char **argv)	{
 				}
 				FLAGREADEDFILE1 = 1;
 			}
-			else	{	/*Checking for old file    keyhunt_bsgs_3_   */
-				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_3_%" PRIu64 ".blm",bsgs_m);
-				fd_aux1 = fopen(buffer_bloom_file,"rb");
-				if(fd_aux1 != NULL)	{
+				else	{
+					FLAGREADEDFILE1 = 0;
+				}
+			
+			/*Reading file for 2nd bloom filter */
+				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
+				fd_aux2 = fopen(buffer_bloom_file,"rb");
+				if(fd_aux2 != NULL)	{
 					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
-						bf_ptr = (char*) bloom_bP[i].bf;	/*We need to save the current bf pointer*/
-						readed = fread(&oldbloom_bP,sizeof(struct oldbloom),1,fd_aux1);
-						
-						/*
-						if(FLAGDEBUG)	{
-							printf("old Bloom filter %i\n",i);
-							oldbloom_print(&oldbloom_bP);
-						}
-						*/
-						
+						bf_ptr = (char*)bloom_ext_get_bf(&bloom_bPx2nd[i]);	/*We need to save the current bf pointer*/
+						readed = fread(&bloom_bPx2nd[i].orig,sizeof(struct bloom),1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						memcpy(&bloom_bP[i],&oldbloom_bP,sizeof(struct bloom));//We only need to copy the part data to the new bloom size, not from the old size
-						bloom_bP[i].bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
-						
-						readed = fread(bloom_bP[i].bf,bloom_bP[i].bytes,1,fd_aux1);
+						bloom_bPx2nd[i].orig.bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
+						readed = fread(bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						memcpy(bloom_bP_checksums[i].data,oldbloom_bP.checksum,32);
-						memcpy(bloom_bP_checksums[i].backup,oldbloom_bP.checksum_backup,32);
+						readed = fread(&bloom_bPx2nd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
+					if(readed != 1)	{
+						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+						exit(EXIT_FAILURE);
+					}
 						memset(rawvalue,0,32);
-						if(FLAGSKIPCHECKSUM == 0)	{
-							sha256((uint8_t*)bloom_bP[i].bf,bloom_bP[i].bytes,(uint8_t*)rawvalue);
-							if(memcmp(bloom_bP_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bP_checksums[i].backup,rawvalue,32) != 0 )	{	/* Verification */
+						if(FLAGSKIPCHECKSUM == 0)	{								
+							sha256((uint8_t*)bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,(uint8_t*)rawvalue);
+							if(memcmp(bloom_bPx2nd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx2nd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
 								fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
-							}
-						}
-						if(i % 32 == 0 )	{
-							printf(".");
-							fflush(stdout);
-						}
-					}
-					printf(" Done!\n");
-					fclose(fd_aux1);
-					FLAGUPDATEFILE1 = 1;	/* Flag to migrate the data to the new File keyhunt_bsgs_4_ */
-					FLAGREADEDFILE1 = 1;
-					
-				}
-				else	{
-					FLAGREADEDFILE1 = 0;
-					//Flag to make the new file
-				}
-			}
-			
-			/*Reading file for 2nd bloom filter */
-			snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_6_%" PRIu64 ".blm",bsgs_m2);
-			fd_aux2 = fopen(buffer_bloom_file,"rb");
-			if(fd_aux2 != NULL)	{
-				printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
-				fflush(stdout);
-				for(i = 0; i < 256;i++)	{
-					bf_ptr = (char*) bloom_bPx2nd[i].bf;	/*We need to save the current bf pointer*/
-					readed = fread(&bloom_bPx2nd[i],sizeof(struct bloom),1,fd_aux2);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					bloom_bPx2nd[i].bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
-					readed = fread(bloom_bPx2nd[i].bf,bloom_bPx2nd[i].bytes,1,fd_aux2);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					readed = fread(&bloom_bPx2nd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					memset(rawvalue,0,32);
-					if(FLAGSKIPCHECKSUM == 0)	{								
-						sha256((uint8_t*)bloom_bPx2nd[i].bf,bloom_bPx2nd[i].bytes,(uint8_t*)rawvalue);
-						if(memcmp(bloom_bPx2nd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx2nd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
-							fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
 						}
 					}
 					if(i % 64 == 0)	{
@@ -2236,36 +2622,36 @@ int main(int argc, char **argv)	{
 			}
 			
 			/*Reading file for 3rd bloom filter */
-			snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_7_%" PRIu64 ".blm",bsgs_m3);
-			fd_aux2 = fopen(buffer_bloom_file,"rb");
-			if(fd_aux2 != NULL)	{
-				printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
-				fflush(stdout);
-				for(i = 0; i < 256;i++)	{
-					bf_ptr = (char*) bloom_bPx3rd[i].bf;	/*We need to save the current bf pointer*/
-					readed = fread(&bloom_bPx3rd[i],sizeof(struct bloom),1,fd_aux2);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					bloom_bPx3rd[i].bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
-					readed = fread(bloom_bPx3rd[i].bf,bloom_bPx3rd[i].bytes,1,fd_aux2);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					readed = fread(&bloom_bPx3rd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
-					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
-						exit(EXIT_FAILURE);
-					}
-					memset(rawvalue,0,32);
-					if(FLAGSKIPCHECKSUM == 0)	{							
-						sha256((uint8_t*)bloom_bPx3rd[i].bf,bloom_bPx3rd[i].bytes,(uint8_t*)rawvalue);
-						if(memcmp(bloom_bPx3rd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx3rd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
-							fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
+				fd_aux2 = fopen(buffer_bloom_file,"rb");
+				if(fd_aux2 != NULL)	{
+					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
+					fflush(stdout);
+					for(i = 0; i < 256;i++)	{
+						bf_ptr = (char*)bloom_ext_get_bf(&bloom_bPx3rd[i]);	/*We need to save the current bf pointer*/
+						readed = fread(&bloom_bPx3rd[i].orig,sizeof(struct bloom),1,fd_aux2);
+						if(readed != 1)	{
+							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
+						bloom_bPx3rd[i].orig.bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
+						readed = fread(bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,1,fd_aux2);
+						if(readed != 1)	{
+							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							exit(EXIT_FAILURE);
+						}
+						readed = fread(&bloom_bPx3rd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
+					if(readed != 1)	{
+						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+						exit(EXIT_FAILURE);
+					}
+						memset(rawvalue,0,32);
+						if(FLAGSKIPCHECKSUM == 0)	{							
+							sha256((uint8_t*)bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,(uint8_t*)rawvalue);
+							if(memcmp(bloom_bPx3rd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx3rd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
+								fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
 					}
 					if(i % 64 == 0)	{
 						printf(".");
@@ -2514,27 +2900,27 @@ int main(int argc, char **argv)	{
 			printf("[+] Making checkums .. ");
 			fflush(stdout);
 		}	
-		if(!FLAGREADEDFILE1)	{
-			for(i = 0; i < 256 ; i++)	{
-				sha256((uint8_t*)bloom_bP[i].bf, bloom_bP[i].bytes,(uint8_t*) bloom_bP_checksums[i].data);
-				memcpy(bloom_bP_checksums[i].backup,bloom_bP_checksums[i].data,32);
+			if(!FLAGREADEDFILE1)	{
+				for(i = 0; i < 256 ; i++)	{
+					sha256((uint8_t*)bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes,(uint8_t*) bloom_bP_checksums[i].data);
+					memcpy(bloom_bP_checksums[i].backup,bloom_bP_checksums[i].data,32);
+				}
+				printf(".");
 			}
-			printf(".");
-		}
-		if(!FLAGREADEDFILE2)	{
-			for(i = 0; i < 256 ; i++)	{
-				sha256((uint8_t*)bloom_bPx2nd[i].bf, bloom_bPx2nd[i].bytes,(uint8_t*) bloom_bPx2nd_checksums[i].data);
-				memcpy(bloom_bPx2nd_checksums[i].backup,bloom_bPx2nd_checksums[i].data,32);
+			if(!FLAGREADEDFILE2)	{
+				for(i = 0; i < 256 ; i++)	{
+					sha256((uint8_t*)bloom_bPx2nd[i].orig.bf, bloom_bPx2nd[i].orig.bytes,(uint8_t*) bloom_bPx2nd_checksums[i].data);
+					memcpy(bloom_bPx2nd_checksums[i].backup,bloom_bPx2nd_checksums[i].data,32);
+				}
+				printf(".");
 			}
-			printf(".");
-		}
-		if(!FLAGREADEDFILE4)	{
-			for(i = 0; i < 256 ; i++)	{
-				sha256((uint8_t*)bloom_bPx3rd[i].bf, bloom_bPx3rd[i].bytes,(uint8_t*) bloom_bPx3rd_checksums[i].data);
-				memcpy(bloom_bPx3rd_checksums[i].backup,bloom_bPx3rd_checksums[i].data,32);
+			if(!FLAGREADEDFILE4)	{
+				for(i = 0; i < 256 ; i++)	{
+					sha256((uint8_t*)bloom_bPx3rd[i].orig.bf, bloom_bPx3rd[i].orig.bytes,(uint8_t*) bloom_bPx3rd_checksums[i].data);
+					memcpy(bloom_bPx3rd_checksums[i].backup,bloom_bPx3rd_checksums[i].data,32);
+				}
+				printf(".");
 			}
-			printf(".");
-		}
 		if(!FLAGREADEDFILE1 || !FLAGREADEDFILE2 || !FLAGREADEDFILE4)	{
 			printf(" done\n");
 			fflush(stdout);
@@ -2549,30 +2935,30 @@ int main(int argc, char **argv)	{
 			fflush(stdout);
 		}
 		if(FLAGSAVEREADFILE || FLAGUPDATEFILE1 )	{
-			if(!FLAGREADEDFILE1 || FLAGUPDATEFILE1)	{
-				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_4_%" PRIu64 ".blm",bsgs_m);
-				
-				if(FLAGUPDATEFILE1)	{
-					printf("[W] Updating old file into a new one\n");
-				}
+				if(!FLAGREADEDFILE1 || FLAGUPDATEFILE1)	{
+					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_11_%" PRIu64 ".blm",bsgs_m);
+					
+					if(FLAGUPDATEFILE1)	{
+						printf("[W] Updating old file into a new one\n");
+					}
 				
 				/* Writing file for 1st bloom filter */
 				
-				fd_aux1 = fopen(buffer_bloom_file,"wb");
-				if(fd_aux1 != NULL)	{
-					printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
-					fflush(stdout);
-					for(i = 0; i < 256;i++)	{
-						readed = fwrite(&bloom_bP[i],sizeof(struct bloom),1,fd_aux1);
-						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
-						}
-						readed = fwrite(bloom_bP[i].bf,bloom_bP[i].bytes,1,fd_aux1);
-						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
-						}
+					fd_aux1 = fopen(buffer_bloom_file,"wb");
+					if(fd_aux1 != NULL)	{
+						printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
+						fflush(stdout);
+						for(i = 0; i < 256;i++)	{
+							readed = fwrite(&bloom_bP[i].orig,sizeof(struct bloom),1,fd_aux1);
+							if(readed != 1)	{
+								fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
+							readed = fwrite(bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,1,fd_aux1);
+							if(readed != 1)	{
+								fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
 						readed = fwrite(&bloom_bP_checksums[i],sizeof(struct checksumsha256),1,fd_aux1);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
@@ -2591,26 +2977,26 @@ int main(int argc, char **argv)	{
 					exit(EXIT_FAILURE);
 				}
 			}
-			if(!FLAGREADEDFILE2  )	{
-				
-				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_6_%" PRIu64 ".blm",bsgs_m2);
-								
-				/* Writing file for 2nd bloom filter */
-				fd_aux2 = fopen(buffer_bloom_file,"wb");
-				if(fd_aux2 != NULL)	{
-					printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
-					fflush(stdout);
-					for(i = 0; i < 256;i++)	{
-						readed = fwrite(&bloom_bPx2nd[i],sizeof(struct bloom),1,fd_aux2);
-						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
-						}
-						readed = fwrite(bloom_bPx2nd[i].bf,bloom_bPx2nd[i].bytes,1,fd_aux2);
-						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
-						}
+				if(!FLAGREADEDFILE2  )	{
+					
+					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
+									
+					/* Writing file for 2nd bloom filter */
+					fd_aux2 = fopen(buffer_bloom_file,"wb");
+					if(fd_aux2 != NULL)	{
+						printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
+						fflush(stdout);
+						for(i = 0; i < 256;i++)	{
+							readed = fwrite(&bloom_bPx2nd[i].orig,sizeof(struct bloom),1,fd_aux2);
+							if(readed != 1)	{
+								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
+							readed = fwrite(bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,1,fd_aux2);
+							if(readed != 1)	{
+								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
 						readed = fwrite(&bloom_bPx2nd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
@@ -2655,25 +3041,25 @@ int main(int argc, char **argv)	{
 					exit(EXIT_FAILURE);
 				}
 			}
-			if(!FLAGREADEDFILE4)	{
-				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_7_%" PRIu64 ".blm",bsgs_m3);
-								
-				/* Writing file for 3rd bloom filter */
-				fd_aux2 = fopen(buffer_bloom_file,"wb");
-				if(fd_aux2 != NULL)	{
-					printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
-					fflush(stdout);
-					for(i = 0; i < 256;i++)	{
-						readed = fwrite(&bloom_bPx3rd[i],sizeof(struct bloom),1,fd_aux2);
-						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
-						}
-						readed = fwrite(bloom_bPx3rd[i].bf,bloom_bPx3rd[i].bytes,1,fd_aux2);
-						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
-							exit(EXIT_FAILURE);
-						}
+				if(!FLAGREADEDFILE4)	{
+					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
+									
+					/* Writing file for 3rd bloom filter */
+					fd_aux2 = fopen(buffer_bloom_file,"wb");
+					if(fd_aux2 != NULL)	{
+						printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
+						fflush(stdout);
+						for(i = 0; i < 256;i++)	{
+							readed = fwrite(&bloom_bPx3rd[i].orig,sizeof(struct bloom),1,fd_aux2);
+							if(readed != 1)	{
+								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
+							readed = fwrite(bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,1,fd_aux2);
+							if(readed != 1)	{
+								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								exit(EXIT_FAILURE);
+							}
 						readed = fwrite(&bloom_bPx3rd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
@@ -2698,8 +3084,7 @@ int main(int argc, char **argv)	{
 		i = 0;
 
 		// Apply auto-tuned thread count ONLY if user didn't specify -t
-		// Check if NTHREADS is still at default value (1)
-		if (NTHREADS == 1 && OPTIMAL_THREADS > 0) {
+		if (!FLAGTHREADS && NTHREADS == 1 && OPTIMAL_THREADS > 0) {
 			NTHREADS = OPTIMAL_THREADS;
 			printf("[I] Using auto-tuned thread count: %d (optimal for %d physical cores)\n",
 			       NTHREADS, g_sysinfo.cpu_physical_cores);
@@ -2779,7 +3164,7 @@ int main(int argc, char **argv)	{
 	}
 	if(FLAGMODE != MODE_BSGS)	{
 		// Apply auto-tuned thread count ONLY if user didn't specify -t
-		if (NTHREADS == 1 && OPTIMAL_THREADS > 0) {
+		if (!FLAGTHREADS && NTHREADS == 1 && OPTIMAL_THREADS > 0) {
 			NTHREADS = OPTIMAL_THREADS;
 			printf("[I] Using auto-tuned thread count: %d\n", NTHREADS);
 		}
@@ -2801,6 +3186,42 @@ int main(int argc, char **argv)	{
 			shutdown_work_queue();
 		}
 #endif
+
+		// ============================================================================
+		// GPU Full Search Mode (ECC + hash160 + matching entirely on GPU)
+		// ============================================================================
+		if (FLAGGPU_FULL && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
+			printf("[+] Running GPU full search mode...\n");
+
+			// Reset stats
+			g_gpu_keys_checked = 0;
+			g_gpu_should_stop = 0;
+
+			// Run GPU search
+			int gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
+
+			if (gpu_result >= 0) {
+				// GPU search completed successfully
+				printf("[+] GPU search finished. Keys found: %d\n", gpu_result);
+				printf("[+] Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
+
+				// Cleanup and exit
+#ifndef _WIN64
+				shutdown_work_queue();
+#endif
+				gpu_backend_shutdown();
+				printf("[+] Done!\n");
+				return 0;
+			} else {
+				// GPU search failed, fall back to CPU
+				fprintf(stderr, "[W] GPU search failed, falling back to CPU threads\n");
+				FLAGGPU_FULL = 0;
+			}
+		}
+
+		// ============================================================================
+		// CPU Thread Mode (fall-through or default)
+		// ============================================================================
 		for(j= 0;j < NTHREADS; j++)	{
 			tt = (tothread*) malloc(sizeof(struct tothread));
 			checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
@@ -3167,7 +3588,7 @@ void *thread_process_minikeys(void *vargp)	{
 					secp->GetHash160(P2PKH,false,publickey[0],publickey[1],publickey[2],publickey[3],(uint8_t*)publickeyhashrmd160_uncompress[0],(uint8_t*)publickeyhashrmd160_uncompress[1],(uint8_t*)publickeyhashrmd160_uncompress[2],(uint8_t*)publickeyhashrmd160_uncompress[3]);
 					
 					for(k = 0; k < 4; k++)	{
-						r = bloom_ext_check(&bloom,publickeyhashrmd160_uncompress[k],20);
+						r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
 						if(r) {
 							r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 							if(r) {
@@ -3242,6 +3663,7 @@ void *thread_process(void *vargp)	{
 	
 	bool calculate_y = FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH || FLAGCRYPTO  == CRYPTO_ETH;
 	Int key_mpz,keyfound;
+	Int key_center;
 	Int stride_half;
 	Int stride_four;
 	tt = (struct tothread *)vargp;
@@ -3275,9 +3697,12 @@ void *thread_process(void *vargp)	{
 				}
 			}
 				do {
-					key_mpz.Add(&stride_half);
-		 			startP = secp->ComputePublicKey(&key_mpz);
-					key_mpz.Sub(&stride_half);
+					// Compute the initial center point once; subsequent centers are advanced by +GRP_SIZE*G at the loop tail.
+					if (count == 0) {
+						key_center.Set(&key_mpz);
+						key_center.Add(&stride_half);
+						startP = secp->ComputePublicKey(&key_center);
+					}
 
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
@@ -3405,7 +3830,7 @@ void *thread_process(void *vargp)	{
 					endomorphism_beta2[0].x.ModMulK1(&pn.x, &beta2);
 				}
 								
-				if(FLAGMODE == MODE_RMD160 && FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM) {
+				if((FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) && FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM) {
 					process_rmd160_batch_btc_simple(key_mpz, pts, count);
 				}
 				else {
@@ -3492,7 +3917,7 @@ void *thread_process(void *vargp)	{
 									if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH){
 										if(FLAGENDOMORPHISM)	{
 											for(l = 0;l < 6; l++)	{
-												r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
+												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -3555,7 +3980,7 @@ void *thread_process(void *vargp)	{
 										}
 										else	{
 											for(l = 0;l < 2; l++)	{
-												r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
+												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -3579,7 +4004,7 @@ void *thread_process(void *vargp)	{
 									if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH)	{
 										if(FLAGENDOMORPHISM)	{
 											for(l = 6;l < 12; l++)	{	//We check the array from 6 to 12(excluded) because we save the uncompressed information there
-												r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);	//Check in Bloom filter
+												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);	//Check in Bloom filter
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);		//Check in Array using Binary search
 													if(r) {
@@ -3623,7 +4048,7 @@ void *thread_process(void *vargp)	{
 											}
 										}
 										else	{
-											r = bloom_ext_check(&bloom,publickeyhashrmd160_uncompress[k],MAXLENGTHADDRESS);
+											r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
 											if(r) {
 												r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 												if(r) {
@@ -3641,7 +4066,7 @@ void *thread_process(void *vargp)	{
 								if(FLAGENDOMORPHISM)	{
 									for(k = 0; k < 4;k++)	{
 										for(l = 0;l < 6; l++)	{
-											r = bloom_ext_check(&bloom,publickeyhashrmd160_endomorphism[l][k],MAXLENGTHADDRESS);
+											r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 											if(r) {
 												r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 												if(r) {												
@@ -3687,7 +4112,7 @@ void *thread_process(void *vargp)	{
 								}
 								else	{
 									for(k = 0; k < 4;k++)	{
-										r = bloom_ext_check(&bloom,publickeyhashrmd160_uncompress[k],MAXLENGTHADDRESS);
+										r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
 										if(r) {
 											r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 											if(r) {
@@ -3829,6 +4254,7 @@ void *thread_process_vanity(void *vargp)	{
 	char publickeyhashrmd160_endomorphism[12][4][20];
 	
 	Int key_mpz,keyfound;
+	Int key_center;
 	Int stride_half;
 	Int stride_four;
 	tt = (struct tothread *)vargp;
@@ -3880,9 +4306,11 @@ void *thread_process_vanity(void *vargp)	{
 				}
 			}
 				do {
-					key_mpz.Add(&stride_half);
-		 			startP = secp->ComputePublicKey(&key_mpz);
-					key_mpz.Sub(&stride_half);
+					if (count == 0) {
+						key_center.Set(&key_mpz);
+						key_center.Add(&stride_half);
+						startP = secp->ComputePublicKey(&key_center);
+					}
 
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
@@ -4008,7 +4436,150 @@ void *thread_process_vanity(void *vargp)	{
 					endomorphism_beta2[0].x.ModMulK1(&pn.x, &beta2);
 				}
 				
-				for(j = 0; j < CPU_GRP_SIZE/4;j++)	{
+					if(!FLAGENDOMORPHISM && FLAGCRYPTO == CRYPTO_BTC)	{
+						const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
+						const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
+
+						alignas(32) char hashCompressed02[CPU_GRP_SIZE][20];
+						alignas(32) char hashCompressed03[CPU_GRP_SIZE][20];
+						alignas(32) char hashUncompressed[CPU_GRP_SIZE][20];
+
+						if (wantCompressed) {
+							if (g_sysinfo.has_avx512) {
+								for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
+									secp->GetHash160_fromX_AVX512(P2PKH, 0x02,
+										&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+										&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
+										&pts[idx + 8].x, &pts[idx + 9].x, &pts[idx + 10].x, &pts[idx + 11].x,
+										&pts[idx + 12].x, &pts[idx + 13].x, &pts[idx + 14].x, &pts[idx + 15].x,
+										(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+										(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+										(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+										(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7],
+										(uint8_t*)hashCompressed02[idx + 8], (uint8_t*)hashCompressed02[idx + 9],
+										(uint8_t*)hashCompressed02[idx + 10], (uint8_t*)hashCompressed02[idx + 11],
+										(uint8_t*)hashCompressed02[idx + 12], (uint8_t*)hashCompressed02[idx + 13],
+										(uint8_t*)hashCompressed02[idx + 14], (uint8_t*)hashCompressed02[idx + 15]);
+									secp->GetHash160_fromX_AVX512(P2PKH, 0x03,
+										&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+										&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
+										&pts[idx + 8].x, &pts[idx + 9].x, &pts[idx + 10].x, &pts[idx + 11].x,
+										&pts[idx + 12].x, &pts[idx + 13].x, &pts[idx + 14].x, &pts[idx + 15].x,
+										(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+										(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3],
+										(uint8_t*)hashCompressed03[idx + 4], (uint8_t*)hashCompressed03[idx + 5],
+										(uint8_t*)hashCompressed03[idx + 6], (uint8_t*)hashCompressed03[idx + 7],
+										(uint8_t*)hashCompressed03[idx + 8], (uint8_t*)hashCompressed03[idx + 9],
+										(uint8_t*)hashCompressed03[idx + 10], (uint8_t*)hashCompressed03[idx + 11],
+										(uint8_t*)hashCompressed03[idx + 12], (uint8_t*)hashCompressed03[idx + 13],
+										(uint8_t*)hashCompressed03[idx + 14], (uint8_t*)hashCompressed03[idx + 15]);
+								}
+							} else if (g_avx2_available) {
+								for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
+									secp->GetHash160_fromX_AVX2(P2PKH, 0x02,
+										&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+										&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
+										(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+										(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+										(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+										(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7]);
+									secp->GetHash160_fromX_AVX2(P2PKH, 0x03,
+										&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+										&pts[idx + 4].x, &pts[idx + 5].x, &pts[idx + 6].x, &pts[idx + 7].x,
+										(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+										(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3],
+										(uint8_t*)hashCompressed03[idx + 4], (uint8_t*)hashCompressed03[idx + 5],
+										(uint8_t*)hashCompressed03[idx + 6], (uint8_t*)hashCompressed03[idx + 7]);
+								}
+							} else {
+								for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+									secp->GetHash160_fromX(P2PKH, 0x02,
+										&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+										(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+										(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
+									secp->GetHash160_fromX(P2PKH, 0x03,
+										&pts[idx].x, &pts[idx + 1].x, &pts[idx + 2].x, &pts[idx + 3].x,
+										(uint8_t*)hashCompressed03[idx], (uint8_t*)hashCompressed03[idx + 1],
+										(uint8_t*)hashCompressed03[idx + 2], (uint8_t*)hashCompressed03[idx + 3]);
+								}
+							}
+						}
+
+						if (wantUncompressed) {
+							if (g_sysinfo.has_avx512) {
+								for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
+									secp->GetHash160_AVX512(P2PKH, false,
+										pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+										pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+										pts[idx + 8], pts[idx + 9], pts[idx + 10], pts[idx + 11],
+										pts[idx + 12], pts[idx + 13], pts[idx + 14], pts[idx + 15],
+										(uint8_t*)hashUncompressed[idx], (uint8_t*)hashUncompressed[idx + 1],
+										(uint8_t*)hashUncompressed[idx + 2], (uint8_t*)hashUncompressed[idx + 3],
+										(uint8_t*)hashUncompressed[idx + 4], (uint8_t*)hashUncompressed[idx + 5],
+										(uint8_t*)hashUncompressed[idx + 6], (uint8_t*)hashUncompressed[idx + 7],
+										(uint8_t*)hashUncompressed[idx + 8], (uint8_t*)hashUncompressed[idx + 9],
+										(uint8_t*)hashUncompressed[idx + 10], (uint8_t*)hashUncompressed[idx + 11],
+										(uint8_t*)hashUncompressed[idx + 12], (uint8_t*)hashUncompressed[idx + 13],
+										(uint8_t*)hashUncompressed[idx + 14], (uint8_t*)hashUncompressed[idx + 15]);
+								}
+							} else if (g_avx2_available) {
+								for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
+									secp->GetHash160_AVX2(P2PKH,false,
+										pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+										pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+										(uint8_t*)hashUncompressed[idx], (uint8_t*)hashUncompressed[idx + 1],
+										(uint8_t*)hashUncompressed[idx + 2], (uint8_t*)hashUncompressed[idx + 3],
+										(uint8_t*)hashUncompressed[idx + 4], (uint8_t*)hashUncompressed[idx + 5],
+										(uint8_t*)hashUncompressed[idx + 6], (uint8_t*)hashUncompressed[idx + 7]);
+								}
+							} else {
+								for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+									secp->GetHash160(P2PKH,false,
+										pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+										(uint8_t*)hashUncompressed[idx], (uint8_t*)hashUncompressed[idx + 1],
+										(uint8_t*)hashUncompressed[idx + 2], (uint8_t*)hashUncompressed[idx + 3]);
+								}
+							}
+						}
+
+						Int keyCurrent;
+						keyCurrent.Set(&key_mpz);
+						for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
+							if (wantCompressed) {
+								if (vanityrmdmatch((unsigned char*)hashCompressed02[idx])) {
+									Int candidate(keyCurrent);
+									publickey = secp->ComputePublicKey(&candidate);
+									if(publickey.y.IsOdd()) {
+										candidate.Neg();
+										candidate.Add(&secp->order);
+									}
+									writevanitykey(true,&candidate);
+								}
+								if (vanityrmdmatch((unsigned char*)hashCompressed03[idx])) {
+									Int candidate(keyCurrent);
+									publickey = secp->ComputePublicKey(&candidate);
+									if(publickey.y.IsEven()) {
+										candidate.Neg();
+										candidate.Add(&secp->order);
+									}
+									writevanitykey(true,&candidate);
+								}
+							}
+
+							if (wantUncompressed) {
+								if (vanityrmdmatch((unsigned char*)hashUncompressed[idx])) {
+									Int candidate(keyCurrent);
+									writevanitykey(false,&candidate);
+								}
+							}
+
+							keyCurrent.Add(&stride);
+						}
+						key_mpz.Set(&keyCurrent);
+						count += CPU_GRP_SIZE;
+					}
+					else	{
+						for(j = 0; j < CPU_GRP_SIZE/4;j++)	{
 					if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH ){
 						if(FLAGENDOMORPHISM)	{
 							secp->GetHash160_fromX(P2PKH,0x02,&pts[(j*4)].x,&pts[(j*4)+1].x,&pts[(j*4)+2].x,&pts[(j*4)+3].x,(uint8_t*)publickeyhashrmd160_endomorphism[0][0],(uint8_t*)publickeyhashrmd160_endomorphism[0][1],(uint8_t*)publickeyhashrmd160_endomorphism[0][2],(uint8_t*)publickeyhashrmd160_endomorphism[0][3]);
@@ -4195,9 +4766,10 @@ void *thread_process_vanity(void *vargp)	{
 						
 					}
 
-						count+=4;
-						key_mpz.Add(&stride_four);
-				}
+							count+=4;
+							key_mpz.Add(&stride_four);
+					}
+					}
 				steps[thread_number].value++;
 
 				// Next start point (startP + GRP_SIZE*G)
@@ -4470,7 +5042,8 @@ void *thread_process_bsgs(void *vargp)	{
 	struct tothread* tt;
 
 	// Character variables
-	char xpoint_raw[32], *aux_c, *hextemp;
+	uint8_t xpoint_raw[16];
+	char *aux_c, *hextemp;
 
 	// Integer variables
 	Int base_key, keyfound;
@@ -4628,8 +5201,8 @@ pn.y.ModAdd(&GSn[i].y);
 #endif
 					pts[0] = pn;
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
-						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
+						pts[i].x.GetHi16Bytes(xpoint_raw);
+						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
@@ -4702,7 +5275,8 @@ void *thread_process_bsgs_random(void *vargp)	{
 
 	FILE *filekey;
 	struct tothread *tt;
-	char xpoint_raw[32],*aux_c,*hextemp;
+	uint8_t xpoint_raw[16];
+	char *aux_c,*hextemp;
 	Int base_key,keyfound,n_range_random;
 	Point base_point,point_aux,point_found,offset_point;
 	uint32_t l,k,r,salir,thread_number,cycles;
@@ -4872,8 +5446,8 @@ pn.y.ModAdd(&GSn[i].y);
 					pts[0] = pn;
 
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
-						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
+						pts[i].x.GetHi16Bytes(xpoint_raw);
+						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
@@ -4954,7 +5528,7 @@ int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privateke
 	Int base_key;
 	Point base_point,point_aux;
 	Point BSGS_Q, BSGS_S,BSGS_Q_AMP;
-	char xpoint_raw[32];
+	uint8_t xpoint_raw[16];
 
 
 	base_key.Set(&BSGS_M_double);
@@ -4974,8 +5548,8 @@ int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privateke
 	do {
 		BSGS_Q_AMP = secp->AddDirect(BSGS_Q,BSGS_AMP2[i]);
 		BSGS_S.Set(BSGS_Q_AMP);
-		BSGS_S.x.Get32Bytes((unsigned char *) xpoint_raw);
-		r = bloom_check(&bloom_bPx2nd[(uint8_t) xpoint_raw[0]],xpoint_raw,32);
+		BSGS_S.x.GetHi16Bytes(xpoint_raw);
+		r = bloom_ext_check(&bloom_bPx2nd[(uint8_t)xpoint_raw[0]], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 		if(r)	{
 			found = bsgs_thirdcheck(&base_key,i,k_index,privatekey);
 		}
@@ -4990,7 +5564,7 @@ int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey
 	Int base_key,calculatedkey;
 	Point base_point,point_aux;
 	Point BSGS_Q, BSGS_S,BSGS_Q_AMP;
-	char xpoint_raw[32];
+	uint8_t xpoint_raw[32];
 
 	base_key.SetInt32(a);
 	base_key.Mult(&BSGS_M2_double);
@@ -5005,10 +5579,11 @@ int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey
 	do {
 		BSGS_Q_AMP = secp->AddDirect(BSGS_Q,BSGS_AMP3[i]);
 		BSGS_S.Set(BSGS_Q_AMP);
-		BSGS_S.x.Get32Bytes((unsigned char *)xpoint_raw);
-		r = bloom_check(&bloom_bPx3rd[(uint8_t)xpoint_raw[0]],xpoint_raw,32);
+		BSGS_S.x.GetHi16Bytes(xpoint_raw);
+		r = bloom_ext_check(&bloom_bPx3rd[(uint8_t)xpoint_raw[0]], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 		if(r)	{
-			r = bsgs_searchbinary(bPtable,xpoint_raw,bsgs_m3,&j);
+			BSGS_S.x.GetLo16Bytes(xpoint_raw + 16);
+			r = bsgs_searchbinary(bPtable, (char*)xpoint_raw, bsgs_m3, &j);
 			if(r)	{
 				calcualteindex(i,&calculatedkey);
 				privatekey->Set(&calculatedkey);
@@ -5209,11 +5784,11 @@ void *thread_bPload(void *vargp)	{
 				if(!FLAGREADEDFILE4)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
 					WaitForSingleObject(bloom_bPx3rd_mutex[bloom_bP_index], INFINITE);
-					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+					bloom_ext_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					ReleaseMutex(bloom_bPx3rd_mutex[bloom_bP_index]);
 #else
 					pthread_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
-					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+					bloom_ext_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					pthread_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 #endif
 				}
@@ -5221,22 +5796,22 @@ void *thread_bPload(void *vargp)	{
 			if(i_counter < bsgs_m2 && !FLAGREADEDFILE2)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
 				WaitForSingleObject(bloom_bPx2nd_mutex[bloom_bP_index], INFINITE);
-				bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 				ReleaseMutex(bloom_bPx2nd_mutex[bloom_bP_index]);
 #else
 				pthread_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
-				bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 				pthread_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 #endif	
 			}
 			if(i_counter < to && !FLAGREADEDFILE1 )	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
 				WaitForSingleObject(bloom_bP_mutex[bloom_bP_index], INFINITE);
-				bloom_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
+bloom_ext_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
 				ReleaseMutex(bloom_bP_mutex[bloom_bP_index);
 #else
 				pthread_mutex_lock(&bloom_bP_mutex[bloom_bP_index]);
-				bloom_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
+bloom_ext_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
 				pthread_mutex_unlock(&bloom_bP_mutex[bloom_bP_index]);
 #endif
 			}
@@ -5392,11 +5967,11 @@ void *thread_bPload_2blooms(void *vargp)	{
 				if(!FLAGREADEDFILE4)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
 					WaitForSingleObject(bloom_bPx3rd_mutex[bloom_bP_index], INFINITE);
-					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+					bloom_ext_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					ReleaseMutex(bloom_bPx3rd_mutex[bloom_bP_index]);
 #else
 					pthread_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
-					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+					bloom_ext_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					pthread_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 #endif
 				}
@@ -5404,11 +5979,11 @@ void *thread_bPload_2blooms(void *vargp)	{
 			if(i_counter < bsgs_m2 && !FLAGREADEDFILE2)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
 					WaitForSingleObject(bloom_bPx2nd_mutex[bloom_bP_index], INFINITE);
-					bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					ReleaseMutex(bloom_bPx2nd_mutex[bloom_bP_index]);
 #else
 					pthread_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
-					bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
+bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					pthread_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 #endif			
 			}
@@ -5480,7 +6055,8 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	Point pp,pn,startP,base_point,point_aux,point_found,offset_point;
 	FILE *filekey;
 	struct tothread *tt;
-	char xpoint_raw[32],*aux_c,*hextemp;
+	uint8_t xpoint_raw[16];
+	char *aux_c,*hextemp;
 	Int base_key,keyfound,dy,dyn,_s,_p,intaux;
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
@@ -5673,8 +6249,8 @@ pn.y.ModAdd(&GSn[i].y);
 					pts[0] = pn;
 
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
-						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
+						pts[i].x.GetHi16Bytes(xpoint_raw);
+						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
@@ -5750,7 +6326,8 @@ void *thread_process_bsgs_backward(void *vargp)	{
 #endif
 	FILE *filekey;
 	struct tothread *tt;
-	char xpoint_raw[32],*aux_c,*hextemp;
+	uint8_t xpoint_raw[16];
+	char *aux_c,*hextemp;
 	Int base_key,keyfound;
 	Point base_point,point_aux,point_found,offset_point;
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
@@ -5927,8 +6504,8 @@ pn.y.ModAdd(&GSn[i].y);
 					pts[0] = pn;
 
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
-						r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
+						pts[i].x.GetHi16Bytes(xpoint_raw);
+						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
@@ -6003,7 +6580,8 @@ void *thread_process_bsgs_both(void *vargp)	{
 #endif
 	FILE *filekey;
 	struct tothread *tt;
-	char xpoint_raw[32],*aux_c,*hextemp;
+	uint8_t xpoint_raw[16];
+	char *aux_c,*hextemp;
 	Int base_key,keyfound;
 	Point base_point,point_aux,point_found,offset_point;
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
@@ -6207,8 +6785,8 @@ void *thread_process_bsgs_both(void *vargp)	{
 						pts[0] = pn;
 
 						for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-							pts[i].x.Get32Bytes((unsigned char*)xpoint_raw);
-							r = bloom_check(&bloom_bP[((unsigned char)xpoint_raw[0])],xpoint_raw,32);
+							pts[i].x.GetHi16Bytes(xpoint_raw);
+							r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 							if(r) {
 								r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 								if(r)	{
@@ -6416,6 +6994,7 @@ void menu() {
 	printf("-C mini     Set the minikey Base only 22 character minikeys, ex: SRPqx8QiwnW4WNWnTVa2W5\n");
 	printf("-8 alpha    Set the bas58 alphabet for minikeys\n");
 	printf("-e          Enable endomorphism search (Only for address, rmd160 and vanity)\n");
+	printf("-G mode     GPU usage for rmd160/address <auto,on,off> (default off)\n");
 	printf("-f file     Specify file name with addresses or xpoints or uncompressed public keys\n");
 	printf("-I stride   Stride for xpoint, rmd160 and address, this option don't work with bsgs\n");
 	printf("-k value    Use this only with bsgs mode, k value is factor for M, more speed but more RAM use wisely\n");
@@ -6647,6 +7226,135 @@ int minimum_same_bytes(unsigned char* A,unsigned char* B, int length) {
     }
 
     return minBytes;
+}
+
+// ============================================================================
+// GPU Full Search Helper Functions
+// ============================================================================
+
+// Upload precomputed G table to GPU (256*32 points)
+static int gpu_upload_gtable_from_secp() {
+	if (!gpu_backend_available()) return 1;
+
+	// GTable has 256*32 = 8192 points
+	// Each point needs X and Y (64 bytes total, big-endian)
+	const size_t GTABLE_POINTS = 256 * 32;
+	uint8_t *gtable_data = (uint8_t*)malloc(GTABLE_POINTS * 64);
+	if (!gtable_data) return 1;
+
+	// Access secp->GTable which is Point GTable[256*32]
+	// secp is global Secp256K1* pointer
+	extern Secp256K1 *secp;
+
+	for (size_t i = 0; i < GTABLE_POINTS; i++) {
+		// Get X coordinate (32 bytes, big-endian)
+		// Note: GTable points need to be accessed via secp's internal structure
+		// The Point class has x, y as Int types
+		// We need to extract them as big-endian bytes
+
+		// For now, compute the points directly
+		// GTable[i*256 + j] = (j+1) * G^(256^i)
+		// This is complex, so we'll use a simpler approach:
+		// Upload points as we compute them
+
+		// Actually, the GTable is stored in secp->GTable which is private
+		// We need to compute the public key and extract coordinates
+		Int scalar;
+		scalar.SetInt32(1);
+
+		// Point index = byte_position * 256 + (byte_value - 1)
+		// byte_value ranges from 1 to 255
+		int byte_pos = i / 256;
+		int byte_val = (i % 256) + 1;
+
+		// scalar = byte_val * 256^byte_pos
+		for (int b = 0; b < byte_pos; b++) {
+			scalar.ShiftL(8);
+		}
+		Int multiplier;
+		multiplier.SetInt32(byte_val);
+		scalar.Mult(&multiplier);
+
+		Point P = secp->ComputePublicKey(&scalar);
+
+		// Store X coordinate (big-endian)
+		P.x.Get32Bytes(gtable_data + i * 64);
+		// Store Y coordinate (big-endian)
+		P.y.Get32Bytes(gtable_data + i * 64 + 32);
+	}
+
+	int result = gpu_upload_gtable(gtable_data, GTABLE_POINTS);
+	free(gtable_data);
+	return result;
+}
+
+// Upload targets from addressTable to GPU
+static int gpu_upload_targets_from_addressTable(int64_t count) {
+	if (!gpu_backend_available() || count <= 0) return 1;
+
+	// addressTable is struct address_value* with 20-byte values
+	extern struct address_value *addressTable;
+
+	// Targets are already sorted, just upload the raw bytes
+	uint8_t *targets = (uint8_t*)malloc(count * 20);
+	if (!targets) return 1;
+
+	for (int64_t i = 0; i < count; i++) {
+		memcpy(targets + i * 20, addressTable[i].value, 20);
+	}
+
+	int result = gpu_upload_targets(targets, count);
+	free(targets);
+	return result;
+}
+
+// Callback for found keys from GPU search
+static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *userdata) {
+	(void)userdata;
+
+	// Convert big-endian privkey to Int
+	Int key;
+	key.Set32Bytes((unsigned char*)privkey_be);
+
+	// Use existing writekey function
+	writekey(compressed ? true : false, &key);
+}
+
+// Run full GPU search with CPU fallback
+static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count) {
+	if (!gpu_backend_available()) {
+		fprintf(stderr, "[W] GPU not available, cannot run full GPU search\n");
+		return -1;
+	}
+
+	// Prepare search configuration
+	gpu_search_config_t config;
+	memset(&config, 0, sizeof(config));
+
+	// Convert start key to big-endian bytes
+	start_key->Get32Bytes(config.start_key);
+	end_key->Get32Bytes(config.end_key);
+	stride_val->Get32Bytes(config.stride);
+
+	config.target_count = target_count;
+	config.compressed_only = 1;  // BTC compressed
+	config.use_bloom = (target_count > 1) ? 1 : 0;
+
+	config.callback = gpu_found_callback;
+	config.callback_userdata = NULL;
+
+	config.keys_checked = &g_gpu_keys_checked;
+	config.should_stop = &g_gpu_should_stop;
+
+	printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
+	printf("[+] Target count: %" PRId64 ", using %s\n",
+		target_count,
+		target_count == 1 ? "direct comparison" : "bloom filter + binary search");
+
+	int found = gpu_full_search(&config);
+
+	printf("[+] GPU search completed. Found: %d keys\n", found);
+	return found;
 }
 
 void checkpointer(void *ptr,const char *file,const char *function,const  char *name,int line)	{

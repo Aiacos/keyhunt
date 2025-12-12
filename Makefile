@@ -10,13 +10,42 @@ CFLAGS ?=
 
 LTO_FLAGS ?= -flto=auto
 
+# Optional CUDA backend (auto-detected if nvcc is available)
+NVCC ?= nvcc
+CUDA_ARCH ?= sm_75
+# New Fedora/GCC versions may be newer than the CUDA validation matrix.
+# This flag allows nvcc to use the system host compiler anyway.
+NVCCFLAGS ?= -O3 -std=c++17 -arch=$(CUDA_ARCH) -allow-unsupported-compiler
+# Optional: point nvcc to a compatible host compiler (e.g. gcc-13)
+CUDA_CC_BINDIR ?=
+ifneq ($(CUDA_CC_BINDIR),)
+  NVCCFLAGS += --compiler-bindir=$(CUDA_CC_BINDIR)
+endif
+HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
+ifeq ($(HAVE_NVCC),)
+  GPU_OBJS := gpu/gpu_backend_none.o
+  GPU_CXXFLAGS :=
+else
+  GPU_OBJS := gpu/gpu_backend_cuda.o
+  GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
+endif
+
 CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions
 CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result
+CXXFLAGS += $(GPU_CXXFLAGS)
 
 LDFLAGS ?=
 LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
 LDLIBS ?=
-LDLIBS += -lm -lpthread
+LDLIBS += -lm -lpthread -ldl
+
+# If CUDA backend is built, link against cudart (toolkit runtime)
+CUDA_HOME ?= /usr/local/cuda
+ifneq ($(HAVE_NVCC),)
+  LDFLAGS += -L$(CUDA_HOME)/lib64
+  LDFLAGS += -Wl,-rpath,$(CUDA_HOME)/lib64
+  LDLIBS += -lcudart
+endif
 
 BLOOM_OBJS := oldbloom/bloom.o bloom/bloom.o bloom/bloom_simd.o
 HASH_OBJS := hash/ripemd160.o hash/ripemd160_sse.o hash/ripemd160_avx2.o hash/ripemd160_avx512.o hash/sha256.o hash/sha256_sse.o hash/sha256_avx2.o hash/sha256_shani.o
@@ -25,7 +54,7 @@ SECP256K1_OBJS := secp256k1/Int.o secp256k1/Point.o secp256k1/SECP256K1.o secp25
 GMP256K1_OBJS := gmp256k1/Int.o gmp256k1/Point.o gmp256k1/GMP256K1.o gmp256k1/IntMod.o gmp256k1/Random.o gmp256k1/IntGroup.o
 BSGS_OBJS := bsgs/bsgs_ops.o bsgs/bsgs_fast.o
 
-COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS)
+COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS)
 
 KEYHUNT_OBJS := keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 BSGSD_OBJS := bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
@@ -56,6 +85,9 @@ clean:
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.cu
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 
 util.o: util.c
 	$(CXX) $(CXXFLAGS) -c $< -o $@

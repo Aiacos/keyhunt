@@ -39,6 +39,10 @@ public:
     void Finalize(unsigned char hash[20]);
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void ripemd160(unsigned char *input,int length,unsigned char *digest);
 void ripemd160_32(const unsigned char *input, unsigned char *digest);
 
@@ -67,6 +71,10 @@ void ripemd160avx512_32(
   uint8_t *d12, uint8_t *d13, uint8_t *d14, uint8_t *d15);
 int ripemd160_avx512_available(void);
 void ripemd160avx512_test();
+
+#ifdef __cplusplus
+}
+#endif
 
 std::string ripemd160_hex(unsigned char *digest);
 

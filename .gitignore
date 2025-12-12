@@ -2,7 +2,11 @@ bPfile
 hexcharstoraw
 *.bin
 keyhunt
+keyhunt_legacy
 bsgsd
+
+# CUDA build artifacts
+_cuda_tmp/
 KEYFOUNDKEYFOUND.txt
 VANITYKEYFOUND.txt
 *.dat

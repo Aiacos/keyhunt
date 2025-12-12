@@ -58,6 +58,13 @@ public:
   Int *k0,Int *k1,Int *k2,Int *k3,
   uint8_t *h0,uint8_t *h1,uint8_t *h2,uint8_t *h3);
 
+  // Optimized dual-prefix variant for BTC compressed-only scanning.
+  // Computes hash160(0x02||X) and hash160(0x03||X) using a single key-buffer build.
+  void GetHash160_fromX_02_03(int type,
+    Int *k0, Int *k1, Int *k2, Int *k3,
+    uint8_t *h02_0, uint8_t *h02_1, uint8_t *h02_2, uint8_t *h02_3,
+    uint8_t *h03_0, uint8_t *h03_1, uint8_t *h03_2, uint8_t *h03_3);
+
   // AVX2 optimized versions (8-way parallel)
   void GetHash160_AVX2(int type,bool compressed,
     Point &k0, Point &k1, Point &k2, Point &k3,
@@ -70,6 +77,14 @@ public:
   Int *k4,Int *k5,Int *k6,Int *k7,
   uint8_t *h0,uint8_t *h1,uint8_t *h2,uint8_t *h3,
   uint8_t *h4,uint8_t *h5,uint8_t *h6,uint8_t *h7);
+
+  void GetHash160_fromX_02_03_AVX2(int type,
+    Int *k0, Int *k1, Int *k2, Int *k3,
+    Int *k4, Int *k5, Int *k6, Int *k7,
+    uint8_t *h02_0, uint8_t *h02_1, uint8_t *h02_2, uint8_t *h02_3,
+    uint8_t *h02_4, uint8_t *h02_5, uint8_t *h02_6, uint8_t *h02_7,
+    uint8_t *h03_0, uint8_t *h03_1, uint8_t *h03_2, uint8_t *h03_3,
+    uint8_t *h03_4, uint8_t *h03_5, uint8_t *h03_6, uint8_t *h03_7);
 
   // AVX-512 optimized versions (16-way parallel)
   void GetHash160_AVX512(int type, bool compressed,
@@ -91,6 +106,20 @@ public:
     uint8_t *h4, uint8_t *h5, uint8_t *h6, uint8_t *h7,
     uint8_t *h8, uint8_t *h9, uint8_t *h10, uint8_t *h11,
     uint8_t *h12, uint8_t *h13, uint8_t *h14, uint8_t *h15);
+
+  void GetHash160_fromX_02_03_AVX512(int type,
+    Int *k0, Int *k1, Int *k2, Int *k3,
+    Int *k4, Int *k5, Int *k6, Int *k7,
+    Int *k8, Int *k9, Int *k10, Int *k11,
+    Int *k12, Int *k13, Int *k14, Int *k15,
+    uint8_t *h02_0, uint8_t *h02_1, uint8_t *h02_2, uint8_t *h02_3,
+    uint8_t *h02_4, uint8_t *h02_5, uint8_t *h02_6, uint8_t *h02_7,
+    uint8_t *h02_8, uint8_t *h02_9, uint8_t *h02_10, uint8_t *h02_11,
+    uint8_t *h02_12, uint8_t *h02_13, uint8_t *h02_14, uint8_t *h02_15,
+    uint8_t *h03_0, uint8_t *h03_1, uint8_t *h03_2, uint8_t *h03_3,
+    uint8_t *h03_4, uint8_t *h03_5, uint8_t *h03_6, uint8_t *h03_7,
+    uint8_t *h03_8, uint8_t *h03_9, uint8_t *h03_10, uint8_t *h03_11,
+    uint8_t *h03_12, uint8_t *h03_13, uint8_t *h03_14, uint8_t *h03_15);
 
 
   Point Add(Point &p1, Point &p2);

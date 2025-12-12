@@ -789,6 +789,59 @@ void Secp256K1::GetHash160_fromX(int type,unsigned char prefix,
   }
 }
 
+void Secp256K1::GetHash160_fromX_02_03(int type,
+  Int *k0, Int *k1, Int *k2, Int *k3,
+  uint8_t *h02_0, uint8_t *h02_1, uint8_t *h02_2, uint8_t *h02_3,
+  uint8_t *h03_0, uint8_t *h03_1, uint8_t *h03_2, uint8_t *h03_3) {
+
+#ifdef WIN64
+  __declspec(align(16)) unsigned char sh0[64];
+  __declspec(align(16)) unsigned char sh1[64];
+  __declspec(align(16)) unsigned char sh2[64];
+  __declspec(align(16)) unsigned char sh3[64];
+#else
+  unsigned char sh0[64] __attribute__((aligned(16)));
+  unsigned char sh1[64] __attribute__((aligned(16)));
+  unsigned char sh2[64] __attribute__((aligned(16)));
+  unsigned char sh3[64] __attribute__((aligned(16)));
+#endif
+
+  switch (type) {
+  case P2PKH:
+  {
+    uint32_t b0[16];
+    uint32_t b1[16];
+    uint32_t b2[16];
+    uint32_t b3[16];
+
+    KEYBUFFPREFIX(b0, k0, 0x02);
+    KEYBUFFPREFIX(b1, k1, 0x02);
+    KEYBUFFPREFIX(b2, k2, 0x02);
+    KEYBUFFPREFIX(b3, k3, 0x02);
+
+    sha256sse_1B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
+    ripemd160sse_32(sh0, sh1, sh2, sh3, h02_0, h02_1, h02_2, h02_3);
+
+    // Flip compressed prefix from 0x02 to 0x03 (top byte of word 0).
+    b0[0] ^= 0x01000000u;
+    b1[0] ^= 0x01000000u;
+    b2[0] ^= 0x01000000u;
+    b3[0] ^= 0x01000000u;
+
+    sha256sse_1B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
+    ripemd160sse_32(sh0, sh1, sh2, sh3, h03_0, h03_1, h03_2, h03_3);
+  }
+  break;
+
+  case P2SH:
+  {
+    fprintf(stderr,"[E] Fixme unsopported case");
+    exit(0);
+  }
+  break;
+  }
+}
+
 // ====================================================================
 // AVX2 OPTIMIZED FUNCTIONS (8-way parallel processing)
 // ====================================================================
@@ -990,6 +1043,85 @@ void Secp256K1::GetHash160_fromX_AVX2(int type,unsigned char prefix,
   }
 }
 
+void Secp256K1::GetHash160_fromX_02_03_AVX2(int type,
+  Int *k0, Int *k1, Int *k2, Int *k3,
+  Int *k4, Int *k5, Int *k6, Int *k7,
+  uint8_t *h02_0, uint8_t *h02_1, uint8_t *h02_2, uint8_t *h02_3,
+  uint8_t *h02_4, uint8_t *h02_5, uint8_t *h02_6, uint8_t *h02_7,
+  uint8_t *h03_0, uint8_t *h03_1, uint8_t *h03_2, uint8_t *h03_3,
+  uint8_t *h03_4, uint8_t *h03_5, uint8_t *h03_6, uint8_t *h03_7) {
+
+#ifdef WIN64
+  __declspec(align(32)) unsigned char sh0[64];
+  __declspec(align(32)) unsigned char sh1[64];
+  __declspec(align(32)) unsigned char sh2[64];
+  __declspec(align(32)) unsigned char sh3[64];
+  __declspec(align(32)) unsigned char sh4[64];
+  __declspec(align(32)) unsigned char sh5[64];
+  __declspec(align(32)) unsigned char sh6[64];
+  __declspec(align(32)) unsigned char sh7[64];
+#else
+  unsigned char sh0[64] __attribute__((aligned(32)));
+  unsigned char sh1[64] __attribute__((aligned(32)));
+  unsigned char sh2[64] __attribute__((aligned(32)));
+  unsigned char sh3[64] __attribute__((aligned(32)));
+  unsigned char sh4[64] __attribute__((aligned(32)));
+  unsigned char sh5[64] __attribute__((aligned(32)));
+  unsigned char sh6[64] __attribute__((aligned(32)));
+  unsigned char sh7[64] __attribute__((aligned(32)));
+#endif
+
+  switch (type) {
+  case P2PKH:
+  {
+    uint32_t b0[16];
+    uint32_t b1[16];
+    uint32_t b2[16];
+    uint32_t b3[16];
+    uint32_t b4[16];
+    uint32_t b5[16];
+    uint32_t b6[16];
+    uint32_t b7[16];
+
+    KEYBUFFPREFIX(b0, k0, 0x02);
+    KEYBUFFPREFIX(b1, k1, 0x02);
+    KEYBUFFPREFIX(b2, k2, 0x02);
+    KEYBUFFPREFIX(b3, k3, 0x02);
+    KEYBUFFPREFIX(b4, k4, 0x02);
+    KEYBUFFPREFIX(b5, k5, 0x02);
+    KEYBUFFPREFIX(b6, k6, 0x02);
+    KEYBUFFPREFIX(b7, k7, 0x02);
+
+    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
+    ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                     h02_0, h02_1, h02_2, h02_3, h02_4, h02_5, h02_6, h02_7);
+
+    b0[0] ^= 0x01000000u;
+    b1[0] ^= 0x01000000u;
+    b2[0] ^= 0x01000000u;
+    b3[0] ^= 0x01000000u;
+    b4[0] ^= 0x01000000u;
+    b5[0] ^= 0x01000000u;
+    b6[0] ^= 0x01000000u;
+    b7[0] ^= 0x01000000u;
+
+    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
+    ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                     h03_0, h03_1, h03_2, h03_3, h03_4, h03_5, h03_6, h03_7);
+  }
+  break;
+
+  case P2SH:
+  {
+    fprintf(stderr,"[E] Fixme unsupported case\n");
+    exit(0);
+  }
+  break;
+  }
+}
+
 // AVX-512 optimized 16-way parallel GetHash160 from X coordinate
 void Secp256K1::GetHash160_fromX_AVX512(int type, unsigned char prefix,
   Int *k0, Int *k1, Int *k2, Int *k3,
@@ -1045,6 +1177,84 @@ void Secp256K1::GetHash160_fromX_AVX512(int type, unsigned char prefix,
                        sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15,
                        h0, h1, h2, h3, h4, h5, h6, h7,
                        h8, h9, h10, h11, h12, h13, h14, h15);
+  }
+  break;
+
+  case P2SH:
+  {
+    fprintf(stderr, "[E] Fixme unsupported case\n");
+    exit(0);
+  }
+  break;
+  }
+}
+
+void Secp256K1::GetHash160_fromX_02_03_AVX512(int type,
+  Int *k0, Int *k1, Int *k2, Int *k3,
+  Int *k4, Int *k5, Int *k6, Int *k7,
+  Int *k8, Int *k9, Int *k10, Int *k11,
+  Int *k12, Int *k13, Int *k14, Int *k15,
+  uint8_t *h02_0, uint8_t *h02_1, uint8_t *h02_2, uint8_t *h02_3,
+  uint8_t *h02_4, uint8_t *h02_5, uint8_t *h02_6, uint8_t *h02_7,
+  uint8_t *h02_8, uint8_t *h02_9, uint8_t *h02_10, uint8_t *h02_11,
+  uint8_t *h02_12, uint8_t *h02_13, uint8_t *h02_14, uint8_t *h02_15,
+  uint8_t *h03_0, uint8_t *h03_1, uint8_t *h03_2, uint8_t *h03_3,
+  uint8_t *h03_4, uint8_t *h03_5, uint8_t *h03_6, uint8_t *h03_7,
+  uint8_t *h03_8, uint8_t *h03_9, uint8_t *h03_10, uint8_t *h03_11,
+  uint8_t *h03_12, uint8_t *h03_13, uint8_t *h03_14, uint8_t *h03_15) {
+
+  alignas(64) unsigned char sh0[64], sh1[64], sh2[64], sh3[64];
+  alignas(64) unsigned char sh4[64], sh5[64], sh6[64], sh7[64];
+  alignas(64) unsigned char sh8[64], sh9[64], sh10[64], sh11[64];
+  alignas(64) unsigned char sh12[64], sh13[64], sh14[64], sh15[64];
+
+  switch (type) {
+  case P2PKH:
+  {
+    uint32_t b0[16], b1[16], b2[16], b3[16];
+    uint32_t b4[16], b5[16], b6[16], b7[16];
+    uint32_t b8[16], b9[16], b10[16], b11[16];
+    uint32_t b12[16], b13[16], b14[16], b15[16];
+
+    KEYBUFFPREFIX(b0, k0, 0x02);
+    KEYBUFFPREFIX(b1, k1, 0x02);
+    KEYBUFFPREFIX(b2, k2, 0x02);
+    KEYBUFFPREFIX(b3, k3, 0x02);
+    KEYBUFFPREFIX(b4, k4, 0x02);
+    KEYBUFFPREFIX(b5, k5, 0x02);
+    KEYBUFFPREFIX(b6, k6, 0x02);
+    KEYBUFFPREFIX(b7, k7, 0x02);
+    KEYBUFFPREFIX(b8, k8, 0x02);
+    KEYBUFFPREFIX(b9, k9, 0x02);
+    KEYBUFFPREFIX(b10, k10, 0x02);
+    KEYBUFFPREFIX(b11, k11, 0x02);
+    KEYBUFFPREFIX(b12, k12, 0x02);
+    KEYBUFFPREFIX(b13, k13, 0x02);
+    KEYBUFFPREFIX(b14, k14, 0x02);
+    KEYBUFFPREFIX(b15, k15, 0x02);
+
+    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
+    sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
+                  sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
+    ripemd160avx512_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                       sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15,
+                       h02_0, h02_1, h02_2, h02_3, h02_4, h02_5, h02_6, h02_7,
+                       h02_8, h02_9, h02_10, h02_11, h02_12, h02_13, h02_14, h02_15);
+
+    b0[0] ^= 0x01000000u;  b1[0] ^= 0x01000000u;  b2[0] ^= 0x01000000u;  b3[0] ^= 0x01000000u;
+    b4[0] ^= 0x01000000u;  b5[0] ^= 0x01000000u;  b6[0] ^= 0x01000000u;  b7[0] ^= 0x01000000u;
+    b8[0] ^= 0x01000000u;  b9[0] ^= 0x01000000u;  b10[0] ^= 0x01000000u; b11[0] ^= 0x01000000u;
+    b12[0] ^= 0x01000000u; b13[0] ^= 0x01000000u; b14[0] ^= 0x01000000u; b15[0] ^= 0x01000000u;
+
+    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
+    sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
+                  sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
+    ripemd160avx512_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                       sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15,
+                       h03_0, h03_1, h03_2, h03_3, h03_4, h03_5, h03_6, h03_7,
+                       h03_8, h03_9, h03_10, h03_11, h03_12, h03_13, h03_14, h03_15);
   }
   break;
 
@@ -1155,4 +1365,3 @@ void Secp256K1::GetHash160_AVX512(int type, bool compressed,
   break;
   }
 }
-

@@ -244,6 +244,18 @@ void Int::Get32Bytes(unsigned char *buff)	{
 	mpz_export(buff + 32 - size, &count, 0, 1, 0, 0, num);
 }
 
+void Int::GetHi16Bytes(unsigned char *buff) {
+	unsigned char tmp[32];
+	Get32Bytes(tmp);
+	memcpy(buff, tmp, 16);
+}
+
+void Int::GetLo16Bytes(unsigned char *buff) {
+	unsigned char tmp[32];
+	Get32Bytes(tmp);
+	memcpy(buff, tmp + 16, 16);
+}
+
 void Int::Set32Bytes(unsigned char *buff)	{
 	mpz_import(num,32,0,1,0,0,buff);
 }

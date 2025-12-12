@@ -246,6 +246,20 @@ void Int::Get32Bytes(unsigned char *buff) {
 
 }
 
+void Int::GetHi16Bytes(unsigned char *buff) {
+  uint64_t w0 = _byteswap_uint64(bits64[3]);
+  uint64_t w1 = _byteswap_uint64(bits64[2]);
+  memcpy(buff, &w0, 8);
+  memcpy(buff + 8, &w1, 8);
+}
+
+void Int::GetLo16Bytes(unsigned char *buff) {
+  uint64_t w0 = _byteswap_uint64(bits64[1]);
+  uint64_t w1 = _byteswap_uint64(bits64[0]);
+  memcpy(buff, &w0, 8);
+  memcpy(buff + 8, &w1, 8);
+}
+
 // ------------------------------------------------
 
 void Int::SetByte(int n,unsigned char byte) {
