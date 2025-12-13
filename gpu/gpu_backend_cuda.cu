@@ -569,9 +569,13 @@ __device__ void mod_inv(uint256_d *r, const uint256_d *a) {
 // ============================================================================
 
 // Batch size for Montgomery's trick (batch modular inverse)
-// Higher = less mod_inv calls but more register pressure
-// 512 is optimal for RTX 2080 SUPER (tested: 87 Mkeys/s)
-// Note: sizes > 512 cause register spilling and incorrect results
+// Trade-off: larger = fewer mod_inv calls but more stack usage
+// Performance analysis on RTX 2080 SUPER (sm_75):
+//   512: 116KB stack -> ~600 Mkeys/s (BEST - fewer mod_inv wins despite stack spill)
+//   256: ~58KB stack -> ~520 Mkeys/s
+//   128: ~29KB stack -> ~422 Mkeys/s (too many mod_inv)
+//   64:  14KB stack  -> ~360 Mkeys/s (way too many mod_inv)
+// The mod_inv cost (~500 muls) dominates over memory access latency
 #define BATCH_INV_SIZE 512
 
 // Batch inverse using Montgomery's trick
