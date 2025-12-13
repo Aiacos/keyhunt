@@ -35,24 +35,153 @@ static inline int env_truthy(const char *name) {
 static int g_available = 0;
 static gpu_backend_info_t g_info;
 
-// Device pointers for persistent data
-static uint8_t *d_GTable = NULL;        // G table: 256*32 points * 64 bytes
-static size_t g_GTable_count = 0;
+// ============================================================================
+// Multi-GPU support infrastructure
+// ============================================================================
 
-static uint8_t *d_targets = NULL;       // Target hashes: count * 20 bytes
+#define MAX_GPUS 8
+#define NUM_STREAMS_PER_GPU 2
+
+// Architecture-based optimal parameters
+typedef struct {
+    int blocks_per_sm;
+    int keys_per_thread;
+    int threads_per_block;
+} arch_params_t;
+
+// Per-GPU context
+typedef struct {
+    int device_id;
+    int active;
+
+    // Device properties
+    cudaDeviceProp props;
+    int compute_capability;  // e.g., 75 for sm_75, 86 for sm_86
+
+    // Optimal parameters for this GPU architecture
+    arch_params_t optimal_params;
+
+    // Device memory (per-GPU)
+    uint8_t *d_GTable;
+    uint8_t *d_targets;
+    uint8_t *d_bloom;
+
+    // Streams
+    cudaStream_t streams[NUM_STREAMS_PER_GPU];
+    int *d_should_stop[NUM_STREAMS_PER_GPU];
+
+    // Statistics
+    volatile uint64_t keys_processed;
+} gpu_context_t;
+
+static gpu_context_t g_gpus[MAX_GPUS];
+static int g_gpu_count = 0;
+static size_t g_GTable_count = 0;
 static size_t g_target_count = 0;
+static size_t g_bloom_size = 0;
+static int g_bloom_hashes = 0;
+
+// Host-side copies for upload to all GPUs
+static uint8_t *h_GTable_copy = NULL;
+static uint8_t *h_targets_copy = NULL;
+static uint8_t *h_bloom_copy = NULL;
+
+// Get optimal parameters based on GPU compute capability
+static arch_params_t get_optimal_params(int compute_capability, int multiprocessors) {
+    arch_params_t params;
+
+    // Architecture-specific tuning based on compute capability
+    // These values are optimized for each architecture's characteristics:
+    // - Register file size
+    // - Shared memory per SM
+    // - L1/L2 cache sizes
+    // - Warp scheduler efficiency
+
+    switch (compute_capability) {
+        case 75:  // Turing (RTX 2000 series)
+            params.blocks_per_sm = 24;
+            params.keys_per_thread = 1024;
+            params.threads_per_block = 256;
+            break;
+
+        case 80:  // Ampere (A100, data center)
+            params.blocks_per_sm = 32;
+            params.keys_per_thread = 2048;
+            params.threads_per_block = 256;
+            break;
+
+        case 86:  // Ampere (RTX 3000 series, consumer)
+            params.blocks_per_sm = 28;
+            params.keys_per_thread = 1536;
+            params.threads_per_block = 256;
+            break;
+
+        case 87:  // Ampere (Jetson Orin)
+            params.blocks_per_sm = 24;
+            params.keys_per_thread = 1024;
+            params.threads_per_block = 256;
+            break;
+
+        case 89:  // Ada Lovelace (RTX 4000 series)
+            params.blocks_per_sm = 32;
+            params.keys_per_thread = 2048;
+            params.threads_per_block = 256;
+            break;
+
+        case 90:  // Hopper (H100)
+            params.blocks_per_sm = 40;
+            params.keys_per_thread = 4096;
+            params.threads_per_block = 256;
+            break;
+
+        case 70:  // Volta (V100)
+        case 72:  // Volta (Xavier)
+            params.blocks_per_sm = 20;
+            params.keys_per_thread = 1024;
+            params.threads_per_block = 256;
+            break;
+
+        case 61:  // Pascal (GTX 1000 series)
+        case 60:  // Pascal (P100)
+            params.blocks_per_sm = 16;
+            params.keys_per_thread = 512;
+            params.threads_per_block = 256;
+            break;
+
+        default:
+            // Conservative defaults for unknown architectures
+            if (compute_capability >= 89) {
+                // Assume similar to Ada for newer
+                params.blocks_per_sm = 32;
+                params.keys_per_thread = 2048;
+            } else if (compute_capability >= 80) {
+                // Assume similar to Ampere
+                params.blocks_per_sm = 28;
+                params.keys_per_thread = 1536;
+            } else {
+                // Older GPUs: conservative
+                params.blocks_per_sm = 16;
+                params.keys_per_thread = 512;
+            }
+            params.threads_per_block = 256;
+            break;
+    }
+
+    return params;
+}
+
+// Legacy compatibility: pointers to first GPU's data
+static uint8_t *d_GTable = NULL;
+static uint8_t *d_targets = NULL;
+static uint8_t *d_bloom = NULL;
 
 // Fast path for very small target sets: store in constant memory.
 #define MAX_SMALL_TARGETS 32
 __device__ __constant__ uint8_t d_targets_small[MAX_SMALL_TARGETS * 20];
 __device__ __constant__ int d_targets_small_count = 0;
 
-static uint8_t *d_bloom = NULL;         // Bloom filter data
-static size_t g_bloom_size = 0;
-static int g_bloom_hashes = 0;
-
 // ============================================================================
-// Multi-stream async execution infrastructure
+// Multi-stream async execution infrastructure (legacy single-GPU compat)
 // ============================================================================
 
 // Full search multi-stream context
@@ -1578,21 +1707,79 @@ int gpu_backend_init(gpu_backend_info_t *info) {
 
     if (err != cudaSuccess || deviceCount == 0) {
         g_available = 0;
+        g_gpu_count = 0;
         if (info) memset(info, 0, sizeof(*info));
         return 0;
     }
 
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, 0);
+    // Limit to MAX_GPUS
+    if (deviceCount > MAX_GPUS) {
+        printf("[I] Found %d GPUs, limiting to %d\n", deviceCount, MAX_GPUS);
+        deviceCount = MAX_GPUS;
+    }
 
+    // Initialize all GPU contexts
+    g_gpu_count = 0;
+    uint64_t total_vram = 0;
+    int total_sms = 0;
+
+    for (int i = 0; i < deviceCount; i++) {
+        gpu_context_t *ctx = &g_gpus[g_gpu_count];
+        memset(ctx, 0, sizeof(gpu_context_t));
+
+        err = cudaGetDeviceProperties(&ctx->props, i);
+        if (err != cudaSuccess) {
+            printf("[W] Failed to get properties for GPU %d, skipping\n", i);
+            continue;
+        }
+
+        // Check if GPU is usable (compute capability >= 6.0)
+        int cc = ctx->props.major * 10 + ctx->props.minor;
+        if (cc < 60) {
+            printf("[W] GPU %d (%s) compute capability %d.%d < 6.0, skipping\n",
+                   i, ctx->props.name, ctx->props.major, ctx->props.minor);
+            continue;
+        }
+
+        ctx->device_id = i;
+        ctx->active = 1;
+        ctx->compute_capability = cc;
+        ctx->optimal_params = get_optimal_params(cc, ctx->props.multiProcessorCount);
+
+        total_vram += ctx->props.totalGlobalMem;
+        total_sms += ctx->props.multiProcessorCount;
+
+        printf("[+] GPU %d: %s (sm_%d, %d SMs, %lu MB VRAM)\n",
+               i, ctx->props.name, cc, ctx->props.multiProcessorCount,
+               (unsigned long)(ctx->props.totalGlobalMem / (1024 * 1024)));
+        printf("    Optimal params: %d blocks/SM, %d keys/thread\n",
+               ctx->optimal_params.blocks_per_sm, ctx->optimal_params.keys_per_thread);
+
+        g_gpu_count++;
+    }
+
+    if (g_gpu_count == 0) {
+        g_available = 0;
+        if (info) memset(info, 0, sizeof(*info));
+        return 0;
+    }
+
+    // Report multi-GPU status
+    if (g_gpu_count > 1) {
+        printf("[+] Multi-GPU mode: %d GPUs active, %d total SMs, %lu MB total VRAM\n",
+               g_gpu_count, total_sms, (unsigned long)(total_vram / (1024 * 1024)));
+    }
+
+    // Fill info struct with first GPU info (for compatibility)
+    cudaDeviceProp *prop = &g_gpus[0].props;
     memset(&g_info, 0, sizeof(g_info));
-    g_info.gpu_count = deviceCount;
-    g_info.vram_mb = prop.totalGlobalMem / (1024 * 1024);
-    strncpy(g_info.name, prop.name, sizeof(g_info.name) - 1);
-    g_info.compute_major = prop.major;
-    g_info.compute_minor = prop.minor;
-    g_info.multiprocessors = prop.multiProcessorCount;
-    g_info.max_threads_per_block = prop.maxThreadsPerBlock;
+    g_info.gpu_count = g_gpu_count;
+    g_info.vram_mb = prop->totalGlobalMem / (1024 * 1024);
+    strncpy(g_info.name, prop->name, sizeof(g_info.name) - 1);
+    g_info.compute_major = prop->major;
+    g_info.compute_minor = prop->minor;
+    g_info.multiprocessors = prop->multiProcessorCount;
+    g_info.max_threads_per_block = prop->maxThreadsPerBlock;
 
     if (info) *info = g_info;
 
@@ -1611,10 +1798,37 @@ void gpu_backend_shutdown(void) {
     // Clean up multi-stream search infrastructure
     cleanup_search_streams();
 
-    // Clean up persistent device memory
-    if (d_GTable) { cudaFree(d_GTable); d_GTable = NULL; }
-    if (d_targets) { cudaFree(d_targets); d_targets = NULL; }
-    if (d_bloom) { cudaFree(d_bloom); d_bloom = NULL; }
+    // Clean up all GPU contexts
+    for (int g = 0; g < g_gpu_count; g++) {
+        gpu_context_t *ctx = &g_gpus[g];
+        if (!ctx->active) continue;
+
+        cudaSetDevice(ctx->device_id);
+
+        // Clean up device memory
+        if (ctx->d_GTable) { cudaFree(ctx->d_GTable); ctx->d_GTable = NULL; }
+        if (ctx->d_targets) { cudaFree(ctx->d_targets); ctx->d_targets = NULL; }
+        if (ctx->d_bloom) { cudaFree(ctx->d_bloom); ctx->d_bloom = NULL; }
+
+        // Clean up streams
+        for (int s = 0; s < NUM_STREAMS_PER_GPU; s++) {
+            if (ctx->streams[s]) { cudaStreamDestroy(ctx->streams[s]); ctx->streams[s] = NULL; }
+            if (ctx->d_should_stop[s]) { cudaFree(ctx->d_should_stop[s]); ctx->d_should_stop[s] = NULL; }
+        }
+
+        ctx->active = 0;
+    }
+    g_gpu_count = 0;
+
+    // Clean up host-side copies
+    if (h_GTable_copy) { free(h_GTable_copy); h_GTable_copy = NULL; }
+    if (h_targets_copy) { free(h_targets_copy); h_targets_copy = NULL; }
+    if (h_bloom_copy) { free(h_bloom_copy); h_bloom_copy = NULL; }
+
+    // Reset legacy pointers
+    d_GTable = NULL;
+    d_targets = NULL;
+    d_bloom = NULL;
 
     // Clean up legacy single-stream context
     if (d_x32) { cudaFree(d_x32); d_x32 = NULL; }
@@ -1701,81 +1915,217 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
 }
 
 int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
-    if (!g_available) return 1;
+    if (!g_available || g_gpu_count == 0) return 1;
 
     size_t size = point_count * 64;
-    if (d_GTable) cudaFree(d_GTable);
 
-    cudaError_t err = cudaMalloc(&d_GTable, size);
-    if (err != cudaSuccess) return 1;
+    // Keep host copy for multi-GPU upload
+    if (h_GTable_copy) free(h_GTable_copy);
+    h_GTable_copy = (uint8_t*)malloc(size);
+    if (!h_GTable_copy) return 1;
+    memcpy(h_GTable_copy, gtable, size);
 
-    err = cudaMemcpy(d_GTable, gtable, size, cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) { cudaFree(d_GTable); d_GTable = NULL; return 1; }
+    // Upload to all GPUs
+    int success = 0;
+    for (int g = 0; g < g_gpu_count; g++) {
+        gpu_context_t *ctx = &g_gpus[g];
+        if (!ctx->active) continue;
+
+        cudaSetDevice(ctx->device_id);
+
+        if (ctx->d_GTable) cudaFree(ctx->d_GTable);
+
+        cudaError_t err = cudaMalloc(&ctx->d_GTable, size);
+        if (err != cudaSuccess) {
+            printf("[W] GPU %d: Failed to allocate G table memory\n", ctx->device_id);
+            continue;
+        }
+
+        err = cudaMemcpy(ctx->d_GTable, gtable, size, cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            cudaFree(ctx->d_GTable);
+            ctx->d_GTable = NULL;
+            printf("[W] GPU %d: Failed to upload G table\n", ctx->device_id);
+            continue;
+        }
+
+        success++;
+    }
+
+    // Set legacy pointer for single-GPU compat
+    if (g_gpu_count > 0 && g_gpus[0].d_GTable) {
+        d_GTable = g_gpus[0].d_GTable;
+    }
 
     g_GTable_count = point_count;
-    return 0;
+    return (success > 0) ? 0 : 1;
 }
 
 int gpu_upload_targets(const uint8_t *targets, size_t count) {
-    if (!g_available) return 1;
+    if (!g_available || g_gpu_count == 0) return 1;
 
     size_t size = count * 20;
-    if (d_targets) cudaFree(d_targets);
 
-    cudaError_t err = cudaMalloc(&d_targets, size);
-    if (err != cudaSuccess) return 1;
+    // Keep host copy for multi-GPU upload
+    if (h_targets_copy) free(h_targets_copy);
+    h_targets_copy = (uint8_t*)malloc(size);
+    if (!h_targets_copy) return 1;
+    memcpy(h_targets_copy, targets, size);
 
-    err = cudaMemcpy(d_targets, targets, size, cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) { cudaFree(d_targets); d_targets = NULL; return 1; }
+    // Upload to all GPUs
+    int success = 0;
+    for (int g = 0; g < g_gpu_count; g++) {
+        gpu_context_t *ctx = &g_gpus[g];
+        if (!ctx->active) continue;
+
+        cudaSetDevice(ctx->device_id);
+
+        if (ctx->d_targets) cudaFree(ctx->d_targets);
+
+        cudaError_t err = cudaMalloc(&ctx->d_targets, size);
+        if (err != cudaSuccess) {
+            printf("[W] GPU %d: Failed to allocate targets memory\n", ctx->device_id);
+            continue;
+        }
+
+        err = cudaMemcpy(ctx->d_targets, targets, size, cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            cudaFree(ctx->d_targets);
+            ctx->d_targets = NULL;
+            printf("[W] GPU %d: Failed to upload targets\n", ctx->device_id);
+            continue;
+        }
+
+        // Populate constant-memory fast path for very small target sets.
+        {
+            int small_count = 0;
+            if (count > 0 && count <= MAX_SMALL_TARGETS) {
+                cudaMemcpyToSymbol(d_targets_small, targets, size);
+                small_count = (int)count;
+            }
+            cudaMemcpyToSymbol(d_targets_small_count, &small_count, sizeof(int));
+        }
+
+        success++;
+    }
+
+    // Set legacy pointer for single-GPU compat
+    if (g_gpu_count > 0 && g_gpus[0].d_targets) {
+        d_targets = g_gpus[0].d_targets;
+    }
 
     g_target_count = count;
-
-    // Populate constant-memory fast path for very small target sets.
-    // This speeds up linear search and avoids global memory loads.
-    {
-        int small_count = 0;
-        if (count > 0 && count <= MAX_SMALL_TARGETS) {
-            cudaMemcpyToSymbol(d_targets_small, targets, size);
-            small_count = (int)count;
-        }
-        cudaMemcpyToSymbol(d_targets_small_count, &small_count, sizeof(int));
-    }
-    return 0;
+    return (success > 0) ? 0 : 1;
 }
 
 int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashes) {
-    if (!g_available) return 1;
+    if (!g_available || g_gpu_count == 0) return 1;
 
-    if (d_bloom) cudaFree(d_bloom);
+    // Keep host copy for multi-GPU upload
+    if (h_bloom_copy) free(h_bloom_copy);
+    h_bloom_copy = (uint8_t*)malloc(bloom_size);
+    if (!h_bloom_copy) return 1;
+    memcpy(h_bloom_copy, bloom_data, bloom_size);
 
-    cudaError_t err = cudaMalloc(&d_bloom, bloom_size);
-    if (err != cudaSuccess) return 1;
+    // Upload to all GPUs
+    int success = 0;
+    for (int g = 0; g < g_gpu_count; g++) {
+        gpu_context_t *ctx = &g_gpus[g];
+        if (!ctx->active) continue;
 
-    err = cudaMemcpy(d_bloom, bloom_data, bloom_size, cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) { cudaFree(d_bloom); d_bloom = NULL; return 1; }
+        cudaSetDevice(ctx->device_id);
+
+        if (ctx->d_bloom) cudaFree(ctx->d_bloom);
+
+        cudaError_t err = cudaMalloc(&ctx->d_bloom, bloom_size);
+        if (err != cudaSuccess) {
+            printf("[W] GPU %d: Failed to allocate bloom filter memory\n", ctx->device_id);
+            continue;
+        }
+
+        err = cudaMemcpy(ctx->d_bloom, bloom_data, bloom_size, cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) {
+            cudaFree(ctx->d_bloom);
+            ctx->d_bloom = NULL;
+            printf("[W] GPU %d: Failed to upload bloom filter\n", ctx->device_id);
+            continue;
+        }
+
+        success++;
+    }
+
+    // Set legacy pointer for single-GPU compat
+    if (g_gpu_count > 0 && g_gpus[0].d_bloom) {
+        d_bloom = g_gpus[0].d_bloom;
+    }
 
     g_bloom_size = bloom_size;
     g_bloom_hashes = num_hashes;
+    return (success > 0) ? 0 : 1;
+}
+
+// Per-GPU worker state for multi-GPU search
+typedef struct {
+    int gpu_idx;
+    gpu_context_t *ctx;
+    uint256_d cursor;
+    uint256_d end_key;
+    const gpu_search_config_t *config;
+    uint64_t keys_processed;
+    int found_count;
+    int active;
+    int stream_idx;
+} gpu_worker_state_t;
+
+// Initialize streams for a specific GPU
+static int init_gpu_streams(gpu_context_t *ctx) {
+    cudaSetDevice(ctx->device_id);
+
+    for (int s = 0; s < NUM_STREAMS_PER_GPU; s++) {
+        if (!ctx->streams[s]) {
+            cudaError_t err = cudaStreamCreateWithFlags(&ctx->streams[s], cudaStreamNonBlocking);
+            if (err != cudaSuccess) return -1;
+        }
+        if (!ctx->d_should_stop[s]) {
+            cudaError_t err = cudaMalloc(&ctx->d_should_stop[s], sizeof(int));
+            if (err != cudaSuccess) return -1;
+            int zero = 0;
+            cudaMemcpy(ctx->d_should_stop[s], &zero, sizeof(int), cudaMemcpyHostToDevice);
+        }
+    }
     return 0;
 }
 
 int gpu_full_search(const gpu_search_config_t *config) {
-    if (!g_available || !config) return -1;
-    if (!d_GTable || g_GTable_count == 0) {
-        fprintf(stderr, "[!] GPU full search requires G table upload first\n");
-        return -1;
-    }
-    if (!d_targets || g_target_count == 0) {
-        fprintf(stderr, "[!] GPU full search requires targets upload first\n");
-        return -1;
+    if (!g_available || !config || g_gpu_count == 0) return -1;
+
+    // Verify all GPUs have required data
+    for (int g = 0; g < g_gpu_count; g++) {
+        if (!g_gpus[g].active) continue;
+        if (!g_gpus[g].d_GTable || g_GTable_count == 0) {
+            fprintf(stderr, "[!] GPU %d: G table not uploaded\n", g_gpus[g].device_id);
+            return -1;
+        }
+        if (!g_gpus[g].d_targets || g_target_count == 0) {
+            fprintf(stderr, "[!] GPU %d: targets not uploaded\n", g_gpus[g].device_id);
+            return -1;
+        }
     }
 
-    // Initialize multi-stream infrastructure
-    init_search_streams();
+    // Count active GPUs and compute total SMs for proportional work distribution
+    int active_gpus = 0;
+    int total_sms = 0;
+    for (int g = 0; g < g_gpu_count; g++) {
+        if (g_gpus[g].active) {
+            active_gpus++;
+            total_sms += g_gpus[g].props.multiProcessorCount;
+        }
+    }
 
-    // Reset found keys counter
-    int zero = 0;
-    cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+    if (active_gpus == 0) {
+        fprintf(stderr, "[!] No active GPUs\n");
+        return -1;
+    }
 
     // Convert start_key and end_key to uint256_d
     uint256_d start_key, end_key;
@@ -1790,163 +2140,242 @@ int gpu_full_search(const gpu_search_config_t *config) {
                        ((uint32_t)config->end_key[(7-i)*4] << 24);
     }
 
-    // Treat ranges as [start_key, end_key) (end is exclusive), consistent with keyhunt CPU code.
+    // Initialize worker states for each GPU
+    gpu_worker_state_t workers[MAX_GPUS];
+    memset(workers, 0, sizeof(workers));
+
+    // Calculate total keys per launch for all GPUs combined
+    uint64_t total_keys_per_round = 0;
+    for (int g = 0; g < g_gpu_count; g++) {
+        gpu_context_t *ctx = &g_gpus[g];
+        if (!ctx->active) continue;
+
+        // Use architecture-optimized parameters
+        arch_params_t *params = &ctx->optimal_params;
+
+        // Allow runtime override
+        int blocks_per_sm = params->blocks_per_sm;
+        uint64_t keys_per_thread = params->keys_per_thread;
+        {
+            const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v >= 4 && v <= 64) blocks_per_sm = v;
+            }
+            env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
+            if (env && *env) {
+                unsigned long long v = strtoull(env, NULL, 10);
+                if (v >= 64 && v <= 65536) keys_per_thread = (uint64_t)v;
+            }
+        }
+
+        int blocks = ctx->props.multiProcessorCount * blocks_per_sm;
+        uint64_t keys_per_launch = (uint64_t)blocks * params->threads_per_block * keys_per_thread;
+        total_keys_per_round += keys_per_launch;
+
+        // Initialize streams for this GPU
+        if (init_gpu_streams(ctx) < 0) {
+            printf("[W] GPU %d: Failed to initialize streams\n", ctx->device_id);
+            ctx->active = 0;
+            continue;
+        }
+
+        // Reset found keys counter on this GPU
+        cudaSetDevice(ctx->device_id);
+        int zero = 0;
+        cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+    }
+
+    // Distribute work range across GPUs proportionally to their SM count
     uint256_d cursor;
     memcpy(&cursor, &start_key, sizeof(uint256_d));
 
-    // Configure kernel launch
-    // Uses optimized point_add_affine increment (only 1 scalar_mul_G per BATCH_INV_SIZE)
-    // Higher keys_per_thread = more G additions (cheap) vs scalar_mul_G (expensive)
-    int threads_per_block = 256;
-    int blocks_per_sm = 24;  // Default: tested 16/24/32 on RTX 2080 SUPER
-    uint64_t keys_per_thread = 1024;  // Default: tested 1024/2048 on RTX 2080 SUPER
+    int worker_count = 0;
+    for (int g = 0; g < g_gpu_count; g++) {
+        gpu_context_t *ctx = &g_gpus[g];
+        if (!ctx->active) continue;
 
-    // Optional runtime tuning (no rebuild needed):
-    //   KEYHUNT_GPU_BLOCKS_PER_SM=16|24|32
-    //   KEYHUNT_GPU_KEYS_PER_THREAD=256..8192
-    {
-        const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
-        if (env && *env) {
-            int v = atoi(env);
-            if (v >= 4 && v <= 64) blocks_per_sm = v;
-        }
-        env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
-        if (env && *env) {
-            unsigned long long v = strtoull(env, NULL, 10);
-            if (v >= 64 && v <= 65536) keys_per_thread = (uint64_t)v;
-        }
+        workers[worker_count].gpu_idx = g;
+        workers[worker_count].ctx = ctx;
+        workers[worker_count].config = config;
+        workers[worker_count].keys_processed = 0;
+        workers[worker_count].found_count = 0;
+        workers[worker_count].active = 1;
+        workers[worker_count].stream_idx = 0;
+        memcpy(&workers[worker_count].cursor, &cursor, sizeof(uint256_d));
+        worker_count++;
     }
 
-    // Optional runtime autotune (opt-in, no rebuild needed):
-    //   KEYHUNT_GPU_AUTOTUNE=1
-    // Disabled automatically if KEYHUNT_GPU_BLOCKS_PER_SM or KEYHUNT_GPU_KEYS_PER_THREAD is set.
-    gpu_autotune_launch_params(threads_per_block, &blocks_per_sm, &keys_per_thread, &cursor, config->compressed_only);
-
-    int blocks = g_info.multiprocessors * blocks_per_sm;
-    uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
-
-    uint64_t total_keys = 0;
-    int total_found = 0;
-    int pending_stream = -1;  // Track which stream has a pending kernel
-
-    // Timing for speed calculation (host clock; avoids multi-stream CUDA event pitfalls).
+    // Timing
     struct timeval tv0;
     gettimeofday(&tv0, NULL);
 
-    printf("[+] GPU multi-stream search: %d blocks x %d threads x %lu keys/thread = %lu keys/launch\n",
-           blocks, threads_per_block, (unsigned long)keys_per_thread, (unsigned long)keys_per_launch);
-    printf("[+] Range: [start, end) (using %d async streams)\n", NUM_SEARCH_STREAMS);
+    // Print multi-GPU info
+    if (active_gpus > 1) {
+        printf("[+] Multi-GPU search: %d GPUs, %d total SMs\n", active_gpus, total_sms);
+        for (int w = 0; w < worker_count; w++) {
+            gpu_context_t *ctx = workers[w].ctx;
+            printf("    GPU %d (%s): sm_%d, %d SMs, %d blocks/SM, %d keys/thread\n",
+                   ctx->device_id, ctx->props.name, ctx->compute_capability,
+                   ctx->props.multiProcessorCount,
+                   ctx->optimal_params.blocks_per_sm, ctx->optimal_params.keys_per_thread);
+        }
+    } else {
+        gpu_context_t *ctx = workers[0].ctx;
+        arch_params_t *params = &ctx->optimal_params;
+        int blocks = ctx->props.multiProcessorCount * params->blocks_per_sm;
+        printf("[+] GPU search (sm_%d): %d blocks x %d threads x %d keys/thread\n",
+               ctx->compute_capability, blocks, params->threads_per_block, params->keys_per_thread);
+    }
+    printf("[+] Range: [start, end) using architecture-optimized parameters\n");
     fflush(stdout);
 
-    // Double-buffering main search loop
-    // Stream 0: currently executing kernel
-    // Stream 1: preparing/launching next kernel while stream 0 executes
-    int current_stream_idx = 0;
+    uint64_t total_keys = 0;
+    int total_found = 0;
+    int zero = 0;
 
+    // Main search loop - round-robin across GPUs
     while (!*(config->should_stop) && u256_cmp_host(&cursor, &end_key) < 0) {
-        search_stream_t *stream = &g_search_streams[current_stream_idx];
+        // Launch kernels on all GPUs
+        for (int w = 0; w < worker_count; w++) {
+            gpu_worker_state_t *worker = &workers[w];
+            if (!worker->active) continue;
 
-        // Update should_stop on device (async on this stream)
-        int should_stop_val = *(config->should_stop);
-        cudaMemcpyAsync(stream->d_should_stop, &should_stop_val, sizeof(int),
-                        cudaMemcpyHostToDevice, stream->stream);
+            gpu_context_t *ctx = worker->ctx;
+            arch_params_t *params = &ctx->optimal_params;
 
-        // Determine how many keys remain (saturates at UINT64_MAX for very large gaps).
-        uint64_t remaining64 = u256_sub_sat_u64_host(&end_key, &cursor);
-        if (remaining64 == 0) break;
+            cudaSetDevice(ctx->device_id);
 
-        // Clamp this launch so the final batch never runs past end_key.
-        uint64_t keys_this_launch = (remaining64 < keys_per_launch) ? remaining64 : keys_per_launch;
+            // Use architecture-optimized parameters (with optional override)
+            int blocks_per_sm = params->blocks_per_sm;
+            uint64_t keys_per_thread = params->keys_per_thread;
+            {
+                const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
+                if (env && *env) {
+                    int v = atoi(env);
+                    if (v >= 4 && v <= 64) blocks_per_sm = v;
+                }
+                env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
+                if (env && *env) {
+                    unsigned long long v = strtoull(env, NULL, 10);
+                    if (v >= 64 && v <= 65536) keys_per_thread = (uint64_t)v;
+                }
+            }
 
-        // Adjust keys_per_thread for last batch (avoids wasting threads for tiny tail ranges).
-        uint64_t actual_keys_per_thread = keys_per_thread;
-        if (keys_this_launch < keys_per_launch) {
-            uint64_t denom = (uint64_t)blocks * (uint64_t)threads_per_block;
-            actual_keys_per_thread = (keys_this_launch + denom - 1) / denom;
-            if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
+            int threads_per_block = params->threads_per_block;
+            int blocks = ctx->props.multiProcessorCount * blocks_per_sm;
+            uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
+
+            // Check remaining keys
+            uint64_t remaining64 = u256_sub_sat_u64_host(&end_key, &cursor);
+            if (remaining64 == 0) {
+                worker->active = 0;
+                continue;
+            }
+
+            uint64_t keys_this_launch = (remaining64 < keys_per_launch) ? remaining64 : keys_per_launch;
+
+            // Adjust keys_per_thread for last batch
+            uint64_t actual_keys_per_thread = keys_per_thread;
+            if (keys_this_launch < keys_per_launch) {
+                uint64_t denom = (uint64_t)blocks * (uint64_t)threads_per_block;
+                actual_keys_per_thread = (keys_this_launch + denom - 1) / denom;
+                if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
+            }
+
+            // Update should_stop
+            int should_stop_val = *(config->should_stop);
+            cudaMemcpyAsync(ctx->d_should_stop[worker->stream_idx], &should_stop_val, sizeof(int),
+                           cudaMemcpyHostToDevice, ctx->streams[worker->stream_idx]);
+
+            // Launch kernel
+            kernel_full_search<<<blocks, threads_per_block, 0, ctx->streams[worker->stream_idx]>>>(
+                cursor,
+                0,
+                actual_keys_per_thread,
+                keys_this_launch,
+                config->compressed_only,
+                ctx->d_GTable,
+                ctx->d_targets, g_target_count,
+                ctx->d_bloom, g_bloom_size, g_bloom_hashes,
+                config->use_bloom,
+                ctx->d_should_stop[worker->stream_idx]
+            );
+
+            // Advance cursor
+            u256_add_u64_host(&cursor, keys_this_launch);
+            worker->keys_processed += keys_this_launch;
+            total_keys += keys_this_launch;
+
+            // Switch stream for double-buffering
+            worker->stream_idx = (worker->stream_idx + 1) % NUM_STREAMS_PER_GPU;
         }
 
-        // Launch kernel on this stream (non-blocking)
-        kernel_full_search<<<blocks, threads_per_block, 0, stream->stream>>>(
-            cursor,
-            0,
-            actual_keys_per_thread,
-            keys_this_launch,
-            config->compressed_only,
-            d_GTable,
-            d_targets, g_target_count,
-            d_bloom, g_bloom_size, g_bloom_hashes,
-            config->use_bloom,
-            stream->d_should_stop
-        );
+        // Synchronize all GPUs and check for results
+        for (int w = 0; w < worker_count; w++) {
+            gpu_worker_state_t *worker = &workers[w];
+            if (!worker->active) continue;
 
-        stream->in_use = 1;
+            gpu_context_t *ctx = worker->ctx;
+            cudaSetDevice(ctx->device_id);
 
-        // If there's a previous stream pending, wait for it and check results
-        if (pending_stream >= 0 && pending_stream != current_stream_idx) {
-            search_stream_t *prev_stream = &g_search_streams[pending_stream];
-
-            // Wait for previous stream to complete
-            cudaError_t err = cudaStreamSynchronize(prev_stream->stream);
+            // Wait for the previous stream
+            int prev_stream = (worker->stream_idx + NUM_STREAMS_PER_GPU - 1) % NUM_STREAMS_PER_GPU;
+            cudaError_t err = cudaStreamSynchronize(ctx->streams[prev_stream]);
             if (err != cudaSuccess) {
-                fprintf(stderr, "\n[!] CUDA kernel error: %s\n", cudaGetErrorString(err));
-                break;
+                fprintf(stderr, "\n[!] GPU %d kernel error: %s\n", ctx->device_id, cudaGetErrorString(err));
+                worker->active = 0;
+                continue;
             }
-            prev_stream->in_use = 0;
 
-            // Check for found keys (do this while next kernel is running)
+            // Check for found keys
             int found_count = 0;
             cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
 
             if (found_count > 0) {
-                // Retrieve found keys
                 FoundKey h_found[MAX_FOUND_KEYS];
                 cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
 
                 for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
                     if (h_found[i].valid) {
                         total_found++;
-                        // Convert privkey to big-endian bytes
+                        worker->found_count++;
+
                         uint8_t privkey_be[32];
-                        for (int w = 0; w < 8; w++) {
-                            uint32_t val = h_found[i].privkey.d[7 - w];
-                            privkey_be[w*4]     = (val >> 24) & 0xFF;
-                            privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
-                            privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
-                            privkey_be[w*4 + 3] = val & 0xFF;
+                        for (int w2 = 0; w2 < 8; w2++) {
+                            uint32_t val = h_found[i].privkey.d[7 - w2];
+                            privkey_be[w2*4]     = (val >> 24) & 0xFF;
+                            privkey_be[w2*4 + 1] = (val >> 16) & 0xFF;
+                            privkey_be[w2*4 + 2] = (val >> 8) & 0xFF;
+                            privkey_be[w2*4 + 3] = val & 0xFF;
                         }
 
-                        // Call callback
                         if (config->callback) {
-                            config->callback(privkey_be, h_found[i].compressed == 2 || h_found[i].compressed == 3,
-                                            config->callback_userdata);
+                            config->callback(privkey_be,
+                                           h_found[i].compressed == 2 || h_found[i].compressed == 3,
+                                           config->callback_userdata);
                         }
                     }
                 }
 
-                // Reset counter for next batch
                 cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
             }
         }
 
-        // Advance cursor for next iteration (cursor += keys_this_launch)
-        u256_add_u64_host(&cursor, keys_this_launch);
-        total_keys += keys_this_launch;
-
+        // Update keys_checked
         if (config->keys_checked) {
             *(config->keys_checked) = total_keys;
         }
 
-        // Progress output (less frequently to reduce overhead)
+        // Progress output
         static uint64_t last_progress_keys = 0;
-        if (!config->quiet && (total_keys - last_progress_keys) >= (keys_per_launch * 20)) {
+        if (!config->quiet && (total_keys - last_progress_keys) >= (total_keys_per_round * 10)) {
             struct timeval tv1;
             gettimeofday(&tv1, NULL);
             double elapsed_sec = (double)(tv1.tv_sec - tv0.tv_sec) +
                                  (double)(tv1.tv_usec - tv0.tv_usec) / 1e6;
             last_progress_keys = total_keys;
 
-            // Calculate speed
             double speed = 0.0;
             const char *speed_unit = "keys/s";
 
@@ -1965,20 +2394,27 @@ int gpu_full_search(const gpu_search_config_t *config) {
                 }
             }
 
-            printf("\r[+] GPU: %.2f %s | %lu keys | found: %d   ",
-                   speed, speed_unit, (unsigned long)total_keys, total_found);
+            if (active_gpus > 1) {
+                printf("\r[+] %d GPUs: %.2f %s | %lu keys | found: %d   ",
+                       active_gpus, speed, speed_unit, (unsigned long)total_keys, total_found);
+            } else {
+                printf("\r[+] GPU: %.2f %s | %lu keys | found: %d   ",
+                       speed, speed_unit, (unsigned long)total_keys, total_found);
+            }
             fflush(stdout);
         }
-
-        // Mark this stream as pending and switch to other stream
-        pending_stream = current_stream_idx;
-        current_stream_idx = (current_stream_idx + 1) % NUM_SEARCH_STREAMS;
     }
 
-    // Wait for last pending stream
-    if (pending_stream >= 0) {
-        cudaStreamSynchronize(g_search_streams[pending_stream].stream);
-        g_search_streams[pending_stream].in_use = 0;
+    // Final synchronization and result collection
+    for (int w = 0; w < worker_count; w++) {
+        gpu_worker_state_t *worker = &workers[w];
+        gpu_context_t *ctx = worker->ctx;
+
+        cudaSetDevice(ctx->device_id);
+
+        for (int s = 0; s < NUM_STREAMS_PER_GPU; s++) {
+            cudaStreamSynchronize(ctx->streams[s]);
+        }
 
         // Final check for found keys
         int found_count = 0;
@@ -1992,15 +2428,16 @@ int gpu_full_search(const gpu_search_config_t *config) {
                 if (h_found[i].valid) {
                     total_found++;
                     uint8_t privkey_be[32];
-                    for (int w = 0; w < 8; w++) {
-                        uint32_t val = h_found[i].privkey.d[7 - w];
-                        privkey_be[w*4]     = (val >> 24) & 0xFF;
-                        privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
-                        privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
-                        privkey_be[w*4 + 3] = val & 0xFF;
+                    for (int w2 = 0; w2 < 8; w2++) {
+                        uint32_t val = h_found[i].privkey.d[7 - w2];
+                        privkey_be[w2*4]     = (val >> 24) & 0xFF;
+                        privkey_be[w2*4 + 1] = (val >> 16) & 0xFF;
+                        privkey_be[w2*4 + 2] = (val >> 8) & 0xFF;
+                        privkey_be[w2*4 + 3] = val & 0xFF;
                     }
                     if (config->callback) {
-                        config->callback(privkey_be, h_found[i].compressed == 2 || h_found[i].compressed == 3,
+                        config->callback(privkey_be,
+                                        h_found[i].compressed == 2 || h_found[i].compressed == 3,
                                         config->callback_userdata);
                     }
                 }
@@ -2022,6 +2459,15 @@ int gpu_full_search(const gpu_search_config_t *config) {
 
     printf("\n[+] GPU search completed in %.2f seconds (avg: %.2f %s)\n",
            total_elapsed_sec, final_speed, final_unit);
+
+    if (active_gpus > 1) {
+        printf("[+] Per-GPU stats:\n");
+        for (int w = 0; w < worker_count; w++) {
+            gpu_context_t *ctx = workers[w].ctx;
+            printf("    GPU %d: %lu keys, %d found\n",
+                   ctx->device_id, (unsigned long)workers[w].keys_processed, workers[w].found_count);
+        }
+    }
 
     return total_found;
 }
