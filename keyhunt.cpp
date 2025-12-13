@@ -830,39 +830,53 @@ static bool capture_progress_metrics(int &permille, char *position, size_t posit
 	Int consumed;
 	Int nextKey;
 
-	if (FLAGRANDOM) {
-		// In random mode, calculate progress based on total keys checked vs range size
-		// Total keys checked = sum of all thread steps * DEBUGCOUNT * multipliers
+	const bool count_based_progress = (FLAGRANDOM || FLAGGPU_HYBRID || FLAGGPU_FULL);
+	if (count_based_progress) {
+		// Count-based progress (random mode and any GPU-assisted mode):
+		// use total checked keys vs range size. This is also the only safe choice in HYBRID,
+		// because CPU/GPU advance different sub-ranges.
 		Int total_checked;
 		total_checked.SetInt32(0);
 
 		if (steps != NULL) {
 			Int thread_total;
 			for (int j = 0; j < NTHREADS; j++) {
-				thread_total.SetInt32(1);
-				thread_total.Mult(&BSGS_N);  // BSGS_N is used as DEBUGCOUNT in non-BSGS modes
+				thread_total.Set(&BSGS_N);  // BSGS_N is DEBUGCOUNT in non-BSGS modes
 				thread_total.Mult(steps[j].value);
 				total_checked.Add(&thread_total);
 			}
+		}
 
-			// Apply multipliers for endomorphism and search type
-			if (FLAGENDOMORPHISM) {
-				if (FLAGMODE == MODE_XPOINT) {
-					total_checked.Mult(3);
-				} else {
-					total_checked.Mult(6);
-				}
+		if (FLAGGPU_HYBRID || FLAGGPU_FULL) {
+			uint64_t gpu_total_u64 = g_gpu_keys_checked;
+			char tmp[64];
+			snprintf(tmp, sizeof(tmp), "%" PRIu64, gpu_total_u64);
+			Int gpu_total;
+			gpu_total.SetBase10(tmp);
+			total_checked.Add(&gpu_total);
+		}
+
+		// Apply multipliers for endomorphism and (CPU-only) dual-parity compressed search.
+		if (FLAGENDOMORPHISM) {
+			if (FLAGMODE == MODE_XPOINT) {
+				total_checked.Mult(3);
 			} else {
-				if (FLAGSEARCH == SEARCH_COMPRESS) {
-					total_checked.Mult(2);
-				}
+				total_checked.Mult(6);
+			}
+		} else {
+			const bool dual_parity_compress =
+				(FLAGSEARCH == SEARCH_COMPRESS) &&
+				(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_VANITY) &&
+				(FLAGCRYPTO == CRYPTO_BTC) &&
+				!hybrid_cpu_use_y_parity_for_compressed_btc() &&
+				!FLAGENDOMORPHISM;
+			if (dual_parity_compress) {
+				total_checked.Mult(2);
 			}
 		}
 
 		consumed.Set(&total_checked);
 
-		// For random mode, show a rough percentage based on keys checked vs range
-		// This is an estimate since random sampling may revisit keys
 		if (g_rangeProgressSpan.IsZero()) {
 			permille = 0;
 		} else {
@@ -878,15 +892,13 @@ static bool capture_progress_metrics(int &permille, char *position, size_t posit
 			}
 		}
 
-		// Format the consumed count as position for random mode
 		char *hex_consumed = consumed.GetBase16();
 		if (hex_consumed != NULL) {
 			snprintf(position, positionSize, "~%s checked", hex_consumed);
 			free(hex_consumed);
 		} else {
-			snprintf(position, positionSize, "random");
+			snprintf(position, positionSize, "checked");
 		}
-
 	} else {
 		// Sequential mode: use next key position
 		if (!snapshot_range_next_key(nextKey)) {
