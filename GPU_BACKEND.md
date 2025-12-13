@@ -51,7 +51,7 @@ Use the `-G` flag to control GPU usage:
 | `-G auto` | Auto-detect best mode (default) |
 | `-G hash` | GPU computes SHA256+RIPEMD160 only |
 | `-G full` | Full GPU search (ECC + hash + matching) |
-| `-G hybrid` | GPU+CPU in parallel (static range split) |
+| `-G hybrid` | GPU+CPU in parallel (static split; optional work-stealing via env) |
 
 ### Hash-Only Mode (`-G hash`)
 - CPU generates elliptic curve points
@@ -68,6 +68,14 @@ You can tune kernel launch parameters at runtime (no rebuild needed):
 - `KEYHUNT_GPU_BLOCKS_PER_SM=4..64`
 - `KEYHUNT_GPU_KEYS_PER_THREAD=64..65536`
 - `KEYHUNT_GPU_AUTOTUNE=1` (tries a small safe set and selects the best; disabled if either value above is explicitly set)
+
+### Hybrid Mode (`-G hybrid`)
+Hybrid runs GPU FULL and CPU in parallel.
+
+Optional work-stealing (dynamic load balancing; opt-in):
+- `KEYHUNT_HYBRID_WORK_STEAL=1`
+- Requires non-random mode and stride=1
+- `KEYHUNT_HYBRID_BLOCK_SIZE=...` (keys per block; accepts decimal or `0x...`, defaults to `0x100000000`)
 
 ## Supported Search Modes
 

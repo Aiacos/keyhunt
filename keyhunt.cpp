@@ -83,78 +83,58 @@ static WorkQueue<Int> g_workQueue;
 // Both GPU and CPU threads pull work blocks from the same pool for dynamic
 // load balancing. The faster processor (GPU) naturally gets more work.
 // ============================================================================
-struct WorkPool {
-	std::atomic<uint64_t> next_block;      // Next available block index
-	uint64_t total_blocks;                  // Total blocks to process
-	uint64_t block_size;                    // Keys per block
-	Int range_base;                         // Starting point of range
-	Int range_end;                          // End of range
-	volatile bool enabled;                  // Work pool is active
-	volatile bool exhausted;                // All work has been taken
-
-	WorkPool() : next_block(0), total_blocks(0), block_size(0), enabled(false), exhausted(false) {}
-
-	// Initialize work pool with a range
-	void init(Int *start, Int *end, uint64_t blk_size) {
-		range_base.Set(start);
-		range_end.Set(end);
-		block_size = blk_size;
-
-		// Calculate total blocks
-		Int diff;
-		diff.Set(end);
-		diff.Sub(start);
-
-		// Divide range by block_size to get number of blocks
-		Int blocks_int;
-		blocks_int.Set(&diff);
-		Int blk_int;
-		blk_int.SetInt64(block_size);
-		blocks_int.Div(&blk_int);
-
-		// Extract total_blocks (capped at practical limit)
-		total_blocks = 1000000000ULL;  // Default cap at 1B blocks
-		if (!blocks_int.IsZero()) {
-			// Get the 64-bit value if it fits
-			char *hex = blocks_int.GetBase16();
-			if (hex && strlen(hex) <= 16) {
-				total_blocks = strtoull(hex, NULL, 16);
-			}
-			if (hex) free(hex);
+	struct WorkPool {
+		std::atomic<uint64_t> next_block;      // Next available block index
+		uint64_t block_size;                    // Keys per block
+		Int range_base;                         // Starting point of range
+		Int range_end;                          // End of range
+		volatile bool enabled;                  // Work pool is active
+		volatile bool exhausted;                // All work has been taken
+	
+		WorkPool() : next_block(0), block_size(0), enabled(false), exhausted(false) {}
+	
+		// Initialize work pool with a range
+		void init(Int *start, Int *end, uint64_t blk_size) {
+			range_base.Set(start);
+			range_end.Set(end);
+			block_size = blk_size;
+	
+			next_block.store(0, std::memory_order_release);
+			exhausted = false;
+			enabled = true;
 		}
-		total_blocks = (total_blocks == 0) ? 1 : total_blocks + 1;  // At least 1 block
-
-		next_block.store(0, std::memory_order_release);
-		exhausted = false;
-		enabled = true;
-	}
 
 	// Get next work block (thread-safe, lock-free)
 	// Returns true if work was assigned, false if no more work
-	bool get_block(Int &start_out, Int &end_out) {
-		if (!enabled || exhausted) return false;
-
-		uint64_t block_idx = next_block.fetch_add(1, std::memory_order_acq_rel);
-		if (block_idx >= total_blocks) {
-			exhausted = true;
-			return false;
-		}
-
-		// Calculate start = range_base + block_idx * block_size
-		Int offset;
-		offset.SetInt64(block_size);
-		Int mult;
-		mult.SetInt64(block_idx);
-		offset.Mult(&mult);
-
-		start_out.Set(&range_base);
-		start_out.Add(&offset);
-
-		// Calculate end = min(start + block_size, range_end)
-		end_out.Set(&start_out);
-		Int blk;
-		blk.SetInt64(block_size);
-		end_out.Add(&blk);
+		bool get_block(Int &start_out, Int &end_out) {
+			if (!enabled || exhausted) return false;
+	
+			uint64_t block_idx = next_block.fetch_add(1, std::memory_order_acq_rel);
+	
+				// Calculate start = range_base + block_idx * block_size
+				// Use base10 conversion to avoid signed overflow when block_idx > INT64_MAX.
+				char tmp[32];
+				Int offset;
+				snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
+				offset.SetBase10(tmp);
+				Int mult;
+				snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_idx);
+				mult.SetBase10(tmp);
+				offset.Mult(&mult);
+	
+			start_out.Set(&range_base);
+			start_out.Add(&offset);
+			if (!start_out.IsLower(&range_end)) {
+				exhausted = true;
+				return false;
+			}
+	
+			// Calculate end = min(start + block_size, range_end)
+			end_out.Set(&start_out);
+				Int blk;
+				snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
+				blk.SetBase10(tmp);
+			end_out.Add(&blk);
 
 		if (end_out.IsGreater(&range_end)) {
 			end_out.Set(&range_end);
@@ -163,16 +143,17 @@ struct WorkPool {
 		return true;
 	}
 
-	// Check if pool is exhausted
-	bool is_exhausted() const {
-		return exhausted || (next_block.load(std::memory_order_acquire) >= total_blocks);
-	}
+		// Check if pool is exhausted
+		bool is_exhausted() const {
+			return exhausted;
+		}
 
-	// Disable the pool
-	void disable() {
-		enabled = false;
-	}
-};
+		// Disable the pool
+		void disable() {
+			enabled = false;
+			exhausted = true;
+		}
+	};
 
 // Global work pool instance
 static WorkPool g_work_pool;
@@ -471,15 +452,16 @@ int FLAGGPU = 0;
 int FLAGGPU_FULL = 0;
 // GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
 int FLAGGPU_HYBRID = 0;
-	// Volatile stats for GPU search
-	volatile uint64_t g_gpu_keys_checked = 0;
-	volatile int g_gpu_should_stop = 0;
+		// Volatile stats for GPU search
+		volatile uint64_t g_gpu_keys_checked = 0;
+		volatile uint64_t g_gpu_keys_checked_cur = 0;
+		volatile int g_gpu_should_stop = 0;
 	// True if we uploaded a GPU-side bloom filter for targets (full mode).
 	static int g_gpu_bloom_uploaded = 0;
 	// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
 	int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
 
-	static inline bool cpu_use_y_parity_for_compressed_btc() {
+		static inline bool cpu_use_y_parity_for_compressed_btc() {
 		// Unify CPU-only and HYBRID behavior for BTC compressed-only search:
 		// compute the real Y parity and hash only the actual compressed prefix (02 or 03).
 		//
@@ -503,12 +485,24 @@ int FLAGGPU_HYBRID = 0;
 			return true;
 		}
 
-		const char *env = getenv("KEYHUNT_CPU_USE_Y");
-		if (env && *env) {
-			return atoi(env) != 0;
+			const char *env = getenv("KEYHUNT_CPU_USE_Y");
+			if (env && *env) {
+				return atoi(env) != 0;
+			}
+			return true;
 		}
-		return true;
-	}
+
+		static inline uint64_t gpu_keys_checked_total_u64() {
+			// In static-range modes the backend updates g_gpu_keys_checked directly.
+			// In work-stealing, g_gpu_keys_checked_cur is the in-progress block counter; we
+			// aggregate it with a release/acquire pair so readers never observe a decreasing total.
+			if (!g_work_pool.enabled) {
+				return __atomic_load_n(&g_gpu_keys_checked, __ATOMIC_ACQUIRE);
+			}
+			uint64_t cur = __atomic_load_n(&g_gpu_keys_checked_cur, __ATOMIC_ACQUIRE);
+			uint64_t base = __atomic_load_n(&g_gpu_keys_checked, __ATOMIC_ACQUIRE);
+			return base + cur;
+		}
 
 int bitrange;
 char *str_N;
@@ -870,14 +864,14 @@ static bool capture_progress_metrics(int &permille, char *position, size_t posit
 			}
 		}
 
-		if (FLAGGPU_HYBRID || FLAGGPU_FULL) {
-			uint64_t gpu_total_u64 = g_gpu_keys_checked;
-			char tmp[64];
-			snprintf(tmp, sizeof(tmp), "%" PRIu64, gpu_total_u64);
-			Int gpu_total;
-			gpu_total.SetBase10(tmp);
-			total_checked.Add(&gpu_total);
-		}
+			if (FLAGGPU_HYBRID || FLAGGPU_FULL) {
+				uint64_t gpu_total_u64 = gpu_keys_checked_total_u64();
+				char tmp[64];
+				snprintf(tmp, sizeof(tmp), "%" PRIu64, gpu_total_u64);
+				Int gpu_total;
+				gpu_total.SetBase10(tmp);
+				total_checked.Add(&gpu_total);
+			}
 
 		// Apply multipliers for endomorphism.
 		if (FLAGENDOMORPHISM) {
@@ -3556,9 +3550,10 @@ int main(int argc, char **argv)	{
 			if (FLAGGPU_FULL && !FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
 				printf("[+] Running GPU full search mode...\n");
 	
-				// Reset stats
-				g_gpu_keys_checked = 0;
-				g_gpu_should_stop = 0;
+					// Reset stats
+					__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
+					__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
+					g_gpu_should_stop = 0;
 
 #ifndef _WIN64
 				pthread_t gpu_stats_tid;
@@ -3615,7 +3610,55 @@ int main(int argc, char **argv)	{
 					fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
 					FLAGGPU_HYBRID = 0;
 					} else {
-						printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
+						const char *ws = getenv("KEYHUNT_HYBRID_WORK_STEAL");
+						const bool want_work_steal = (ws && *ws && atoi(ws) != 0);
+						const bool can_work_steal = want_work_steal && !FLAGRANDOM && stride.IsOne();
+						if (want_work_steal && !can_work_steal) {
+							fprintf(stderr, "[W] HYBRID: work-stealing requires non-random mode and stride=1; using static split\n");
+						}
+						if (can_work_steal) {
+							uint64_t block_size = 0x100000000ULL;  // 4G keys
+							const char *bs = getenv("KEYHUNT_HYBRID_BLOCK_SIZE");
+							if (bs && *bs) {
+								if (bs[0] == '0' && (bs[1] == 'x' || bs[1] == 'X')) {
+									block_size = strtoull(bs + 2, NULL, 16);
+								} else {
+									block_size = strtoull(bs, NULL, 10);
+								}
+							}
+							if (block_size < 1024ULL) block_size = 1024ULL;
+							block_size = (block_size / 1024ULL) * 1024ULL;
+
+							printf("[+] Running GPU+CPU hybrid mode (work-stealing)...\n");
+							printf("[I] HYBRID: work-stealing enabled (block size: 0x%llx, override: KEYHUNT_HYBRID_BLOCK_SIZE)\n",
+							       (unsigned long long)block_size);
+
+							g_work_pool.init(&n_range_start, &n_range_end, block_size);
+
+							// Setup GPU thread (range args ignored in work-stealing mode)
+							gpu_hybrid_args.start_key.Set(&n_range_start);
+							gpu_hybrid_args.end_key.Set(&n_range_end);
+							gpu_hybrid_args.stride.Set(&stride);
+							gpu_hybrid_args.target_count = N;
+							gpu_hybrid_args.result = 0;
+							gpu_hybrid_args.completed = 0;
+
+								// Reset GPU stats
+								__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
+								__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
+								g_gpu_should_stop = 0;
+
+							int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
+							if (err != 0) {
+								fprintf(stderr, "[W] Failed to start GPU thread, falling back to CPU-only\n");
+								g_work_pool.disable();
+								FLAGGPU_HYBRID = 0;
+							} else {
+								gpu_hybrid_started = 1;
+								printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
+							}
+						} else {
+							printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
 
 					// Auto-tune the split unless user overrides with KEYHUNT_HYBRID_GPU_PERCENT.
 					{
@@ -3689,9 +3732,10 @@ int main(int argc, char **argv)	{
 			gpu_hybrid_args.result = 0;
 			gpu_hybrid_args.completed = 0;
 
-			// Reset GPU stats
-			g_gpu_keys_checked = 0;
-			g_gpu_should_stop = 0;
+				// Reset GPU stats
+				__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
+				__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
+				g_gpu_should_stop = 0;
 
 			// Start GPU thread (with its fixed range)
 			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
@@ -3705,6 +3749,7 @@ int main(int argc, char **argv)	{
 						maybe_adjust_hybrid_cpu_sequential_max((size_t)NTHREADS, cpu_range_start, n_range_end);
 						printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
 					}
+						}
 					}  // End of else (GPU available)
 				}
 
@@ -3712,10 +3757,11 @@ int main(int argc, char **argv)	{
 			// CPU Thread Mode (fall-through or default)
 			// ============================================================================
 #ifndef _WIN64
-			if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
+			if (g_work_pool.enabled) {
+				shutdown_work_queue();
+			} else if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
 				configure_work_queue((size_t)NTHREADS);
-			}
-			else {
+			} else {
 				shutdown_work_queue();
 			}
 #endif
@@ -3797,7 +3843,7 @@ int main(int argc, char **argv)	{
 							cpu_total.Add(&pretotal);
 						}
 
-						uint64_t gpu_total_u64 = g_gpu_keys_checked;
+							uint64_t gpu_total_u64 = gpu_keys_checked_total_u64();
 						Int gpu_total;
 						{
 							char tmp[64];
@@ -3953,17 +3999,20 @@ int main(int argc, char **argv)	{
 			}
 		}while(continue_flag);
 
-	// Wait for GPU thread if hybrid mode was started
-	if (FLAGGPU_HYBRID && gpu_hybrid_started) {
-		printf("\n[+] Waiting for GPU thread to complete...\n");
-		pthread_join(gpu_thread_id, NULL);
+		// Wait for GPU thread if hybrid mode was started
+		if (FLAGGPU_HYBRID && gpu_hybrid_started) {
+			printf("\n[+] Waiting for GPU thread to complete...\n");
+			pthread_join(gpu_thread_id, NULL);
 
-		printf("[+] GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
-		printf("[+] GPU keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
+			printf("[+] GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
+			printf("[+] GPU keys checked: %" PRIu64 "\n", gpu_keys_checked_total_u64());
 
-		// Cleanup GPU
-		gpu_backend_shutdown();
-	}
+			// Cleanup GPU
+			gpu_backend_shutdown();
+			if (g_work_pool.enabled) {
+				g_work_pool.disable();
+			}
+		}
 
 	printf("\nEnd\n");
 #ifndef _WIN64
@@ -4309,16 +4358,22 @@ void *thread_process(void *vargp)	{
 			continue_flag = 0;
 		}
 			if(continue_flag)	{
-				count = 0;
-				uint64_t block_limit = N_SEQUENTIAL_MAX;
-				if (!FLAGRANDOM && stride.IsOne()) {
-					Int remaining;
-					remaining.Set(&n_range_end);
-					remaining.Sub(&key_mpz);
-
-					char *hex = remaining.GetBase16();
-					if (hex) {
-						size_t len = strlen(hex);
+					count = 0;
+					uint64_t block_limit = N_SEQUENTIAL_MAX;
+					if (!FLAGRANDOM && stride.IsOne()) {
+						Int remaining;
+						Int range_end_local;
+						if (g_work_pool.enabled && cpu_cached_block_valid) {
+							range_end_local.Set(&cpu_cached_block_end);
+						} else {
+							range_end_local.Set(&n_range_end);
+						}
+						remaining.Set(&range_end_local);
+						remaining.Sub(&key_mpz);
+	
+						char *hex = remaining.GetBase16();
+						if (hex) {
+							size_t len = strlen(hex);
 						if (len > 0 && len <= 16) {
 							uint64_t rem_u64 = strtoull(hex, NULL, 16);
 							if (rem_u64 < block_limit) {
@@ -4937,16 +4992,22 @@ void *thread_process_vanity(void *vargp)	{
 			continue_flag = 0;
 		}
 			if(continue_flag)	{
-				count = 0;
-				uint64_t block_limit = N_SEQUENTIAL_MAX;
-				if (!FLAGRANDOM && stride.IsOne()) {
-					Int remaining;
-					remaining.Set(&n_range_end);
-					remaining.Sub(&key_mpz);
-
-					char *hex = remaining.GetBase16();
-					if (hex) {
-						size_t len = strlen(hex);
+					count = 0;
+					uint64_t block_limit = N_SEQUENTIAL_MAX;
+					if (!FLAGRANDOM && stride.IsOne()) {
+						Int remaining;
+						Int range_end_local;
+						if (g_work_pool.enabled && cpu_cached_block_valid) {
+							range_end_local.Set(&cpu_cached_block_end);
+						} else {
+							range_end_local.Set(&n_range_end);
+						}
+						remaining.Set(&range_end_local);
+						remaining.Sub(&key_mpz);
+	
+						char *hex = remaining.GetBase16();
+						if (hex) {
+							size_t len = strlen(hex);
 						if (len > 0 && len <= 16) {
 							uint64_t rem_u64 = strtoull(hex, NULL, 16);
 							if (rem_u64 < block_limit) {
@@ -8100,9 +8161,14 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	config.callback = gpu_found_callback;
 	config.callback_userdata = NULL;
 
-	config.keys_checked = &g_gpu_keys_checked;
-	config.should_stop = &g_gpu_should_stop;
-	config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
+			if (g_work_pool.enabled) {
+				__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
+				config.keys_checked = &g_gpu_keys_checked_cur;
+			} else {
+				config.keys_checked = &g_gpu_keys_checked;
+			}
+		config.should_stop = &g_gpu_should_stop;
+		config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
 
 		printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
 		printf("[+] Target count: %" PRId64 ", using %s\n",
@@ -8112,9 +8178,14 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	printf("[+] Search mode: %s\n",
 		config.compressed_only ? "compressed only" : "both (compressed + uncompressed)");
 
-		int found = gpu_full_search(&config);
-		return found;
-	}
+				int found = gpu_full_search(&config);
+				if (g_work_pool.enabled) {
+					uint64_t done = __atomic_load_n(&g_gpu_keys_checked_cur, __ATOMIC_ACQUIRE);
+					__atomic_fetch_add(&g_gpu_keys_checked, done, __ATOMIC_RELEASE);
+					__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
+				}
+				return found;
+		}
 
 void checkpointer(void *ptr,const char *file,const char *function,const  char *name,int line)	{
 	if(ptr == NULL)	{
