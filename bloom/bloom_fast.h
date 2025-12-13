@@ -197,22 +197,23 @@ static inline int bloom_fast_check_rmd160(bloom_fast_t *bf, const uint8_t *rmd16
     uint64_t h1 = h.low64;
     uint64_t h2 = h.high64;
 
-    /* Unrolled loop for typical 7 hashes */
+    /* Unrolled fast path (common k >= 7), but keep correctness for k < 7 */
+    const uint8_t k = bf->hashes;
     #define CHECK_BIT(i) do { \
         uint64_t idx = (h1 + (uint64_t)(i) * h2) & bf->mask; \
         if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) return 0; \
     } while(0)
 
-    CHECK_BIT(0);
-    CHECK_BIT(1);
-    CHECK_BIT(2);
-    CHECK_BIT(3);
-    CHECK_BIT(4);
-    CHECK_BIT(5);
-    CHECK_BIT(6);
+    if (k >= 1) CHECK_BIT(0);
+    if (k >= 2) CHECK_BIT(1);
+    if (k >= 3) CHECK_BIT(2);
+    if (k >= 4) CHECK_BIT(3);
+    if (k >= 5) CHECK_BIT(4);
+    if (k >= 6) CHECK_BIT(5);
+    if (k >= 7) CHECK_BIT(6);
 
     /* Handle additional hashes if needed */
-    for (uint8_t i = 7; i < bf->hashes; i++) {
+    for (uint8_t i = 7; i < k; i++) {
         uint64_t idx = (h1 + (uint64_t)i * h2) & bf->mask;
         if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) {
             return 0;

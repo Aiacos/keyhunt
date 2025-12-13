@@ -129,6 +129,10 @@ public:
   Point DoubleDirect(Point &p);
   Point Negation(Point &p);
 
+  // Export the precomputed generator table (GTable) as big-endian X||Y pairs.
+  // Output layout: 256*32 points, each point is 64 bytes (X 32B, Y 32B).
+  void ExportGTable(uint8_t *out_xy_be);
+
   Point G;                 // Generator
   Int P;                   // Prime for the finite field
   Int   order;             // Curve order

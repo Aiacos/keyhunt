@@ -59,6 +59,15 @@ void Secp256K1::Init() {
 Secp256K1::~Secp256K1() {
 }
 
+void Secp256K1::ExportGTable(uint8_t *out_xy_be) {
+  if (!out_xy_be) return;
+  const size_t total = 256 * 32;
+  for (size_t i = 0; i < total; i++) {
+    GTable[i].x.Get32Bytes(out_xy_be + i * 64);
+    GTable[i].y.Get32Bytes(out_xy_be + i * 64 + 32);
+  }
+}
+
 Point Secp256K1::ComputePublicKey(Int *privKey) {
   int i = 0;
   uint8_t b;

@@ -608,6 +608,10 @@ static void shutdown_work_queue() {
 #endif
 
 static void initialize_range_progress_tracker() {
+	// Always set range bounds for writekey validation (prevents out-of-range key writes)
+	g_rangeProgressStart.Set(&n_range_start);
+	g_rangeProgressEnd.Set(&n_range_end);
+
 	if (!FLAGPROGRESSBAR) {
 		g_rangeProgressEnabled = false;
 		g_rangeProgressSpan.SetInt32(0);
@@ -623,8 +627,6 @@ static void initialize_range_progress_tracker() {
 		g_rangeProgressSpan.SetInt32(0);
 		return;
 	}
-	g_rangeProgressStart.Set(&n_range_start);
-	g_rangeProgressEnd.Set(&n_range_end);
 	g_rangeProgressSpan.Set(&n_range_end);
 	g_rangeProgressSpan.Sub(&n_range_start);
 	g_rangeProgressEnabled = !g_rangeProgressSpan.IsZero();
@@ -1031,7 +1033,6 @@ cpu_compress_only_hash:
 
 	Int keyCurrent;
 	keyCurrent.Set(&key_mpz);
-	uint8_t verifyBuffer[20];
 	Point publickey;
 	const bool direct_single_target = (N == 1);
 	const uint8_t *single_target = direct_single_target ? addressTable[0].value : nullptr;
@@ -1072,47 +1073,49 @@ cpu_compress_only_hash:
 				} else {
 					// Dual parity check from X
 					if (direct_single_target) {
-						// Check 02 parity
+						// Check 02 parity (Y is even)
 						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
 							Int candidate(keyCurrent);
 							publickey = secp->ComputePublicKey(&candidate);
-							secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
-							if(memcmp(hashCompressed02[idx], verifyBuffer, 20) != 0) {
+							// If Y is odd, the actual key for prefix 02 is (order - candidate)
+							if(publickey.y.IsOdd()) {
 								candidate.Neg();
 								candidate.Add(&secp->order);
 							}
 							writekey(true,&candidate);
 						}
-						// Check 03 parity
+						// Check 03 parity (Y is odd)
 						if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
 							Int candidate(keyCurrent);
 							publickey = secp->ComputePublicKey(&candidate);
-							secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
-							if(memcmp(hashCompressed03[idx], verifyBuffer, 20) != 0) {
+							// If Y is even, the actual key for prefix 03 is (order - candidate)
+							if(publickey.y.IsEven()) {
 								candidate.Neg();
 								candidate.Add(&secp->order);
 							}
 							writekey(true,&candidate);
 						}
 					} else {
+						// Check 02 parity (Y is even)
 						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed02[idx])) {
 							if (searchbinary(addressTable, hashCompressed02[idx], N)) {
 								Int candidate(keyCurrent);
 								publickey = secp->ComputePublicKey(&candidate);
-								secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
-								if(memcmp(hashCompressed02[idx], verifyBuffer, 20) != 0) {
+								// If Y is odd, the actual key for prefix 02 is (order - candidate)
+								if(publickey.y.IsOdd()) {
 									candidate.Neg();
 									candidate.Add(&secp->order);
 								}
 								writekey(true,&candidate);
 							}
 						}
+						// Check 03 parity (Y is odd)
 						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed03[idx])) {
 							if (searchbinary(addressTable, hashCompressed03[idx], N)) {
 								Int candidate(keyCurrent);
 								publickey = secp->ComputePublicKey(&candidate);
-								secp->GetHash160(P2PKH,true,publickey,verifyBuffer);
-								if(memcmp(hashCompressed03[idx], verifyBuffer, 20) != 0) {
+								// If Y is even, the actual key for prefix 03 is (order - candidate)
+								if(publickey.y.IsEven()) {
 									candidate.Neg();
 									candidate.Add(&secp->order);
 								}
@@ -2031,7 +2034,7 @@ int main(int argc, char **argv)	{
 		}
 		bsgs_found = (int*) calloc(N,sizeof(int));
 		checkpointer((void *)bsgs_found,__FILE__,"calloc","bsgs_found" ,__LINE__ -1 );
-		OriginalPointsBSGS.reserve(N);
+		OriginalPointsBSGS.resize(N);
 		OriginalPointsBSGScompressed = (bool*) malloc(N*sizeof(bool));
 		checkpointer((void *)OriginalPointsBSGScompressed,__FILE__,"malloc","OriginalPointsBSGScompressed" ,__LINE__ -1 );
 		pointx_str = (char*) malloc(65);
@@ -2472,9 +2475,9 @@ int main(int argc, char **argv)	{
 		BSGS_MP3 = secp->ComputePublicKey(&BSGS_M3);
 		BSGS_MP3_double = secp->ComputePublicKey(&BSGS_M3_double);
 		
-		BSGS_AMP2.reserve(32);
-		BSGS_AMP3.reserve(32);
-		GSn.reserve(CPU_GRP_SIZE/2);
+		BSGS_AMP2.resize(32);
+		BSGS_AMP3.resize(32);
+		GSn.resize(CPU_GRP_SIZE/2);
 
 		i= 0;
 
@@ -3844,9 +3847,10 @@ void *thread_process(void *vargp)	{
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
 				}
-			
+
 				dx[i].ModSub(&Gn[i].x,&startP.x);  // For the first point
 				dx[i + 1].ModSub(&_2Gn.x,&startP.x); // For the next center point
+
 				grp->ModInvOptimized();  // Use 8x unrolled version
 
 				pts[CPU_GRP_SIZE / 2] = startP;
@@ -5787,7 +5791,7 @@ void init_generator()	{
 	Point G = secp->ComputePublicKey(&stride);
 	Point g;
 	g.Set(G);
-	Gn.reserve(CPU_GRP_SIZE / 2);
+	Gn.resize(CPU_GRP_SIZE / 2);
 	Gn[0] = g;
 	g = secp->DoubleDirect(g);
 	Gn[1] = g;
@@ -7386,46 +7390,9 @@ static int gpu_upload_gtable_from_secp() {
 	uint8_t *gtable_data = (uint8_t*)malloc(GTABLE_POINTS * 64);
 	if (!gtable_data) return 1;
 
-	// Access secp->GTable which is Point GTable[256*32]
-	// secp is global Secp256K1* pointer
+	// Export the precomputed table directly (avoids 8192 scalar computations).
 	extern Secp256K1 *secp;
-
-	for (size_t i = 0; i < GTABLE_POINTS; i++) {
-		// Get X coordinate (32 bytes, big-endian)
-		// Note: GTable points need to be accessed via secp's internal structure
-		// The Point class has x, y as Int types
-		// We need to extract them as big-endian bytes
-
-		// For now, compute the points directly
-		// GTable[i*256 + j] = (j+1) * G^(256^i)
-		// This is complex, so we'll use a simpler approach:
-		// Upload points as we compute them
-
-		// Actually, the GTable is stored in secp->GTable which is private
-		// We need to compute the public key and extract coordinates
-		Int scalar;
-		scalar.SetInt32(1);
-
-		// Point index = byte_position * 256 + (byte_value - 1)
-		// byte_value ranges from 1 to 255
-		int byte_pos = i / 256;
-		int byte_val = (i % 256) + 1;
-
-		// scalar = byte_val * 256^byte_pos
-		for (int b = 0; b < byte_pos; b++) {
-			scalar.ShiftL(8);
-		}
-		Int multiplier;
-		multiplier.SetInt32(byte_val);
-		scalar.Mult(&multiplier);
-
-		Point P = secp->ComputePublicKey(&scalar);
-
-		// Store X coordinate (big-endian)
-		P.x.Get32Bytes(gtable_data + i * 64);
-		// Store Y coordinate (big-endian)
-		P.y.Get32Bytes(gtable_data + i * 64 + 32);
-	}
+	secp->ExportGTable(gtable_data);
 
 	int result = gpu_upload_gtable(gtable_data, GTABLE_POINTS);
 	free(gtable_data);
@@ -7469,6 +7436,19 @@ static void *gpu_hybrid_thread(void *arg) {
 	gpu_hybrid_args_t *args = (gpu_hybrid_args_t *)arg;
 	int total_found = 0;
 	uint64_t blocks_processed = 0;
+
+	// Two modes:
+	// 1) Work-stealing: GPU pulls blocks from shared pool (g_work_pool.enabled=true)
+	// 2) Static split: GPU scans the fixed [start_key, end_key] range once
+	if (!g_work_pool.enabled) {
+		printf("[GPU] Static-range thread started\n");
+		int found = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
+		if (found > 0) total_found = found;
+		args->result = total_found;
+		args->completed = 1;
+		printf("[GPU] Static-range thread completed: %d keys found\n", total_found);
+		return NULL;
+	}
 
 	printf("[GPU] Work-stealing thread started\n");
 
@@ -7550,6 +7530,13 @@ void checkpointer(void *ptr,const char *file,const char *function,const  char *n
 }
 
 void writekey(bool compressed,Int *key)	{
+	// Range validation: skip keys outside the original search range
+	// This prevents false positives from key negation producing out-of-range keys
+	// Use g_rangeProgressStart/End which store the original unchanged range bounds
+	if (key->IsLower(&g_rangeProgressStart) || key->IsGreaterOrEqual(&g_rangeProgressEnd)) {
+		return;
+	}
+
 	Point publickey;
 	FILE *keys;
 	char *hextemp,*hexrmd,public_key_hex[132],address[50],rmdhash[20];
@@ -7584,6 +7571,11 @@ void writekey(bool compressed,Int *key)	{
 }
 
 void writekeyeth(Int *key)	{
+	// Range validation: skip keys outside the original search range
+	if (key->IsLower(&g_rangeProgressStart) || key->IsGreaterOrEqual(&g_rangeProgressEnd)) {
+		return;
+	}
+
 	Point publickey;
 	FILE *keys;
 	char *hextemp,address[43],hash[20];
@@ -8172,10 +8164,8 @@ bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
 			fprintf(stderr,"[W] ========================================================\n\n");
 
 			// Free the bloom filter we just allocated
-			if(bloom_arg->bf != NULL) {
-				free(bloom_arg->bf);
-				bloom_arg->bf = NULL;
-			}
+			bloom_free(bloom_arg);
+			bloom_arg->bf = NULL;
 
 			r = false;
 		}

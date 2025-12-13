@@ -8,7 +8,10 @@ WARN_FLAGS := -Wall -Wextra
 CXXFLAGS ?=
 CFLAGS ?=
 
-LTO_FLAGS ?= -flto=auto
+# LTO disabled due to GCC optimization bug causing incorrect hash computation
+# See issue with GetHash160 producing wrong results when -flto is enabled
+# This appears to be a GCC bug with LTO and big integer operations
+LTO_FLAGS ?=
 
 # Optional CUDA backend (auto-detected if nvcc is available)
 NVCC ?= nvcc

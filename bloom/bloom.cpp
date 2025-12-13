@@ -93,7 +93,9 @@ int bloom_init(struct bloom * bloom, uint64_t entries, long double error)
 int bloom_init2(struct bloom * bloom, uint64_t entries, long double error)
 {
   memset(bloom, 0, sizeof(struct bloom));
-  if (entries < 1000 || error <= 0 || error >= 1) {
+  /* libbloom historically required entries >= 1000, but keyhunt can operate
+   * with small target sets; ensure the filter still initializes safely. */
+  if (entries == 0 || error <= 0 || error >= 1) {
     return 1;
   }
   bloom->entries = entries;
@@ -105,14 +107,21 @@ int bloom_init2(struct bloom * bloom, uint64_t entries, long double error)
 
   long double dentries = (long double)entries;
   long double allbits = dentries * bloom->bpe;
-  bloom->bits = (uint64_t)allbits;
-
-  bloom->bytes = (uint64_t) bloom->bits / 8;
-  if (bloom->bits % 8) {
-    bloom->bytes +=1;
+  /* Round up so we don't under-allocate bits. */
+  bloom->bits = (uint64_t)ceill(allbits);
+  /* Avoid zero-sized filters that would trigger modulo-by-zero. */
+  if (bloom->bits < 8) {
+    bloom->bits = 8;
   }
 
-  bloom->hashes = (uint8_t)ceil(0.693147180559945 * bloom->bpe);  // ln(2)
+  bloom->bytes = (bloom->bits + 7) / 8;
+
+  {
+    long double hashes_ld = ceill(0.693147180559945L * bloom->bpe);  // ln(2)
+    if (hashes_ld < 1) hashes_ld = 1;
+    if (hashes_ld > 255) hashes_ld = 255;
+    bloom->hashes = (uint8_t)hashes_ld;
+  }
   
   bloom->bf = (uint8_t *)calloc(bloom->bytes, sizeof(uint8_t));
   if (bloom->bf == NULL) {                                   // LCOV_EXCL_START
