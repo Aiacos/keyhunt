@@ -1823,7 +1823,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
 
         // Progress output (less frequently to reduce overhead)
         static uint64_t last_progress_keys = 0;
-        if ((total_keys - last_progress_keys) >= (keys_per_launch * 20)) {
+        if (!config->quiet && (total_keys - last_progress_keys) >= (keys_per_launch * 20)) {
             struct timeval tv1;
             gettimeofday(&tv1, NULL);
             double elapsed_sec = (double)(tv1.tv_sec - tv0.tv_sec) +

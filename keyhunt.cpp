@@ -7916,6 +7916,7 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 
 	config.keys_checked = &g_gpu_keys_checked;
 	config.should_stop = &g_gpu_should_stop;
+	config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0);
 
 		printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
 		printf("[+] Target count: %" PRId64 ", using %s\n",

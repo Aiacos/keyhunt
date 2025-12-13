@@ -47,6 +47,9 @@ typedef struct {
     // Statistics output (updated by GPU)
     volatile uint64_t *keys_checked;
     volatile int *should_stop;
+
+    // If non-zero, suppress periodic GPU progress output (still updates keys_checked).
+    int quiet;
 } gpu_search_config_t;
 
 // Initialize backend and populate info (if non-NULL). Returns 0 on success.
