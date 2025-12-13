@@ -19,6 +19,15 @@
 // Use optimized hash functions
 #define USE_OPTIMIZED_HASH 1
 
+static inline int env_truthy(const char *name) {
+    const char *v = getenv(name);
+    if (!v || !*v) return 0;
+    if (v[0] == '0' && v[1] == '\0') return 0;
+    if ((v[0] == 'f' || v[0] == 'F') && (v[1] == 'a' || v[1] == 'A')) return 0;
+    if ((v[0] == 'n' || v[0] == 'N') && (v[1] == 'o' || v[1] == 'O')) return 0;
+    return 1;
+}
+
 // ============================================================================
 // Global state (C-style, no thread_local)
 // ============================================================================
@@ -1461,6 +1470,108 @@ static void cleanup_search_streams(void) {
 
 extern "C" {
 
+static int gpu_autotune_launch_params(int threads_per_block,
+                                     int *io_blocks_per_sm,
+                                     uint64_t *io_keys_per_thread,
+                                     const uint256_d *start_key,
+                                     int compressed_only) {
+    if (!io_blocks_per_sm || !io_keys_per_thread || !start_key) return 0;
+    if (!g_available) return 0;
+
+    double best_kps = 0.0;
+    int best_blocks_per_sm = *io_blocks_per_sm;
+    uint64_t best_kpt = *io_keys_per_thread;
+
+    // If user explicitly set either value, respect it and skip autotune.
+    if ((getenv("KEYHUNT_GPU_BLOCKS_PER_SM") && getenv("KEYHUNT_GPU_BLOCKS_PER_SM")[0]) ||
+        (getenv("KEYHUNT_GPU_KEYS_PER_THREAD") && getenv("KEYHUNT_GPU_KEYS_PER_THREAD")[0])) {
+        return 0;
+    }
+    if (!env_truthy("KEYHUNT_GPU_AUTOTUNE")) return 0;
+
+    // Candidate sets (small, safe, and fast to test).
+    const int blocks_per_sm_candidates[] = {16, 24, 32};
+    const uint64_t keys_per_thread_candidates[] = {512ULL, 1024ULL, 2048ULL};
+
+    cudaStream_t stream = NULL;
+    cudaEvent_t ev_start = NULL;
+    cudaEvent_t ev_end = NULL;
+    int *d_should_stop = NULL;
+
+    cudaError_t err = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    if (err != cudaSuccess) goto cleanup;
+    err = cudaEventCreate(&ev_start);
+    if (err != cudaSuccess) goto cleanup;
+    err = cudaEventCreate(&ev_end);
+    if (err != cudaSuccess) goto cleanup;
+    err = cudaMalloc(&d_should_stop, sizeof(int));
+    if (err != cudaSuccess) goto cleanup;
+
+    {
+        int zero = 0;
+        cudaMemcpyAsync(d_should_stop, &zero, sizeof(int), cudaMemcpyHostToDevice, stream);
+        cudaStreamSynchronize(stream);
+    }
+
+    // Warm up once to reduce first-launch noise.
+    {
+        const int blocks = g_info.multiprocessors * best_blocks_per_sm;
+        const uint64_t keys_limit = (uint64_t)blocks * (uint64_t)threads_per_block * best_kpt;
+        kernel_full_search<<<blocks, threads_per_block, 0, stream>>>(
+            *start_key, 0, best_kpt, keys_limit, compressed_only,
+            d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+        cudaStreamSynchronize(stream);
+    }
+
+    printf("[I] GPU autotune: testing launch params (set KEYHUNT_GPU_BLOCKS_PER_SM / KEYHUNT_GPU_KEYS_PER_THREAD to override)\n");
+    fflush(stdout);
+
+    for (size_t i = 0; i < sizeof(blocks_per_sm_candidates) / sizeof(blocks_per_sm_candidates[0]); i++) {
+        for (size_t j = 0; j < sizeof(keys_per_thread_candidates) / sizeof(keys_per_thread_candidates[0]); j++) {
+            const int blocks_per_sm = blocks_per_sm_candidates[i];
+            const uint64_t kpt = keys_per_thread_candidates[j];
+            const int blocks = g_info.multiprocessors * blocks_per_sm;
+            const uint64_t keys_limit = (uint64_t)blocks * (uint64_t)threads_per_block * kpt;
+
+            cudaEventRecord(ev_start, stream);
+            kernel_full_search<<<blocks, threads_per_block, 0, stream>>>(
+                *start_key, 0, kpt, keys_limit, compressed_only,
+                d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+            cudaEventRecord(ev_end, stream);
+            err = cudaEventSynchronize(ev_end);
+            if (err != cudaSuccess) {
+                continue;
+            }
+
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, ev_start, ev_end);
+            if (ms <= 0.0f) continue;
+
+            const double kps = ((double)keys_limit) / ((double)ms / 1000.0);
+            if (kps > best_kps) {
+                best_kps = kps;
+                best_blocks_per_sm = blocks_per_sm;
+                best_kpt = kpt;
+            }
+        }
+    }
+
+    if (best_kps > 0.0) {
+        *io_blocks_per_sm = best_blocks_per_sm;
+        *io_keys_per_thread = best_kpt;
+        printf("[I] GPU autotune: selected blocks_per_sm=%d keys_per_thread=%lu\n",
+               best_blocks_per_sm, (unsigned long)best_kpt);
+        fflush(stdout);
+    }
+
+cleanup:
+    if (d_should_stop) cudaFree(d_should_stop);
+    if (ev_end) cudaEventDestroy(ev_end);
+    if (ev_start) cudaEventDestroy(ev_start);
+    if (stream) cudaStreamDestroy(stream);
+    return (best_kps > 0.0) ? 1 : 0;
+}
+
 int gpu_backend_init(gpu_backend_info_t *info) {
     int deviceCount = 0;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
@@ -1705,6 +1816,11 @@ int gpu_full_search(const gpu_search_config_t *config) {
             if (v >= 64 && v <= 65536) keys_per_thread = (uint64_t)v;
         }
     }
+
+    // Optional runtime autotune (opt-in, no rebuild needed):
+    //   KEYHUNT_GPU_AUTOTUNE=1
+    // Disabled automatically if KEYHUNT_GPU_BLOCKS_PER_SM or KEYHUNT_GPU_KEYS_PER_THREAD is set.
+    gpu_autotune_launch_params(threads_per_block, &blocks_per_sm, &keys_per_thread, &cursor, config->compressed_only);
 
     int blocks = g_info.multiprocessors * blocks_per_sm;
     uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;

@@ -51,6 +51,7 @@ Use the `-G` flag to control GPU usage:
 | `-G auto` | Auto-detect best mode (default) |
 | `-G hash` | GPU computes SHA256+RIPEMD160 only |
 | `-G full` | Full GPU search (ECC + hash + matching) |
+| `-G hybrid` | GPU+CPU in parallel (static range split) |
 
 ### Hash-Only Mode (`-G hash`)
 - CPU generates elliptic curve points
@@ -60,14 +61,20 @@ Use the `-G` flag to control GPU usage:
 ### Full GPU Mode (`-G full`)
 - GPU performs all operations: ECC point generation, hashing, and target matching
 - Best for: Large search ranges, many targets
-- **Status: Not yet implemented**
+- Supports multi-stream execution and GPU-side bloom/target matching
+
+#### Optional runtime tuning
+You can tune kernel launch parameters at runtime (no rebuild needed):
+- `KEYHUNT_GPU_BLOCKS_PER_SM=4..64`
+- `KEYHUNT_GPU_KEYS_PER_THREAD=64..65536`
+- `KEYHUNT_GPU_AUTOTUNE=1` (tries a small safe set and selects the best; disabled if either value above is explicitly set)
 
 ## Supported Search Modes
 
 | Mode | GPU Hash | GPU Full |
 |------|----------|----------|
-| `rmd160` | Yes | Planned |
-| `address` | No | Planned |
+| `rmd160` | Yes | Yes |
+| `address` | No | Yes |
 | `xpoint` | No | Planned |
 | `bsgs` | No | No |
 
@@ -77,10 +84,11 @@ Benchmark on RTX 2080 SUPER (puzzle 71, compress mode):
 
 | Mode | Speed |
 |------|-------|
-| CPU (AVX2, 16 threads) | ~78 Mkeys/s |
-| GPU Hash-only | ~30 Mkeys/s |
+| CPU (AVX2, 16 threads) | ~50 Mkeys/s |
+| GPU Full (`-G full`) | ~570–600 Mkeys/s |
+| GPU Hybrid (`-G hybrid`) | CPU+GPU combined |
 
-The hash-only mode is slower due to CPU-GPU transfer overhead. Full GPU mode will eliminate this bottleneck.
+The hash-only mode can be slower due to CPU↔GPU transfer overhead. Full mode avoids this by keeping ECC+hash+matching on the GPU.
 
 ## Troubleshooting
 
@@ -109,4 +117,4 @@ gpu/
 The backend uses a C interface for compatibility:
 - `gpu_backend_init()` - Initialize CUDA, detect GPU
 - `gpu_hash160_fromX_batch()` - Batch hash computation
-- `gpu_full_search()` - Full GPU search (planned)
+- `gpu_full_search()` - Full GPU search (implemented)
