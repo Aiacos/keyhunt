@@ -240,7 +240,7 @@ int minikey_n_limit;
 const char *version = "0.2.230519 Satoshi Quest";
 
 // Auto-tuned parameters (configured at startup based on system)
-uint32_t CPU_GRP_SIZE = 1024;  // Batch size (was #define, now auto-tuned)
+uint32_t CPU_GRP_SIZE = 1024;  // Batch size - 1024 is proven optimal
 int OPTIMAL_THREADS = 0;       // Auto-detected optimal thread count
 uint64_t OPTIMAL_N = 0;        // Auto-detected optimal N value
 int OPTIMAL_KFACTOR = 0;       // Auto-detected optimal K factor
@@ -1072,6 +1072,7 @@ cpu_compress_only_hash:
 				} else {
 					// Dual parity check from X
 					if (direct_single_target) {
+						// Check 02 parity
 						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
 							Int candidate(keyCurrent);
 							publickey = secp->ComputePublicKey(&candidate);
@@ -1082,6 +1083,7 @@ cpu_compress_only_hash:
 							}
 							writekey(true,&candidate);
 						}
+						// Check 03 parity
 						if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
 							Int candidate(keyCurrent);
 							publickey = secp->ComputePublicKey(&candidate);
@@ -3269,34 +3271,55 @@ int main(int argc, char **argv)	{
 		}
 
 		// ============================================================================
-		// GPU Hybrid Mode (GPU + CPU in parallel with work-stealing)
-		// Both GPU and CPU pull work from a shared pool for dynamic load balancing
+		// GPU Hybrid Mode (GPU + CPU in parallel with STATIC SPLIT)
+		// GPU gets g_gpu_range_percent% of range, CPU uses normal fast algorithm
 		// ============================================================================
 		if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
 			if (!gpu_backend_available()) {
 				fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
 				FLAGGPU_HYBRID = 0;
 			} else {
-				printf("[+] Running GPU+CPU hybrid mode with work-stealing...\n");
+				printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
 
-			// Initialize work pool with the entire range
-			// Block size: 16M keys (2^24) - good balance for both GPU and CPU
-			const uint64_t WORK_BLOCK_SIZE = 1ULL << 24;  // 16M keys per block
-			g_work_pool.init(&n_range_start, &n_range_end, WORK_BLOCK_SIZE);
+			// Calculate range split: GPU gets g_gpu_range_percent% of range
+			Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
+			range_diff.Set(&n_range_end);
+			range_diff.Sub(&n_range_start);
 
-			printf("[+] Work-stealing pool initialized:\n");
-			printf("[+]   Block size: %lu keys (%.1f M)\n",
-				   (unsigned long)WORK_BLOCK_SIZE, WORK_BLOCK_SIZE / 1e6);
-			printf("[+]   Total blocks: %lu\n", (unsigned long)g_work_pool.total_blocks);
+			// GPU gets g_gpu_range_percent% of the range
+			gpu_portion.Set(&range_diff);
+			gpu_portion.Mult(g_gpu_range_percent);
+			Int divisor;
+			divisor.SetInt32(100);
+			gpu_portion.Div(&divisor);
+
+			// GPU range: n_range_start to (n_range_start + gpu_portion)
+			gpu_range_end.Set(&n_range_start);
+			gpu_range_end.Add(&gpu_portion);
+
+			// CPU range: starts right after GPU ends
+			cpu_range_start.Set(&gpu_range_end);
+			cpu_range_start.AddOne();
+
+			printf("[+] GPU handles %d%% of range, CPU handles %d%%\n",
+				   g_gpu_range_percent, 100 - g_gpu_range_percent);
 
 			char *hextemp = n_range_start.GetBase16();
-			printf("[+]   Range: 0x%s", hextemp);
+			printf("[+] GPU range: 0x%s", hextemp);
+			free(hextemp);
+			hextemp = gpu_range_end.GetBase16();
+			printf(" - 0x%s\n", hextemp);
+			free(hextemp);
+			hextemp = cpu_range_start.GetBase16();
+			printf("[+] CPU range: 0x%s", hextemp);
 			free(hextemp);
 			hextemp = n_range_end.GetBase16();
 			printf(" - 0x%s\n", hextemp);
 			free(hextemp);
 
-			// Setup GPU thread arguments (stride and target_count for GPU search)
+			// Setup GPU thread arguments with its portion of the range
+			gpu_hybrid_args.start_key.Set(&n_range_start);
+			gpu_hybrid_args.end_key.Set(&gpu_range_end);
 			gpu_hybrid_args.stride.Set(&stride);
 			gpu_hybrid_args.target_count = N;
 			gpu_hybrid_args.result = 0;
@@ -3306,16 +3329,16 @@ int main(int argc, char **argv)	{
 			g_gpu_keys_checked = 0;
 			g_gpu_should_stop = 0;
 
-			// Start GPU thread (will pull work from g_work_pool)
+			// Start GPU thread (with its fixed range)
 			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
 			if (err != 0) {
 				fprintf(stderr, "[W] Failed to start GPU thread, falling back to CPU-only\n");
 				FLAGGPU_HYBRID = 0;
-				g_work_pool.disable();
 			} else {
 				gpu_hybrid_started = 1;
-				printf("[+] GPU thread started (work-stealing mode)\n");
-				printf("[+] CPU threads will also pull from the same work pool\n");
+				// Update n_range_start for CPU threads - they use normal algorithm
+				n_range_start.Set(&cpu_range_start);
+				printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
 			}
 			}  // End of else (GPU available)
 		}
