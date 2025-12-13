@@ -479,19 +479,31 @@ int FLAGGPU_HYBRID = 0;
 	// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
 	int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
 
-	static inline bool hybrid_cpu_use_y_parity_for_compressed_btc() {
-		// In GPU FULL/HYBRID, the CPU can optionally compute Y parity and hash only the real compressed prefix.
-		// Default is enabled because it avoids hashing both parities (02+03) and avoids using GPU hash-only
-		// offload in HYBRID (which would contend with the full search). You can disable with:
-		//   KEYHUNT_HYBRID_CPU_USE_Y=0
-		if (!(FLAGGPU_HYBRID && FLAGGPU_FULL == 1 &&
-			  (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
+	static inline bool cpu_use_y_parity_for_compressed_btc() {
+		// Unify CPU-only and HYBRID behavior for BTC compressed-only search:
+		// compute the real Y parity and hash only the actual compressed prefix (02 or 03).
+		//
+		// This avoids doing 2x hash work (02+03) and aligns CPU with GPU FULL/HYBRID behavior.
+		//
+		// Overrides:
+		//   KEYHUNT_CPU_USE_Y=0|1            (global CPU behavior, default=1)
+		//   KEYHUNT_HYBRID_CPU_USE_Y=0|1     (when in HYBRID+FULL, default=1)
+		if (!((FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
 			  FLAGCRYPTO == CRYPTO_BTC &&
 			  !FLAGENDOMORPHISM &&
 			  FLAGSEARCH == SEARCH_COMPRESS)) {
 			return false;
 		}
-		const char *env = getenv("KEYHUNT_HYBRID_CPU_USE_Y");
+
+		if (FLAGGPU_HYBRID && FLAGGPU_FULL == 1) {
+			const char *env = getenv("KEYHUNT_HYBRID_CPU_USE_Y");
+			if (env && *env) {
+				return atoi(env) != 0;
+			}
+			return true;
+		}
+
+		const char *env = getenv("KEYHUNT_CPU_USE_Y");
 		if (env && *env) {
 			return atoi(env) != 0;
 		}
@@ -1111,7 +1123,7 @@ static bool acquire_base_key(Int &key) {
 static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &count) {
 	const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
 	const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
-	const bool haveYForCompressed = (wantUncompressed || hybrid_cpu_use_y_parity_for_compressed_btc());
+	const bool haveYForCompressed = (wantUncompressed || cpu_use_y_parity_for_compressed_btc());
 
 	if(!wantCompressed && !wantUncompressed) {
 		return;
@@ -1121,44 +1133,44 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 	alignas(32) char hashCompressed03[CPU_GRP_SIZE][20];
 	alignas(32) char hashUncompressed[CPU_GRP_SIZE][20];
 
-		if (wantCompressed) {
-			if (haveYForCompressed) {
-				// Y is available: compute only the actual compressed hash (single parity)
-				if (g_sysinfo.has_avx512) {
-					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
-						secp->GetHash160_AVX512(P2PKH, true,
-							pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
-							pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
-							pts[idx + 8], pts[idx + 9], pts[idx + 10], pts[idx + 11],
-							pts[idx + 12], pts[idx + 13], pts[idx + 14], pts[idx + 15],
-							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
-							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
-							(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
-							(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7],
-							(uint8_t*)hashCompressed02[idx + 8], (uint8_t*)hashCompressed02[idx + 9],
-							(uint8_t*)hashCompressed02[idx + 10], (uint8_t*)hashCompressed02[idx + 11],
-							(uint8_t*)hashCompressed02[idx + 12], (uint8_t*)hashCompressed02[idx + 13],
-							(uint8_t*)hashCompressed02[idx + 14], (uint8_t*)hashCompressed02[idx + 15]);
-					}
-				} else if (g_avx2_available) {
-					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
-						secp->GetHash160_AVX2(P2PKH, true,
-							pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
-							pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
-							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
-							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
-							(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
-							(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7]);
-					}
-				} else {
-					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
-						secp->GetHash160(P2PKH, true,
-							pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
-							(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
-							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
-					}
-				}
-				} else {
+				if (wantCompressed) {
+					if (haveYForCompressed) {
+						// Y is available: compute only the actual compressed hash (single parity)
+						if (g_sysinfo.has_avx512) {
+							for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
+								secp->GetHash160_AVX512(P2PKH, true,
+									pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+									pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+									pts[idx + 8], pts[idx + 9], pts[idx + 10], pts[idx + 11],
+									pts[idx + 12], pts[idx + 13], pts[idx + 14], pts[idx + 15],
+									(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+									(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+									(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+									(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7],
+									(uint8_t*)hashCompressed02[idx + 8], (uint8_t*)hashCompressed02[idx + 9],
+									(uint8_t*)hashCompressed02[idx + 10], (uint8_t*)hashCompressed02[idx + 11],
+									(uint8_t*)hashCompressed02[idx + 12], (uint8_t*)hashCompressed02[idx + 13],
+									(uint8_t*)hashCompressed02[idx + 14], (uint8_t*)hashCompressed02[idx + 15]);
+							}
+						} else if (g_avx2_available) {
+							for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 8) {
+								secp->GetHash160_AVX2(P2PKH, true,
+									pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+									pts[idx + 4], pts[idx + 5], pts[idx + 6], pts[idx + 7],
+									(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+									(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3],
+									(uint8_t*)hashCompressed02[idx + 4], (uint8_t*)hashCompressed02[idx + 5],
+									(uint8_t*)hashCompressed02[idx + 6], (uint8_t*)hashCompressed02[idx + 7]);
+							}
+						} else {
+							for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 4) {
+								secp->GetHash160(P2PKH, true,
+									pts[idx], pts[idx + 1], pts[idx + 2], pts[idx + 3],
+									(uint8_t*)hashCompressed02[idx], (uint8_t*)hashCompressed02[idx + 1],
+									(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
+							}
+						}
+					} else {
 					// Compressed-only: Y is not computed, so check both parities from X.
 					// Only use GPU hash-only offload in HASH mode; in FULL/HYBRID it would contend with the GPU search.
 					if (FLAGGPU == 1 && FLAGGPU_FULL == 0 && gpu_backend_available()) {
@@ -4278,7 +4290,7 @@ void *thread_process(void *vargp)	{
 	char publickeyhashrmd160_endomorphism[12][4][20];
 	
 	bool calculate_y = FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH || FLAGCRYPTO  == CRYPTO_ETH;
-	calculate_y = calculate_y || hybrid_cpu_use_y_parity_for_compressed_btc();
+	calculate_y = calculate_y || cpu_use_y_parity_for_compressed_btc();
 	Int key_mpz,keyfound;
 	Int key_center;
 	Int stride_half;
