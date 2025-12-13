@@ -453,114 +453,91 @@ __device__ void mod_sqr(uint256_d *r, const uint256_d *a) {
 }
 
 // OPTIMIZED modular inverse using Fermat's little theorem
-// Uses addition chain optimized for secp256k1's p-2 exponent
+// Uses the exact addition chain from libsecp256k1 for p-2 exponent
 // p - 2 = 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFE_FFFFFC2D
+//
+// Total operations: 255 squarings + 15 multiplications = 270 operations
+// vs naive square-and-multiply: 256 squarings + ~200 multiplications = ~456 operations
+//
+// The key insight is building a^(2^k - 1) values and combining them:
+// [1], [2], 3, 6, 9, 11, [22], 44, 88, 176, 220, [223]
+// where brackets indicate values used in final assembly
 __device__ void mod_inv(uint256_d *r, const uint256_d *a) {
-    // Use addition chain for a^(p-2) optimized for secp256k1
-    // Key insight: p-2 has structure (2^256 - 2^32 - 979)
-    //
-    // We use: a^(2^k - 1) * a^(2^j) pattern to build up powers efficiently
-    //
-    // The optimal addition chain for secp256k1 p-2 uses ~266 multiplications
-    // vs 256 squarings + ~255 multiplications for naive Fermat (> 450 total)
+    uint256_d x2, x3, x6, x9, x11, x22, x44, x88, x176, x220, x223, t1;
+    int j;
 
-    uint256_d x2, x3, x6, x9, x11, x22, x44, x88, x176, x220, x223;
+    // Naming convention: xN means a^(2^N - 1)
+    // This builds the addition chain for secp256k1 p-2 from libsecp256k1
 
-    // x2 = a^2
-    mod_sqr(&x2, a);
+    // x2 = a^(2^2 - 1) = a^3
+    mod_sqr(&x2, a);           // a^2
+    mod_mul(&x2, &x2, a);      // a^3
 
-    // x3 = a^3 = a^2 * a
-    mod_mul(&x3, &x2, a);
+    // x3 = a^(2^3 - 1) = a^7
+    mod_sqr(&x3, &x2);         // (a^3)^2 = a^6
+    mod_mul(&x3, &x3, a);      // a^7
 
-    // x6 = a^6 = (a^3)^2
-    mod_sqr(&x6, &x3);
+    // x6 = a^(2^6 - 1) = a^63
+    u256_set(&x6, &x3);
+    for (j = 0; j < 3; j++) mod_sqr(&x6, &x6);  // a^(7 * 2^3) = a^56
+    mod_mul(&x6, &x6, &x3);    // a^56 * a^7 = a^63 = a^(2^6 - 1)
 
-    // x9 = a^9 = a^6 * a^3
-    mod_mul(&x9, &x6, &x3);
+    // x9 = a^(2^9 - 1) = a^511
+    u256_set(&x9, &x6);
+    for (j = 0; j < 3; j++) mod_sqr(&x9, &x9);  // a^(63 * 2^3) = a^504
+    mod_mul(&x9, &x9, &x3);    // a^504 * a^7 = a^511 = a^(2^9 - 1)
 
-    // x11 = a^11 = a^9 * a^2
-    mod_mul(&x11, &x9, &x2);
+    // x11 = a^(2^11 - 1) = a^2047
+    u256_set(&x11, &x9);
+    for (j = 0; j < 2; j++) mod_sqr(&x11, &x11);  // a^(511 * 2^2) = a^2044
+    mod_mul(&x11, &x11, &x2);  // a^2044 * a^3 = a^2047 = a^(2^11 - 1)
 
-    // x22 = a^22 = (a^11)^2
-    mod_sqr(&x22, &x11);
+    // x22 = a^(2^22 - 1)
+    u256_set(&x22, &x11);
+    for (j = 0; j < 11; j++) mod_sqr(&x22, &x22);  // a^(2047 * 2^11)
+    mod_mul(&x22, &x22, &x11);  // a^(2^22 - 1)
 
-    // x44 = a^44 = (a^22)^2
-    mod_sqr(&x44, &x22);
+    // x44 = a^(2^44 - 1)
+    u256_set(&x44, &x22);
+    for (j = 0; j < 22; j++) mod_sqr(&x44, &x44);
+    mod_mul(&x44, &x44, &x22);
 
-    // x88 = a^88 = (a^44)^2
-    mod_sqr(&x88, &x44);
+    // x88 = a^(2^88 - 1)
+    u256_set(&x88, &x44);
+    for (j = 0; j < 44; j++) mod_sqr(&x88, &x88);
+    mod_mul(&x88, &x88, &x44);
 
-    // x176 = a^176 = (a^88)^2
-    mod_sqr(&x176, &x88);
+    // x176 = a^(2^176 - 1)
+    u256_set(&x176, &x88);
+    for (j = 0; j < 88; j++) mod_sqr(&x176, &x176);
+    mod_mul(&x176, &x176, &x88);
 
-    // x220 = a^220 = a^176 * a^44
-    mod_mul(&x220, &x176, &x44);
+    // x220 = a^(2^220 - 1)
+    u256_set(&x220, &x176);
+    for (j = 0; j < 44; j++) mod_sqr(&x220, &x220);
+    mod_mul(&x220, &x220, &x44);
 
-    // x223 = a^223 = a^220 * a^3
-    mod_mul(&x223, &x220, &x3);
+    // x223 = a^(2^223 - 1)
+    u256_set(&x223, &x220);
+    for (j = 0; j < 3; j++) mod_sqr(&x223, &x223);
+    mod_mul(&x223, &x223, &x3);
 
-    // Now build up to 2^256 - 2^32 - 979 using the structure
-    // Result = a^223 * (a^(2^23))^(2^233)
+    // Final assembly using sliding window
+    // p-2 = 2^256 - 2^32 - 979
+    // Binary: 223 ones, then specific pattern for low 33 bits
 
-    // Copy x223 to result
-    uint256_d result;
-    u256_set(&result, &x223);
+    u256_set(&t1, &x223);
+    for (j = 0; j < 23; j++) mod_sqr(&t1, &t1);  // Shift by 23
+    mod_mul(&t1, &t1, &x22);   // Add 22 ones
 
-    // Square 223 times to get a^(223 * 2^223) - wait, this is getting complex
-    // Let me use a simpler but still efficient approach
+    for (j = 0; j < 5; j++) mod_sqr(&t1, &t1);   // Shift by 5
+    mod_mul(&t1, &t1, a);      // Add 1 one
 
-    // SIMPLER OPTIMIZED APPROACH:
-    // Use the standard square-and-multiply but with better loop structure
-    // Unroll by 8 for the all-1s sections (bits 64-255 are all 1s)
+    for (j = 0; j < 3; j++) mod_sqr(&t1, &t1);   // Shift by 3
+    mod_mul(&t1, &t1, &x2);    // Add 2 ones (x2 = a^3 = a^(2^2-1))
 
-    uint256_d base;
-    u256_set(&base, a);
-
-    // Initialize result = 1
-    u256_set_zero(&result);
-    result.d[0] = 1;
-
-    // Exponent p-2 for secp256k1
-    static const uint32_t exp[8] = {0xFFFFFC2Du, 0xFFFFFFFEu, 0xFFFFFFFFu, 0xFFFFFFFFu,
-                                     0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-
-    // Process bit by bit, but unroll the all-1s sections
-    // Bits 64-255 are all 1s, so we can just multiply and square each time
-
-    // First handle bits 0-63 (mixed pattern)
-    #pragma unroll
-    for (int i = 0; i < 64; i++) {
-        int word = i / 32;
-        int bit = i % 32;
-        if (exp[word] & (1u << bit)) {
-            mod_mul(&result, &result, &base);
-        }
-        mod_sqr(&base, &base);
-    }
-
-    // Bits 64-255 are all 1s - unroll by 8 for efficiency
-    #pragma unroll
-    for (int i = 64; i < 256; i += 8) {
-        // 8 iterations, all bits are 1
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        mod_sqr(&base, &base);
-        mod_mul(&result, &result, &base);
-        if (i + 8 < 256) mod_sqr(&base, &base);
-    }
-
-    u256_set(r, &result);
+    for (j = 0; j < 2; j++) mod_sqr(&t1, &t1);   // Shift by 2
+    mod_mul(r, &t1, a);        // Add 1 one -> final result
 }
 
 // ============================================================================
