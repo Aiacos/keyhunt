@@ -480,13 +480,22 @@ int FLAGGPU_HYBRID = 0;
 	int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
 
 	static inline bool hybrid_cpu_use_y_parity_for_compressed_btc() {
-		// In GPU FULL/HYBRID, the GPU computes the actual Y parity for each key (single compressed pubkey).
-		// The CPU path can match this by computing Y during point generation and hashing only the real prefix.
-		return (FLAGGPU_HYBRID && FLAGGPU_FULL == 1 &&
-				(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
-				FLAGCRYPTO == CRYPTO_BTC &&
-				!FLAGENDOMORPHISM &&
-				FLAGSEARCH == SEARCH_COMPRESS);
+		// In GPU FULL/HYBRID, the CPU can optionally compute Y parity and hash only the real compressed prefix.
+		// Default is enabled because it avoids hashing both parities (02+03) and avoids using GPU hash-only
+		// offload in HYBRID (which would contend with the full search). You can disable with:
+		//   KEYHUNT_HYBRID_CPU_USE_Y=0
+		if (!(FLAGGPU_HYBRID && FLAGGPU_FULL == 1 &&
+			  (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
+			  FLAGCRYPTO == CRYPTO_BTC &&
+			  !FLAGENDOMORPHISM &&
+			  FLAGSEARCH == SEARCH_COMPRESS)) {
+			return false;
+		}
+		const char *env = getenv("KEYHUNT_HYBRID_CPU_USE_Y");
+		if (env && *env) {
+			return atoi(env) != 0;
+		}
+		return true;
 	}
 
 int bitrange;
@@ -504,6 +513,28 @@ gpu_backend_info_t g_gpu_backend_info;
 // Only the first 16 bytes of X are used in BSGS bloom filters to reduce hash cost.
 uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
 uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
+
+static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
+	const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
+	if (env && *env) {
+		int v = atoi(env);
+		if (v >= 1 && v <= 99) return v;
+	}
+	if (cpu_threads <= 0) return g_gpu_range_percent;
+
+	// Heuristic split based on SM count vs CPU threads.
+	// Goal: avoid the CPU tail becoming the bottleneck in static split.
+	const int sms = g_gpu_backend_info.multiprocessors;
+	if (sms > 0) {
+		const double ratio = ((double)sms * 5.0) / (double)cpu_threads;  // empirical scale
+		const double pct = (ratio / (ratio + 1.0)) * 100.0;
+		int v = (int)(pct + 0.5);
+		if (v < 50) v = 50;
+		if (v > 99) v = 99;
+		return v;
+	}
+	return g_gpu_range_percent;
+}
 
 /*
 BSGS Variables
@@ -1044,13 +1075,14 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 							(uint8_t*)hashCompressed02[idx + 2], (uint8_t*)hashCompressed02[idx + 3]);
 					}
 				}
-			} else {
-				// Compressed-only: Y is not computed, so check both parities from X
-				if (FLAGGPU == 1 && gpu_backend_available()) {
-					alignas(32) uint8_t x32_be[CPU_GRP_SIZE * 32];
-					for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
-						pts[idx].x.Get32Bytes(x32_be + idx * 32);
-					}
+				} else {
+					// Compressed-only: Y is not computed, so check both parities from X.
+					// Only use GPU hash-only offload in HASH mode; in FULL/HYBRID it would contend with the GPU search.
+					if (FLAGGPU == 1 && FLAGGPU_FULL == 0 && gpu_backend_available()) {
+						alignas(32) uint8_t x32_be[CPU_GRP_SIZE * 32];
+						for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
+							pts[idx].x.Get32Bytes(x32_be + idx * 32);
+						}
 					if (gpu_hash160_fromX_batch(x32_be, CPU_GRP_SIZE,
 							(uint8_t*)hashCompressed02[0], (uint8_t*)hashCompressed03[0]) != 0) {
 						// Fallback to CPU path if GPU hashing fails for any reason.
@@ -1169,117 +1201,109 @@ cpu_compress_only_hash:
 		out.Add(&offset);
 	};
 
-		for (size_t base = 0; base < CPU_GRP_SIZE; base += BATCH_SIZE) {
-			const size_t batchEnd = (base + BATCH_SIZE > CPU_GRP_SIZE) ? CPU_GRP_SIZE : base + BATCH_SIZE;
-			const int batchCount = (int)(batchEnd - base);
+			for (size_t base = 0; base < CPU_GRP_SIZE; base += BATCH_SIZE) {
+				const size_t batchEnd = (base + BATCH_SIZE > CPU_GRP_SIZE) ? CPU_GRP_SIZE : base + BATCH_SIZE;
+				const int batchCount = (int)(batchEnd - base);
 
-			if (wantCompressed) {
-				if (haveYForCompressed) {
-					// Actual compressed hash only (single parity, derived from Y)
-					if (direct_single_target) {
-						for (size_t idx = base; idx < batchEnd; ++idx) {
-							if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
-							Int candidate;
-							computeKeyAtIndex(candidate, idx);
-							writekey(true, &candidate);
+				if (wantCompressed) {
+					if (haveYForCompressed) {
+						// Y is available: compute only the actual compressed hash (single parity)
+						if (direct_single_target) {
+							for (size_t idx = base; idx < batchEnd; ++idx) {
+								if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
+									Int candidate;
+									computeKeyAtIndex(candidate, idx);
+									writekey(true, &candidate);
+								}
+							}
+						} else {
+							for (int i = 0; i < batchCount; i++) {
+								batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
+							}
+							uint64_t hits = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+							while (hits) {
+								int i = __builtin_ctzll(hits);
+								hits &= hits - 1;
+								size_t idx = base + (size_t)i;
+								if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+									Int candidate;
+									computeKeyAtIndex(candidate, idx);
+									writekey(true, &candidate);
+								}
+							}
 						}
-					}
-				} else {
-					// Batch bloom check for 02 hashes
-					for (int i = 0; i < batchCount; i++) {
-						batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
-					}
-					uint64_t hits02 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
-					// Process hits
-					while (hits02) {
-						int i = __builtin_ctzll(hits02);
-						hits02 &= hits02 - 1;
-						size_t idx = base + i;
-						if (searchbinary(addressTable, hashCompressed02[idx], N)) {
-							Int candidate;
-							computeKeyAtIndex(candidate, idx);
-							writekey(true, &candidate);
+					} else {
+						// Y is not computed: check both parities from X (02 and 03)
+						if (direct_single_target) {
+							for (size_t idx = base; idx < batchEnd; ++idx) {
+								if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
+									Int candidate;
+									computeKeyAtIndex(candidate, idx);
+									publickey = secp->ComputePublicKey(&candidate);
+									if (publickey.y.IsOdd()) {
+										candidate.Neg();
+										candidate.Add(&secp->order);
+									}
+									writekey(true, &candidate);
+								}
+								if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
+									Int candidate;
+									computeKeyAtIndex(candidate, idx);
+									publickey = secp->ComputePublicKey(&candidate);
+									if (publickey.y.IsEven()) {
+										candidate.Neg();
+										candidate.Add(&secp->order);
+									}
+									writekey(true, &candidate);
+								}
+							}
+						} else {
+							for (int i = 0; i < batchCount; i++) {
+								batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
+							}
+							uint64_t hits02 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+							while (hits02) {
+								int i = __builtin_ctzll(hits02);
+								hits02 &= hits02 - 1;
+								size_t idx = base + (size_t)i;
+								if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+									Int candidate;
+									computeKeyAtIndex(candidate, idx);
+									publickey = secp->ComputePublicKey(&candidate);
+									if (publickey.y.IsOdd()) {
+										candidate.Neg();
+										candidate.Add(&secp->order);
+									}
+									writekey(true, &candidate);
+								}
+							}
+							for (int i = 0; i < batchCount; i++) {
+								batchPtrs[i] = (const uint8_t*)hashCompressed03[base + i];
+							}
+							uint64_t hits03 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+							while (hits03) {
+								int i = __builtin_ctzll(hits03);
+								hits03 &= hits03 - 1;
+								size_t idx = base + (size_t)i;
+								if (searchbinary(addressTable, hashCompressed03[idx], N)) {
+									Int candidate;
+									computeKeyAtIndex(candidate, idx);
+									publickey = secp->ComputePublicKey(&candidate);
+									if (publickey.y.IsEven()) {
+										candidate.Neg();
+										candidate.Add(&secp->order);
+									}
+									writekey(true, &candidate);
+								}
+							}
 						}
 					}
 				}
-			} else {
-				// Dual parity check from X (02 and 03)
+
+			if (wantUncompressed) {
 				if (direct_single_target) {
 					for (size_t idx = base; idx < batchEnd; ++idx) {
-						// Check 02 parity (Y is even)
-						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
-							Int candidate;
-							computeKeyAtIndex(candidate, idx);
-							publickey = secp->ComputePublicKey(&candidate);
-							if (publickey.y.IsOdd()) {
-								candidate.Neg();
-								candidate.Add(&secp->order);
-							}
-							writekey(true, &candidate);
-						}
-						// Check 03 parity (Y is odd)
-						if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
-							Int candidate;
-							computeKeyAtIndex(candidate, idx);
-							publickey = secp->ComputePublicKey(&candidate);
-							if (publickey.y.IsEven()) {
-								candidate.Neg();
-								candidate.Add(&secp->order);
-							}
-							writekey(true, &candidate);
-						}
-					}
-				} else {
-					// Batch bloom check for 02 hashes
-					for (int i = 0; i < batchCount; i++) {
-						batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
-					}
-					uint64_t hits02 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
-					// Process 02 hits
-					while (hits02) {
-						int i = __builtin_ctzll(hits02);
-						hits02 &= hits02 - 1;
-						size_t idx = base + i;
-						if (searchbinary(addressTable, hashCompressed02[idx], N)) {
-							Int candidate;
-							computeKeyAtIndex(candidate, idx);
-							publickey = secp->ComputePublicKey(&candidate);
-							if (publickey.y.IsOdd()) {
-								candidate.Neg();
-								candidate.Add(&secp->order);
-							}
-							writekey(true, &candidate);
-						}
-					}
-					// Batch bloom check for 03 hashes
-					for (int i = 0; i < batchCount; i++) {
-						batchPtrs[i] = (const uint8_t*)hashCompressed03[base + i];
-					}
-					uint64_t hits03 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
-					// Process 03 hits
-					while (hits03) {
-						int i = __builtin_ctzll(hits03);
-						hits03 &= hits03 - 1;
-						size_t idx = base + i;
-						if (searchbinary(addressTable, hashCompressed03[idx], N)) {
-							Int candidate;
-							computeKeyAtIndex(candidate, idx);
-							publickey = secp->ComputePublicKey(&candidate);
-							if (publickey.y.IsEven()) {
-								candidate.Neg();
-								candidate.Add(&secp->order);
-							}
-							writekey(true, &candidate);
-						}
-					}
-				}
-			}
-		}
-
-		if (wantUncompressed) {
-			if (direct_single_target) {
-				for (size_t idx = base; idx < batchEnd; ++idx) {
-					if (memcmp(hashUncompressed[idx], single_target, 20) == 0) {
+						if (memcmp(hashUncompressed[idx], single_target, 20) == 0) {
 						Int candidate;
 						computeKeyAtIndex(candidate, idx);
 						writekey(false, &candidate);
@@ -3470,13 +3494,26 @@ int main(int argc, char **argv)	{
 				if (!gpu_backend_available()) {
 					fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
 					FLAGGPU_HYBRID = 0;
-				} else {
-					printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
+					} else {
+						printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
 
-				// Calculate range split: GPU gets g_gpu_range_percent% of range.
-				// Ranges are treated as [start, end) (end is exclusive) throughout keyhunt.
-				Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
-				range_diff.Set(&n_range_end);
+					// Auto-tune the split unless user overrides with KEYHUNT_HYBRID_GPU_PERCENT.
+					{
+						const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
+						if (!(env && *env)) {
+							int tuned = hybrid_get_gpu_range_percent_default(NTHREADS);
+							if (tuned != g_gpu_range_percent) {
+								g_gpu_range_percent = tuned;
+								printf("[I] HYBRID: auto split GPU %d%% / CPU %d%% (override: KEYHUNT_HYBRID_GPU_PERCENT)\n",
+								       g_gpu_range_percent, 100 - g_gpu_range_percent);
+							}
+						}
+					}
+	
+					// Calculate range split: GPU gets g_gpu_range_percent% of range.
+					// Ranges are treated as [start, end) (end is exclusive) throughout keyhunt.
+					Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
+					range_diff.Set(&n_range_end);
 				range_diff.Sub(&n_range_start);
 
 				// GPU gets g_gpu_range_percent% of the range
@@ -3693,19 +3730,20 @@ int main(int argc, char **argv)	{
 						str_total = overall_total.GetBase10();
 						char *str_period = period.GetBase10();
 
-						if (FLAGMATRIX) {
-							snprintf(buffer, sizeof(buffer),
-								"[+] Total %s keys in %s seconds (last %s s): CPU %s | GPU %s | TOTAL %s\n",
-								str_total ? str_total : "?", str_seconds ? str_seconds : "?",
-								str_period ? str_period : "?",
-								cpu_rate_str, gpu_rate_str, overall_rate_str);
-						} else {
-							snprintf(buffer, sizeof(buffer),
-								"\r[+] Total %s keys in %s seconds (last %s s): CPU %s | GPU %s | TOTAL %s\r",
-								str_total ? str_total : "?", str_seconds ? str_seconds : "?",
-								str_period ? str_period : "?",
-								cpu_rate_str, gpu_rate_str, overall_rate_str);
-						}
+							const bool line_mode = (FLAGMATRIX || FLAGQUIET || FLAGGPU_HYBRID);
+							if (line_mode) {
+								snprintf(buffer, sizeof(buffer),
+									"[+] Total %s keys in %s seconds (last %s s): CPU %s | GPU %s | TOTAL %s\n",
+									str_total ? str_total : "?", str_seconds ? str_seconds : "?",
+									str_period ? str_period : "?",
+									cpu_rate_str, gpu_rate_str, overall_rate_str);
+							} else {
+								snprintf(buffer, sizeof(buffer),
+									"\r[+] Total %s keys in %s seconds (last %s s): CPU %s | GPU %s | TOTAL %s\r",
+									str_total ? str_total : "?", str_seconds ? str_seconds : "?",
+									str_period ? str_period : "?",
+									cpu_rate_str, gpu_rate_str, overall_rate_str);
+							}
 
 						append_progress_info(buffer, sizeof(buffer));
 						printf("%s", buffer);
@@ -3746,15 +3784,16 @@ int main(int argc, char **argv)	{
 						str_pretotal = pretotal.GetBase10();
 						str_total = total.GetBase10();
 
-						if(pretotal.IsLower(&int_limits[0]))	{
-							if(FLAGMATRIX)	{
-								sprintf(buffer,"[+] Total %s keys in %s seconds: %s keys/s\n",str_total,str_seconds,str_pretotal);
+							const bool line_mode = (FLAGMATRIX || FLAGQUIET || FLAGGPU_HYBRID);
+							if(pretotal.IsLower(&int_limits[0]))	{
+								if(line_mode)	{
+									sprintf(buffer,"[+] Total %s keys in %s seconds: %s keys/s\n",str_total,str_seconds,str_pretotal);
+								}
+								else	{
+									sprintf(buffer,"\r[+] Total %s keys in %s seconds: %s keys/s\r",str_total,str_seconds,str_pretotal);
+								}
 							}
 							else	{
-								sprintf(buffer,"\r[+] Total %s keys in %s seconds: %s keys/s\r",str_total,str_seconds,str_pretotal);
-							}
-						}
-						else	{
 							i = 0;
 							salir = 0;
 							while( i < 6 && !salir)	{
@@ -3769,12 +3808,12 @@ int main(int argc, char **argv)	{
 							div_pretotal.Set(&pretotal);
 							div_pretotal.Div(&int_limits[salir ? i : i-1]);
 							str_divpretotal = div_pretotal.GetBase10();
-							if(FLAGMATRIX)	{
-								sprintf(buffer,"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
-							}
-							else	{
-								if(THREADOUTPUT == 1)	{
-									sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+								if(line_mode)	{
+									sprintf(buffer,"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+								}
+								else	{
+									if(THREADOUTPUT == 1)	{
+										sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
 								}
 								else	{
 									sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
@@ -3874,6 +3913,40 @@ char *pubkeytopubaddress(char *pkey,int length)	{
 	return pubaddress;	// pubaddress need to be free by te caller funtion
 }
 
+static inline uint64_t load_u64_be(const void *p) {
+	uint64_t v;
+	memcpy(&v, p, sizeof(v));
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	v = __builtin_bswap64(v);
+#endif
+	return v;
+}
+
+static inline uint32_t load_u32_be(const void *p) {
+	uint32_t v;
+	memcpy(&v, p, sizeof(v));
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	v = __builtin_bswap32(v);
+#endif
+	return v;
+}
+
+static inline int cmp_hash20(const uint8_t *a, const uint8_t *b) {
+	const uint64_t a0 = load_u64_be(a);
+	const uint64_t b0 = load_u64_be(b);
+	if (a0 < b0) return -1;
+	if (a0 > b0) return 1;
+	const uint64_t a1 = load_u64_be(a + 8);
+	const uint64_t b1 = load_u64_be(b + 8);
+	if (a1 < b1) return -1;
+	if (a1 > b1) return 1;
+	const uint32_t a2 = load_u32_be(a + 16);
+	const uint32_t b2 = load_u32_be(b + 16);
+	if (a2 < b2) return -1;
+	if (a2 > b2) return 1;
+	return 0;
+}
+
 int searchbinary(struct address_value *buffer,char *data,int64_t array_length) {
 	int64_t half,min,max,current;
 	int r = 0,rcmp;
@@ -3883,7 +3956,7 @@ int searchbinary(struct address_value *buffer,char *data,int64_t array_length) {
 	half = array_length;
 	while(!r && half >= 1) {
 		half = (max - min)/2;
-		rcmp = memcmp(data,buffer[current+half].value,20);
+		rcmp = cmp_hash20((const uint8_t*)data, (const uint8_t*)buffer[current+half].value);
 		if(rcmp == 0)	{
 			r = 1;	//Found!!
 		}
