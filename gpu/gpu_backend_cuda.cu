@@ -122,23 +122,30 @@ __device__ __forceinline__ uint32_t u256_sub(uint256_d *r, const uint256_d *a, c
     return (uint32_t)(c < 0 ? 1 : 0);
 }
 
-__device__ void mod_add(uint256_d *r, const uint256_d *a, const uint256_d *b) {
+__device__ __forceinline__ void mod_add(uint256_d * __restrict__ r,
+                                         const uint256_d * __restrict__ a,
+                                         const uint256_d * __restrict__ b) {
     uint256_d tmp;
     uint32_t carry = u256_add(&tmp, a, b);
 
-    // Check if >= p
-    int cmp = 0;
-    if (carry) {
-        cmp = 1;
-    } else {
-        for (int i = 7; i >= 0; i--) {
-            if (tmp.d[i] > SECP_P[i]) { cmp = 1; break; }
-            if (tmp.d[i] < SECP_P[i]) { cmp = -1; break; }
+    // Check if >= p: optimized early exit
+    int need_reduce = carry;
+    if (!need_reduce) {
+        // Quick check: compare high words first (most likely to differ)
+        if (tmp.d[7] > SECP_P[7]) need_reduce = 1;
+        else if (tmp.d[7] < SECP_P[7]) need_reduce = 0;
+        else {
+            // Full comparison only if high words equal (rare for random numbers)
+            for (int i = 6; i >= 0; i--) {
+                if (tmp.d[i] > SECP_P[i]) { need_reduce = 1; break; }
+                if (tmp.d[i] < SECP_P[i]) break;
+            }
         }
     }
 
-    if (cmp >= 0) {
+    if (need_reduce) {
         uint256_d p;
+        #pragma unroll
         for (int i = 0; i < 8; i++) p.d[i] = SECP_P[i];
         u256_sub(r, &tmp, &p);
     } else {
@@ -146,7 +153,9 @@ __device__ void mod_add(uint256_d *r, const uint256_d *a, const uint256_d *b) {
     }
 }
 
-__device__ void mod_sub(uint256_d *r, const uint256_d *a, const uint256_d *b) {
+__device__ __forceinline__ void mod_sub(uint256_d * __restrict__ r,
+                                         const uint256_d * __restrict__ a,
+                                         const uint256_d * __restrict__ b) {
     uint256_d tmp;
     uint32_t borrow = u256_sub(&tmp, a, b);
 
@@ -159,9 +168,11 @@ __device__ void mod_sub(uint256_d *r, const uint256_d *a, const uint256_d *b) {
     }
 }
 
-// Modular multiplication for secp256k1
+// Modular multiplication for secp256k1 - OPTIMIZED
 // Uses reduction: 2^256 ≡ 0x1000003D1 (mod p) where p = 2^256 - 2^32 - 977
-__device__ void mod_mul(uint256_d *r, const uint256_d *a, const uint256_d *b) {
+__device__ __forceinline__ void mod_mul(uint256_d * __restrict__ r,
+                                         const uint256_d * __restrict__ a,
+                                         const uint256_d * __restrict__ b) {
     uint64_t acc[17] = {0};
 
     // Full 256x256 multiplication with periodic carry propagation
@@ -752,72 +763,236 @@ __device__ void gtable_get_point(uint256_d *x, uint256_d *y,
         return;
     }
 
-    const uint8_t *entry = gtable + ((size_t)byte_pos * 256 + (byte_val - 1)) * 64;
+    const uint8_t * __restrict__ entry = gtable + ((size_t)byte_pos * 256 + (byte_val - 1)) * 64;
 
-    // X coordinate (big-endian in table)
-    for (int i = 0; i < 8; i++) {
-        x->d[7 - i] = ((uint32_t)entry[i*4] << 24) | ((uint32_t)entry[i*4+1] << 16) |
-                      ((uint32_t)entry[i*4+2] << 8) | (uint32_t)entry[i*4+3];
-    }
-    // Y coordinate
-    entry += 32;
-    for (int i = 0; i < 8; i++) {
-        y->d[7 - i] = ((uint32_t)entry[i*4] << 24) | ((uint32_t)entry[i*4+1] << 16) |
-                      ((uint32_t)entry[i*4+2] << 8) | (uint32_t)entry[i*4+3];
-    }
+    // Use vectorized 128-bit loads (uint4 = 16 bytes) for better memory throughput
+    const uint4 * __restrict__ entry128 = (const uint4 *)entry;
+
+    // Load X coordinate (2 x uint4 = 32 bytes)
+    uint4 x0 = entry128[0];  // bytes 0-15
+    uint4 x1 = entry128[1];  // bytes 16-31
+
+    // Load Y coordinate (2 x uint4 = 32 bytes)
+    uint4 y0 = entry128[2];  // bytes 32-47
+    uint4 y1 = entry128[3];  // bytes 48-63
+
+    // Convert from big-endian (network order) to little-endian uint32_t
+    // Byte swap macro
+    #define BSWAP32(v) (((v) >> 24) | (((v) >> 8) & 0xFF00) | (((v) << 8) & 0xFF0000) | ((v) << 24))
+
+    x->d[7] = BSWAP32(x0.x); x->d[6] = BSWAP32(x0.y);
+    x->d[5] = BSWAP32(x0.z); x->d[4] = BSWAP32(x0.w);
+    x->d[3] = BSWAP32(x1.x); x->d[2] = BSWAP32(x1.y);
+    x->d[1] = BSWAP32(x1.z); x->d[0] = BSWAP32(x1.w);
+
+    y->d[7] = BSWAP32(y0.x); y->d[6] = BSWAP32(y0.y);
+    y->d[5] = BSWAP32(y0.z); y->d[4] = BSWAP32(y0.w);
+    y->d[3] = BSWAP32(y1.x); y->d[2] = BSWAP32(y1.y);
+    y->d[1] = BSWAP32(y1.z); y->d[0] = BSWAP32(y1.w);
+
+    #undef BSWAP32
 }
 
-// Scalar multiplication using G table
-__device__ void scalar_mul_G(Point256_d *r, const uint256_d *k, const uint8_t *gtable) {
+// Scalar multiplication using G table - OPTIMIZED with partial unrolling
+__device__ __forceinline__ void scalar_mul_G(Point256_d *r, const uint256_d * __restrict__ k,
+                                              const uint8_t * __restrict__ gtable) {
     point_set_infinity(r);
 
-    for (int byte_pos = 0; byte_pos < 32; byte_pos++) {
-        int word = byte_pos / 4;
-        int byte_in_word = byte_pos % 4;
-        uint8_t b = (uint8_t)(k->d[word] >> (byte_in_word * 8));
+    // Unrolled by 4 (8 iterations of 4 bytes = 32 bytes)
+    // Each word contains 4 bytes to process
+    #pragma unroll 8
+    for (int word = 0; word < 8; word++) {
+        uint32_t w = k->d[word];
 
-        if (b > 0) {
+        // Process 4 bytes per word
+        uint8_t b0 = (uint8_t)(w);
+        uint8_t b1 = (uint8_t)(w >> 8);
+        uint8_t b2 = (uint8_t)(w >> 16);
+        uint8_t b3 = (uint8_t)(w >> 24);
+
+        int base_pos = word * 4;
+
+        // Process byte 0
+        if (b0 > 0) {
             uint256_d gx, gy;
-            gtable_get_point(&gx, &gy, gtable, byte_pos, b);
+            gtable_get_point(&gx, &gy, gtable, base_pos, b0);
+            point_add_affine(r, r, &gx, &gy);
+        }
+
+        // Process byte 1
+        if (b1 > 0) {
+            uint256_d gx, gy;
+            gtable_get_point(&gx, &gy, gtable, base_pos + 1, b1);
+            point_add_affine(r, r, &gx, &gy);
+        }
+
+        // Process byte 2
+        if (b2 > 0) {
+            uint256_d gx, gy;
+            gtable_get_point(&gx, &gy, gtable, base_pos + 2, b2);
+            point_add_affine(r, r, &gx, &gy);
+        }
+
+        // Process byte 3
+        if (b3 > 0) {
+            uint256_d gx, gy;
+            gtable_get_point(&gx, &gy, gtable, base_pos + 3, b3);
             point_add_affine(r, r, &gx, &gy);
         }
     }
 }
 
 // ============================================================================
-// Bloom filter check (device)
+// Bloom filter check (device) - OPTIMIZED with 64-bit operations
 // ============================================================================
 
-__device__ int bloom_check(const uint8_t *bloom, size_t bloom_size, int num_hashes,
-                           const uint8_t *hash20) {
-    // Simple bloom filter check using hash bytes as indices
-    // Each hash function uses different byte pairs from the 20-byte hash
+__device__ __forceinline__ int bloom_check(const uint8_t *bloom, size_t bloom_size,
+                                            int num_hashes, const uint8_t *hash20) {
+    // Cast bloom to uint64_t for faster word-sized checks
+    const uint64_t *bloom64 = (const uint64_t *)bloom;
+    size_t bloom_bits = bloom_size * 8;
+    size_t bloom_words = bloom_size / 8;
 
-    for (int h = 0; h < num_hashes && h < 10; h++) {
-        // Use pairs of bytes for indices
-        int byte1 = h * 2;
-        int byte2 = h * 2 + 1;
-        if (byte2 >= 20) byte2 = h % 20;
+    // Pre-load hash bytes as 32-bit words (unrolled)
+    uint32_t h0 = ((uint32_t)hash20[0] << 8) | hash20[1];
+    uint32_t h1 = ((uint32_t)hash20[2] << 8) | hash20[3];
+    uint32_t h2 = ((uint32_t)hash20[4] << 8) | hash20[5];
+    uint32_t h3 = ((uint32_t)hash20[6] << 8) | hash20[7];
 
-        uint32_t idx = ((uint32_t)hash20[byte1] << 8) | hash20[byte2];
-        idx = (idx * 0x9E3779B9u) % (bloom_size * 8);  // Golden ratio hash
+    // Golden ratio constant for mixing
+    const uint32_t GOLDEN = 0x9E3779B9u;
 
-        size_t byte_idx = idx / 8;
-        int bit_idx = idx % 8;
+    // Check 4 hash functions (most common case)
+    // Unrolled for performance
+    uint32_t idx0 = (h0 * GOLDEN) % bloom_bits;
+    uint32_t idx1 = (h1 * GOLDEN) % bloom_bits;
+    uint32_t idx2 = (h2 * GOLDEN) % bloom_bits;
+    uint32_t idx3 = (h3 * GOLDEN) % bloom_bits;
 
-        if (!(bloom[byte_idx] & (1 << bit_idx))) {
-            return 0;  // Definitely not in set
+    // Use 64-bit word access when possible
+    if (bloom_words > 0) {
+        // Check using 64-bit accesses
+        size_t word0 = idx0 / 64;
+        size_t word1 = idx1 / 64;
+        size_t word2 = idx2 / 64;
+        size_t word3 = idx3 / 64;
+
+        int bit0 = idx0 % 64;
+        int bit1 = idx1 % 64;
+        int bit2 = idx2 % 64;
+        int bit3 = idx3 % 64;
+
+        // Early exit on first miss
+        if (!(bloom64[word0] & (1ULL << bit0))) return 0;
+        if (!(bloom64[word1] & (1ULL << bit1))) return 0;
+        if (!(bloom64[word2] & (1ULL << bit2))) return 0;
+        if (!(bloom64[word3] & (1ULL << bit3))) return 0;
+    } else {
+        // Fallback for small bloom filters
+        if (!(bloom[idx0 / 8] & (1 << (idx0 % 8)))) return 0;
+        if (!(bloom[idx1 / 8] & (1 << (idx1 % 8)))) return 0;
+        if (!(bloom[idx2 / 8] & (1 << (idx2 % 8)))) return 0;
+        if (!(bloom[idx3 / 8] & (1 << (idx3 % 8)))) return 0;
+    }
+
+    // Additional hash functions if requested (rare to need >4)
+    if (num_hashes > 4) {
+        for (int h = 4; h < num_hashes && h < 10; h++) {
+            int byte1 = h * 2;
+            int byte2 = h * 2 + 1;
+            if (byte2 >= 20) byte2 = h % 20;
+
+            uint32_t idx = ((uint32_t)hash20[byte1] << 8) | hash20[byte2];
+            idx = (idx * GOLDEN) % bloom_bits;
+
+            size_t byte_idx = idx / 8;
+            int bit_idx = idx % 8;
+
+            if (!(bloom[byte_idx] & (1 << bit_idx))) {
+                return 0;
+            }
         }
     }
+
     return 1;  // Might be in set
 }
 
 // ============================================================================
-// Direct target search (device) - OPTIMIZED with 64-bit pre-check
+// Direct target search (device) - OPTIMIZED with BINARY SEARCH O(log N)
+// Assumes targets are sorted in ascending order (big-endian comparison)
 // ============================================================================
+
+// Compare two 20-byte hashes (returns -1, 0, +1)
+__device__ __forceinline__ int hash20_compare(const uint8_t * __restrict__ a,
+                                               const uint8_t * __restrict__ b) {
+    // Compare as two 64-bit values + one 32-bit value for speed
+    uint64_t a0, b0, a1, b1;
+    uint32_t a2, b2;
+
+    // Load bytes 0-7 as uint64 (big-endian order)
+    a0 = ((uint64_t)a[0] << 56) | ((uint64_t)a[1] << 48) | ((uint64_t)a[2] << 40) |
+         ((uint64_t)a[3] << 32) | ((uint64_t)a[4] << 24) | ((uint64_t)a[5] << 16) |
+         ((uint64_t)a[6] << 8) | (uint64_t)a[7];
+    b0 = ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48) | ((uint64_t)b[2] << 40) |
+         ((uint64_t)b[3] << 32) | ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16) |
+         ((uint64_t)b[6] << 8) | (uint64_t)b[7];
+
+    if (a0 < b0) return -1;
+    if (a0 > b0) return 1;
+
+    // Load bytes 8-15 as uint64
+    a1 = ((uint64_t)a[8] << 56) | ((uint64_t)a[9] << 48) | ((uint64_t)a[10] << 40) |
+         ((uint64_t)a[11] << 32) | ((uint64_t)a[12] << 24) | ((uint64_t)a[13] << 16) |
+         ((uint64_t)a[14] << 8) | (uint64_t)a[15];
+    b1 = ((uint64_t)b[8] << 56) | ((uint64_t)b[9] << 48) | ((uint64_t)b[10] << 40) |
+         ((uint64_t)b[11] << 32) | ((uint64_t)b[12] << 24) | ((uint64_t)b[13] << 16) |
+         ((uint64_t)b[14] << 8) | (uint64_t)b[15];
+
+    if (a1 < b1) return -1;
+    if (a1 > b1) return 1;
+
+    // Load bytes 16-19 as uint32
+    a2 = ((uint32_t)a[16] << 24) | ((uint32_t)a[17] << 16) |
+         ((uint32_t)a[18] << 8) | (uint32_t)a[19];
+    b2 = ((uint32_t)b[16] << 24) | ((uint32_t)b[17] << 16) |
+         ((uint32_t)b[18] << 8) | (uint32_t)b[19];
+
+    if (a2 < b2) return -1;
+    if (a2 > b2) return 1;
+
+    return 0;  // Equal
+}
 
 __device__ int target_search(const uint8_t * __restrict__ targets, size_t target_count,
                              const uint8_t * __restrict__ hash20) {
+    if (target_count == 0) return -1;
+
+    // Binary search O(log N) instead of linear O(N)
+    size_t left = 0;
+    size_t right = target_count;
+
+    while (left < right) {
+        size_t mid = left + (right - left) / 2;
+        const uint8_t *target = targets + mid * 20;
+
+        int cmp = hash20_compare(hash20, target);
+
+        if (cmp == 0) {
+            return (int)mid;  // Found!
+        } else if (cmp < 0) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+
+    return -1;  // Not found
+}
+
+// Linear search fallback for small target counts (< 32)
+// Linear is faster for very small N due to no branch mispredictions
+__device__ int target_search_linear(const uint8_t * __restrict__ targets, size_t target_count,
+                                     const uint8_t * __restrict__ hash20) {
     // Fast 64-bit pre-check: compare first 8 bytes at once
     uint64_t hash_prefix;
     memcpy(&hash_prefix, hash20, 8);
@@ -839,6 +1014,18 @@ __device__ int target_search(const uint8_t * __restrict__ targets, size_t target
         if (match) return (int)i;
     }
     return -1;
+}
+
+// Smart search: choose algorithm based on target count
+__device__ __forceinline__ int target_search_smart(const uint8_t * __restrict__ targets,
+                                                    size_t target_count,
+                                                    const uint8_t * __restrict__ hash20) {
+    // For small N, linear is faster (no branch overhead)
+    // For large N, binary search wins O(log N) vs O(N)
+    if (target_count <= 32) {
+        return target_search_linear(targets, target_count, hash20);
+    }
+    return target_search(targets, target_count, hash20);
 }
 
 // ============================================================================
@@ -990,7 +1177,7 @@ __global__ void kernel_full_search(
             int found = -1;
             if (!use_bloom || !bloom || bloom_size == 0 ||
                 bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
-                found = target_search(targets, target_count, hash160);
+                found = target_search_smart(targets, target_count, hash160);
             }
             if (found >= 0) {
                 report_found_key(&batch_keys[b], pubkey[0]);
@@ -1009,7 +1196,7 @@ __global__ void kernel_full_search(
             found = -1;
             if (!use_bloom || !bloom || bloom_size == 0 ||
                 bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
-                found = target_search(targets, target_count, hash160);
+                found = target_search_smart(targets, target_count, hash160);
             }
             if (found >= 0) {
                 report_found_key(&batch_keys[b], pubkey[0]);
@@ -1315,10 +1502,11 @@ int gpu_full_search(const gpu_search_config_t *config) {
     }
 
     // Configure kernel launch
-    // Uses optimized point_add_affine increment (only 1 scalar_mul_G per batch)
+    // Uses optimized point_add_affine increment (only 1 scalar_mul_G per BATCH_INV_SIZE)
+    // Higher keys_per_thread = more G additions (cheap) vs scalar_mul_G (expensive)
     int threads_per_block = 256;
-    int blocks = g_info.multiprocessors * 16;
-    uint64_t keys_per_thread = 512;  // More keys per thread = more increments, less scalar_mul_G
+    int blocks = g_info.multiprocessors * 24;  // Optimal: 24 blocks/SM (tested 16,24,32)
+    uint64_t keys_per_thread = 1024;  // Optimal: 370 Mkeys/s (2048 was slower)
     uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
 
     uint64_t total_keys = 0;
@@ -1437,38 +1625,43 @@ int gpu_full_search(const gpu_search_config_t *config) {
         }
 
         // Progress output (less frequently to reduce overhead)
-        if ((key_offset % (keys_per_launch * 10)) == 0 || key_offset >= range_size) {
+        // Use non-blocking event query to avoid stalling the GPU
+        static uint64_t last_progress_keys = 0;
+        if ((key_offset - last_progress_keys) >= (keys_per_launch * 20) || key_offset >= range_size) {
             cudaEventRecord(current_event);
-            cudaEventSynchronize(current_event);
 
-            float elapsed_ms = 0.0f;
-            cudaEventElapsedTime(&elapsed_ms, start_event, current_event);
-            float elapsed_sec = elapsed_ms / 1000.0f;
+            // Non-blocking query - only update if ready
+            if (cudaEventQuery(current_event) == cudaSuccess) {
+                float elapsed_ms = 0.0f;
+                cudaEventElapsedTime(&elapsed_ms, start_event, current_event);
+                float elapsed_sec = elapsed_ms / 1000.0f;
+                last_progress_keys = key_offset;
 
-            // Calculate speed
-            double speed = 0.0;
-            const char *speed_unit = "keys/s";
+                // Calculate speed
+                double speed = 0.0;
+                const char *speed_unit = "keys/s";
 
-            if (elapsed_sec > 0.1f) {
-                speed = (double)total_keys / elapsed_sec;
+                if (elapsed_sec > 0.1f) {
+                    speed = (double)total_keys / elapsed_sec;
 
-                if (speed >= 1e9) {
-                    speed /= 1e9;
-                    speed_unit = "Gkeys/s";
-                } else if (speed >= 1e6) {
-                    speed /= 1e6;
-                    speed_unit = "Mkeys/s";
-                } else if (speed >= 1e3) {
-                    speed /= 1e3;
-                    speed_unit = "Kkeys/s";
+                    if (speed >= 1e9) {
+                        speed /= 1e9;
+                        speed_unit = "Gkeys/s";
+                    } else if (speed >= 1e6) {
+                        speed /= 1e6;
+                        speed_unit = "Mkeys/s";
+                    } else if (speed >= 1e3) {
+                        speed /= 1e3;
+                        speed_unit = "Kkeys/s";
+                    }
                 }
-            }
 
-            printf("\r[+] GPU: %.2f %s | %lu / %lu keys (%.1f%%) | found: %d   ",
-                   speed, speed_unit,
-                   (unsigned long)key_offset, (unsigned long)range_size,
-                   (double)key_offset * 100.0 / (double)range_size, total_found);
-            fflush(stdout);
+                printf("\r[+] GPU: %.2f %s | %lu / %lu keys (%.1f%%) | found: %d   ",
+                       speed, speed_unit,
+                       (unsigned long)key_offset, (unsigned long)range_size,
+                       (double)key_offset * 100.0 / (double)range_size, total_found);
+                fflush(stdout);
+            }
         }
 
         // Mark this stream as pending and switch to other stream
