@@ -636,6 +636,24 @@ static void format_keys_per_second(Int &rate, char *out, size_t outSize) {
 	free(scaledStr);
 }
 
+static bool span_u64_from_range(Int &start, Int &end, uint64_t &out) {
+	Int diff;
+	diff.Set(&end);
+	diff.Sub(&start);
+
+	char *hex = diff.GetBase16();
+	if (hex == NULL) {
+		return false;
+	}
+	size_t len = strlen(hex);
+	bool ok = (len > 0 && len <= 16);
+	if (ok) {
+		out = strtoull(hex, NULL, 16);
+	}
+	free(hex);
+	return ok;
+}
+
 Int lambda,lambda2,beta,beta2;
 
 Secp256K1 *secp;
@@ -658,6 +676,55 @@ static void shutdown_work_queue() {
 	g_workQueue.shutdown();
 }
 #endif
+
+static void maybe_adjust_hybrid_cpu_sequential_max(size_t threadCount, Int &cpuStart, Int &rangeEnd) {
+	if (FLAG_N) {
+		return;
+	}
+	if (threadCount == 0) {
+		return;
+	}
+	uint64_t span = 0;
+	if (!span_u64_from_range(cpuStart, rangeEnd, span) || span == 0) {
+		return;
+	}
+
+	const char *env = getenv("KEYHUNT_HYBRID_CPU_N");
+	if (env && env[0]) {
+		uint64_t forced = 0;
+		if (env[0] == '0' && env[1] == 'x') {
+			forced = strtoull(env + 2, NULL, 16);
+		} else {
+			forced = strtoull(env, NULL, 10);
+		}
+		if (forced >= 1024 && (forced % 1024ULL) == 0) {
+			if (forced != N_SEQUENTIAL_MAX) {
+				N_SEQUENTIAL_MAX = forced;
+				printf("[I] HYBRID: forced CPU N to 0x%llx via KEYHUNT_HYBRID_CPU_N\n",
+				       (unsigned long long)N_SEQUENTIAL_MAX);
+			}
+		}
+		return;
+	}
+
+	const uint64_t blocks_per_thread = 16ULL;
+	uint64_t desired = (span + (uint64_t)threadCount * blocks_per_thread - 1ULL) /
+	                   ((uint64_t)threadCount * blocks_per_thread);
+
+	const uint64_t kAlign = 1024ULL;
+	const uint64_t kMin = 8ULL * kAlign;                 // 8k keys
+	const uint64_t kMax = 256ULL * 1024ULL * kAlign;     // 256M keys
+
+	if (desired < kMin) desired = kMin;
+	if (desired > kMax) desired = kMax;
+	desired = ((desired + kAlign - 1) / kAlign) * kAlign;
+
+	if (desired < N_SEQUENTIAL_MAX) {
+		N_SEQUENTIAL_MAX = desired;
+		printf("[I] HYBRID: adjusted CPU N to 0x%llx for better thread utilization\n",
+		       (unsigned long long)N_SEQUENTIAL_MAX);
+	}
+}
 
 static void initialize_range_progress_tracker() {
 	// Always set range bounds for writekey validation (prevents out-of-range key writes)
@@ -3478,6 +3545,7 @@ int main(int argc, char **argv)	{
 						gpu_hybrid_started = 1;
 						// Update n_range_start for CPU threads - they use normal algorithm
 						n_range_start.Set(&cpu_range_start);
+						maybe_adjust_hybrid_cpu_sequential_max((size_t)NTHREADS, cpu_range_start, n_range_end);
 						printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
 					}
 					}  // End of else (GPU available)
