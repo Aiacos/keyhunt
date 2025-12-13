@@ -225,6 +225,72 @@ static inline int bloom_fast_check_rmd160(bloom_fast_t *bf, const uint8_t *rmd16
     return 1;
 }
 
+/*
+ * Batch check for RMD160 hashes - optimized for keyhunt
+ * Checks multiple 20-byte hashes with prefetching
+ * Returns bitmap of results (bit i = result of hash i)
+ * count must be <= 64
+ */
+static inline uint64_t bloom_fast_check_rmd160_batch(
+    bloom_fast_t *bf,
+    const uint8_t **hashes,
+    int count)
+{
+    if (!bf || !bf->ready || count <= 0 || count > 64) return 0;
+
+    uint64_t results = 0;
+    XXH128_hash_t xxh[64];
+
+    /* First pass: compute all hashes and prefetch first byte locations */
+    for (int i = 0; i < count; i++) {
+        xxh[i] = XXH3_128bits(hashes[i], 20);
+        /* Prefetch first byte location */
+        uint64_t idx = xxh[i].low64 & bf->mask;
+        __builtin_prefetch(&bf->bf[idx >> 3], 0, 0);
+    }
+
+    const uint8_t k = bf->hashes;
+
+    /* Second pass: check all bits with early exit per item */
+    for (int i = 0; i < count; i++) {
+        uint64_t h1 = xxh[i].low64;
+        uint64_t h2 = xxh[i].high64;
+        bool found = true;
+
+        /* Unrolled loop for common k values */
+        #define CHECK_BIT_BATCH(j) do { \
+            uint64_t idx = (h1 + (uint64_t)(j) * h2) & bf->mask; \
+            if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) { found = false; break; } \
+        } while(0)
+
+        do {
+            if (k >= 1) { CHECK_BIT_BATCH(0); if (!found) break; }
+            if (k >= 2) { CHECK_BIT_BATCH(1); if (!found) break; }
+            if (k >= 3) { CHECK_BIT_BATCH(2); if (!found) break; }
+            if (k >= 4) { CHECK_BIT_BATCH(3); if (!found) break; }
+            if (k >= 5) { CHECK_BIT_BATCH(4); if (!found) break; }
+            if (k >= 6) { CHECK_BIT_BATCH(5); if (!found) break; }
+            if (k >= 7) { CHECK_BIT_BATCH(6); if (!found) break; }
+
+            /* Additional hashes if k > 7 */
+            for (uint8_t j = 7; j < k && found; j++) {
+                uint64_t idx = (h1 + (uint64_t)j * h2) & bf->mask;
+                if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) {
+                    found = false;
+                }
+            }
+        } while(0);
+
+        #undef CHECK_BIT_BATCH
+
+        if (found) {
+            results |= (1ULL << i);
+        }
+    }
+
+    return results;
+}
+
 #ifdef __cplusplus
 }
 #endif

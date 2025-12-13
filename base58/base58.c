@@ -49,13 +49,12 @@ bool b58tobin(void *bin, size_t *binszp, const char *b58, size_t b58sz)
 	uint8_t bytesleft = binsz % sizeof(b58_almostmaxint_t);
 	b58_almostmaxint_t zeromask = bytesleft ? (b58_almostmaxint_mask << (bytesleft * 8)) : 0;
 	unsigned zerocount = 0;
-	
+
 	if (!b58sz)
 		b58sz = strlen(b58);
-	
-	for (i = 0; i < outisz; ++i) {
-		outi[i] = 0;
-	}
+
+	// Initialize VLA - use memset for compiler to recognize as full initialization
+	memset(outi, 0, outisz * sizeof(b58_almostmaxint_t));
 	
 	// Leading zeros, just count
 	for (i = 0; i < b58sz && b58u[i] == '1'; ++i)

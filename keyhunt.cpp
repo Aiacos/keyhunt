@@ -1031,121 +1031,166 @@ cpu_compress_only_hash:
 		}
 	}
 
-	Int keyCurrent;
-	keyCurrent.Set(&key_mpz);
 	Point publickey;
 	const bool direct_single_target = (N == 1);
 	const uint8_t *single_target = direct_single_target ? addressTable[0].value : nullptr;
 
-	// Prefetch distance for bloom filter checks
-	const size_t PREFETCH_DIST = 8;
+	// Batch bloom filter checking - process 64 hashes at a time
+	const size_t BATCH_SIZE = 64;
+	const uint8_t *batchPtrs[BATCH_SIZE];
 
-	for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
-		// Prefetch next hash data for bloom filter
-		if (idx + PREFETCH_DIST < CPU_GRP_SIZE) {
-				if (wantCompressed) {
-					__builtin_prefetch(hashCompressed02[idx + PREFETCH_DIST], 0, 0);
-					if (!wantUncompressed) {
-						__builtin_prefetch(hashCompressed03[idx + PREFETCH_DIST], 0, 0);
-					}
-				}
+	// Helper lambda to compute key at index using O(1) multiplication
+	// Note: stride is a global variable, no need to capture it
+	auto computeKeyAtIndex = [&key_mpz](Int &out, size_t idx) {
+		Int offset;
+		offset.SetInt64((int64_t)idx);
+		offset.Mult(&stride);  // stride is global
+		out.Set(&key_mpz);
+		out.Add(&offset);
+	};
+
+	for (size_t base = 0; base < CPU_GRP_SIZE; base += BATCH_SIZE) {
+		const size_t batchEnd = (base + BATCH_SIZE > CPU_GRP_SIZE) ? CPU_GRP_SIZE : base + BATCH_SIZE;
+		const int batchCount = (int)(batchEnd - base);
+
+		if (wantCompressed) {
 			if (wantUncompressed) {
-				__builtin_prefetch(hashUncompressed[idx + PREFETCH_DIST], 0, 0);
-			}
-		}
-
-			if (wantCompressed) {
-				if (wantUncompressed) {
-					// Actual compressed hash only (single parity)
-					if (direct_single_target) {
+				// Actual compressed hash only (single parity 02)
+				if (direct_single_target) {
+					for (size_t idx = base; idx < batchEnd; ++idx) {
 						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
-							Int candidate(keyCurrent);
-							writekey(true,&candidate);
-						}
-					} else {
-						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed02[idx])) {
-							if (searchbinary(addressTable, hashCompressed02[idx], N)) {
-								Int candidate(keyCurrent);
-								writekey(true,&candidate);
-							}
+							Int candidate;
+							computeKeyAtIndex(candidate, idx);
+							writekey(true, &candidate);
 						}
 					}
 				} else {
-					// Dual parity check from X
-					if (direct_single_target) {
-						// Check 02 parity (Y is even)
-						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
-							Int candidate(keyCurrent);
-							publickey = secp->ComputePublicKey(&candidate);
-							// If Y is odd, the actual key for prefix 02 is (order - candidate)
-							if(publickey.y.IsOdd()) {
-								candidate.Neg();
-								candidate.Add(&secp->order);
-							}
-							writekey(true,&candidate);
-						}
-						// Check 03 parity (Y is odd)
-						if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
-							Int candidate(keyCurrent);
-							publickey = secp->ComputePublicKey(&candidate);
-							// If Y is even, the actual key for prefix 03 is (order - candidate)
-							if(publickey.y.IsEven()) {
-								candidate.Neg();
-								candidate.Add(&secp->order);
-							}
-							writekey(true,&candidate);
-						}
-					} else {
-						// Check 02 parity (Y is even)
-						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed02[idx])) {
-							if (searchbinary(addressTable, hashCompressed02[idx], N)) {
-								Int candidate(keyCurrent);
-								publickey = secp->ComputePublicKey(&candidate);
-								// If Y is odd, the actual key for prefix 02 is (order - candidate)
-								if(publickey.y.IsOdd()) {
-									candidate.Neg();
-									candidate.Add(&secp->order);
-								}
-								writekey(true,&candidate);
-							}
-						}
-						// Check 03 parity (Y is odd)
-						if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashCompressed03[idx])) {
-							if (searchbinary(addressTable, hashCompressed03[idx], N)) {
-								Int candidate(keyCurrent);
-								publickey = secp->ComputePublicKey(&candidate);
-								// If Y is even, the actual key for prefix 03 is (order - candidate)
-								if(publickey.y.IsEven()) {
-									candidate.Neg();
-									candidate.Add(&secp->order);
-								}
-								writekey(true,&candidate);
-							}
+					// Batch bloom check for 02 hashes
+					for (int i = 0; i < batchCount; i++) {
+						batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
+					}
+					uint64_t hits02 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+					// Process hits
+					while (hits02) {
+						int i = __builtin_ctzll(hits02);
+						hits02 &= hits02 - 1;
+						size_t idx = base + i;
+						if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+							Int candidate;
+							computeKeyAtIndex(candidate, idx);
+							writekey(true, &candidate);
 						}
 					}
 				}
-			}
-
-		if (wantUncompressed) {
-			if (direct_single_target) {
-				if (memcmp(hashUncompressed[idx], single_target, 20) == 0) {
-					Int candidate(keyCurrent);
-					writekey(false,&candidate);
-				}
 			} else {
-				if (bloom_ext_check_rmd160(&bloom, (uint8_t*)hashUncompressed[idx])) {
-					if (searchbinary(addressTable, hashUncompressed[idx], N)) {
-						Int candidate(keyCurrent);
-						writekey(false,&candidate);
+				// Dual parity check from X (02 and 03)
+				if (direct_single_target) {
+					for (size_t idx = base; idx < batchEnd; ++idx) {
+						// Check 02 parity (Y is even)
+						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
+							Int candidate;
+							computeKeyAtIndex(candidate, idx);
+							publickey = secp->ComputePublicKey(&candidate);
+							if (publickey.y.IsOdd()) {
+								candidate.Neg();
+								candidate.Add(&secp->order);
+							}
+							writekey(true, &candidate);
+						}
+						// Check 03 parity (Y is odd)
+						if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
+							Int candidate;
+							computeKeyAtIndex(candidate, idx);
+							publickey = secp->ComputePublicKey(&candidate);
+							if (publickey.y.IsEven()) {
+								candidate.Neg();
+								candidate.Add(&secp->order);
+							}
+							writekey(true, &candidate);
+						}
+					}
+				} else {
+					// Batch bloom check for 02 hashes
+					for (int i = 0; i < batchCount; i++) {
+						batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
+					}
+					uint64_t hits02 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+					// Process 02 hits
+					while (hits02) {
+						int i = __builtin_ctzll(hits02);
+						hits02 &= hits02 - 1;
+						size_t idx = base + i;
+						if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+							Int candidate;
+							computeKeyAtIndex(candidate, idx);
+							publickey = secp->ComputePublicKey(&candidate);
+							if (publickey.y.IsOdd()) {
+								candidate.Neg();
+								candidate.Add(&secp->order);
+							}
+							writekey(true, &candidate);
+						}
+					}
+					// Batch bloom check for 03 hashes
+					for (int i = 0; i < batchCount; i++) {
+						batchPtrs[i] = (const uint8_t*)hashCompressed03[base + i];
+					}
+					uint64_t hits03 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+					// Process 03 hits
+					while (hits03) {
+						int i = __builtin_ctzll(hits03);
+						hits03 &= hits03 - 1;
+						size_t idx = base + i;
+						if (searchbinary(addressTable, hashCompressed03[idx], N)) {
+							Int candidate;
+							computeKeyAtIndex(candidate, idx);
+							publickey = secp->ComputePublicKey(&candidate);
+							if (publickey.y.IsEven()) {
+								candidate.Neg();
+								candidate.Add(&secp->order);
+							}
+							writekey(true, &candidate);
+						}
 					}
 				}
 			}
 		}
 
-		keyCurrent.Add(&stride);
+		if (wantUncompressed) {
+			if (direct_single_target) {
+				for (size_t idx = base; idx < batchEnd; ++idx) {
+					if (memcmp(hashUncompressed[idx], single_target, 20) == 0) {
+						Int candidate;
+						computeKeyAtIndex(candidate, idx);
+						writekey(false, &candidate);
+					}
+				}
+			} else {
+				// Batch bloom check for uncompressed hashes
+				for (int i = 0; i < batchCount; i++) {
+					batchPtrs[i] = (const uint8_t*)hashUncompressed[base + i];
+				}
+				uint64_t hitsU = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
+				// Process hits
+				while (hitsU) {
+					int i = __builtin_ctzll(hitsU);
+					hitsU &= hitsU - 1;
+					size_t idx = base + i;
+					if (searchbinary(addressTable, hashUncompressed[idx], N)) {
+						Int candidate;
+						computeKeyAtIndex(candidate, idx);
+						writekey(false, &candidate);
+					}
+				}
+			}
+		}
 	}
 
-	key_mpz.Set(&keyCurrent);
+	// Advance key_mpz by CPU_GRP_SIZE * stride
+	Int strideTotal;
+	strideTotal.SetInt32(CPU_GRP_SIZE);
+	strideTotal.Mult(&stride);
+	key_mpz.Add(&strideTotal);
 	count += CPU_GRP_SIZE;
 }
 
@@ -7502,7 +7547,9 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	stride_val->Get32Bytes(config.stride);
 
 	config.target_count = target_count;
-	config.compressed_only = 1;  // BTC compressed
+	// Use FLAGSEARCH to determine compressed mode (not hardcoded!)
+	// compressed_only=1 means only compressed, 0 means both parities
+	config.compressed_only = (FLAGSEARCH == SEARCH_COMPRESS) ? 1 : 0;
 	config.use_bloom = (target_count > 1) ? 1 : 0;
 
 	config.callback = gpu_found_callback;
@@ -7515,6 +7562,8 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	printf("[+] Target count: %" PRId64 ", using %s\n",
 		target_count,
 		target_count == 1 ? "direct comparison" : "bloom filter + binary search");
+	printf("[+] Search mode: %s\n",
+		config.compressed_only ? "compressed only" : "both (compressed + uncompressed)");
 
 	int found = gpu_full_search(&config);
 

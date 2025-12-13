@@ -121,6 +121,31 @@ static inline int bloom_ext_check_rmd160(bloom_extended_t *be, const uint8_t *rm
 }
 
 /*
+ * Batch check for 20-byte RMD160 hashes
+ * Returns bitmap of results (bit i = 1 if hash i is possibly in bloom)
+ * count must be <= 64
+ */
+static inline uint64_t bloom_ext_check_rmd160_batch(
+    bloom_extended_t *be,
+    const uint8_t **hashes,
+    int count)
+{
+#if USE_FAST_BLOOM
+    if (be->use_fast) {
+        return bloom_fast_check_rmd160_batch(&be->fast, hashes, count);
+    }
+#endif
+    /* Fallback: check one by one */
+    uint64_t results = 0;
+    for (int i = 0; i < count && i < 64; i++) {
+        if (bloom_check(&be->orig, hashes[i], 20)) {
+            results |= (1ULL << i);
+        }
+    }
+    return results;
+}
+
+/*
  * Add element to bloom filter
  */
 static inline void bloom_ext_add(bloom_extended_t *be, const void *buffer, int len) {

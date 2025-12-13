@@ -279,7 +279,6 @@ __device__ void mod_inv(uint256_d *r, const uint256_d *a) {
     // vs 256 squarings + ~255 multiplications for naive Fermat (> 450 total)
 
     uint256_d x2, x3, x6, x9, x11, x22, x44, x88, x176, x220, x223;
-    uint256_d t1;
 
     // x2 = a^2
     mod_sqr(&x2, a);
