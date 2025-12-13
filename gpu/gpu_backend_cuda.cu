@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <cuda_runtime.h>
 
 // Optimized hash functions (fully unrolled, register-only)
@@ -31,6 +32,11 @@ static size_t g_GTable_count = 0;
 
 static uint8_t *d_targets = NULL;       // Target hashes: count * 20 bytes
 static size_t g_target_count = 0;
+
+// Fast path for very small target sets: store in constant memory.
+#define MAX_SMALL_TARGETS 32
+__device__ __constant__ uint8_t d_targets_small[MAX_SMALL_TARGETS * 20];
+__device__ __constant__ int d_targets_small_count = 0;
 
 static uint8_t *d_bloom = NULL;         // Bloom filter data
 static size_t g_bloom_size = 0;
@@ -72,6 +78,48 @@ struct Point256_d {
     uint256_d y;
     uint256_d z;
 };
+
+// ============================================================================
+// 256-bit arithmetic (host helpers)
+// ============================================================================
+
+static inline int u256_cmp_host(const uint256_d *a, const uint256_d *b) {
+    for (int i = 7; i >= 0; i--) {
+        if (a->d[i] < b->d[i]) return -1;
+        if (a->d[i] > b->d[i]) return 1;
+    }
+    return 0;
+}
+
+static inline void u256_add_u64_host(uint256_d *a, uint64_t v) {
+    uint64_t carry = v;
+    for (int i = 0; i < 8 && carry; i++) {
+        uint64_t sum = (uint64_t)a->d[i] + (carry & 0xFFFFFFFFULL);
+        a->d[i] = (uint32_t)sum;
+        carry = (sum >> 32) + (carry >> 32);
+    }
+}
+
+static inline uint64_t u256_sub_sat_u64_host(const uint256_d *a, const uint256_d *b) {
+    // Return (a - b) as uint64 if it fits, else UINT64_MAX. If a <= b, return 0.
+    if (u256_cmp_host(a, b) <= 0) return 0;
+
+    uint32_t diff[8];
+    uint64_t borrow = 0;
+    for (int i = 0; i < 8; i++) {
+        uint64_t ai = (uint64_t)a->d[i];
+        uint64_t bi = (uint64_t)b->d[i];
+        uint64_t sub = ai - bi - borrow;
+        diff[i] = (uint32_t)sub;
+        borrow = (ai < bi + borrow) ? 1ULL : 0ULL;
+    }
+
+    // If any upper limbs beyond 64 bits are non-zero, it doesn't fit.
+    for (int i = 2; i < 8; i++) {
+        if (diff[i] != 0) return UINT64_MAX;
+    }
+    return ((uint64_t)diff[1] << 32) | (uint64_t)diff[0];
+}
 
 // secp256k1 prime p = 2^256 - 2^32 - 977
 __device__ __constant__ uint32_t SECP_P[8] = {
@@ -943,6 +991,8 @@ __device__ __forceinline__ int bloom_check(const uint8_t *bloom, size_t bloom_si
     const uint64_t *bloom64 = (const uint64_t *)bloom;
     size_t bloom_bits = bloom_size * 8;
     size_t bloom_words = bloom_size / 8;
+    size_t bloom_mask = bloom_bits - 1;
+    int bloom_is_pow2 = (bloom_bits != 0) && ((bloom_bits & bloom_mask) == 0);
 
     // Pre-load hash bytes as 32-bit words (unrolled)
     uint32_t h0 = ((uint32_t)hash20[0] << 8) | hash20[1];
@@ -955,10 +1005,22 @@ __device__ __forceinline__ int bloom_check(const uint8_t *bloom, size_t bloom_si
 
     // Check 4 hash functions (most common case)
     // Unrolled for performance
-    uint32_t idx0 = (h0 * GOLDEN) % bloom_bits;
-    uint32_t idx1 = (h1 * GOLDEN) % bloom_bits;
-    uint32_t idx2 = (h2 * GOLDEN) % bloom_bits;
-    uint32_t idx3 = (h3 * GOLDEN) % bloom_bits;
+    size_t idx0 = (size_t)((uint64_t)h0 * (uint64_t)GOLDEN);
+    size_t idx1 = (size_t)((uint64_t)h1 * (uint64_t)GOLDEN);
+    size_t idx2 = (size_t)((uint64_t)h2 * (uint64_t)GOLDEN);
+    size_t idx3 = (size_t)((uint64_t)h3 * (uint64_t)GOLDEN);
+
+    if (bloom_is_pow2) {
+        idx0 &= bloom_mask;
+        idx1 &= bloom_mask;
+        idx2 &= bloom_mask;
+        idx3 &= bloom_mask;
+    } else {
+        idx0 %= bloom_bits;
+        idx1 %= bloom_bits;
+        idx2 %= bloom_bits;
+        idx3 %= bloom_bits;
+    }
 
     // Use 64-bit word access when possible
     if (bloom_words > 0) {
@@ -968,10 +1030,10 @@ __device__ __forceinline__ int bloom_check(const uint8_t *bloom, size_t bloom_si
         size_t word2 = idx2 / 64;
         size_t word3 = idx3 / 64;
 
-        int bit0 = idx0 % 64;
-        int bit1 = idx1 % 64;
-        int bit2 = idx2 % 64;
-        int bit3 = idx3 % 64;
+        int bit0 = (int)(idx0 % 64);
+        int bit1 = (int)(idx1 % 64);
+        int bit2 = (int)(idx2 % 64);
+        int bit3 = (int)(idx3 % 64);
 
         // Early exit on first miss
         if (!(bloom64[word0] & (1ULL << bit0))) return 0;
@@ -994,7 +1056,11 @@ __device__ __forceinline__ int bloom_check(const uint8_t *bloom, size_t bloom_si
             if (byte2 >= 20) byte2 = h % 20;
 
             uint32_t idx = ((uint32_t)hash20[byte1] << 8) | hash20[byte2];
-            idx = (idx * GOLDEN) % bloom_bits;
+            if (bloom_is_pow2) {
+                idx = (idx * GOLDEN) & (uint32_t)bloom_mask;
+            } else {
+                idx = (idx * GOLDEN) % (uint32_t)bloom_bits;
+            }
 
             size_t byte_idx = idx / 8;
             int bit_idx = idx % 8;
@@ -1085,15 +1151,21 @@ __device__ int target_search(const uint8_t * __restrict__ targets, size_t target
 __device__ int target_search_linear(const uint8_t * __restrict__ targets, size_t target_count,
                                      const uint8_t * __restrict__ hash20) {
     // Fast 64-bit pre-check: compare first 8 bytes at once
-    uint64_t hash_prefix;
-    memcpy(&hash_prefix, hash20, 8);
+    uint64_t hash_prefix =
+        ((uint64_t)hash20[0] << 56) | ((uint64_t)hash20[1] << 48) |
+        ((uint64_t)hash20[2] << 40) | ((uint64_t)hash20[3] << 32) |
+        ((uint64_t)hash20[4] << 24) | ((uint64_t)hash20[5] << 16) |
+        ((uint64_t)hash20[6] << 8) | (uint64_t)hash20[7];
 
     for (size_t i = 0; i < target_count; i++) {
         const uint8_t *target = targets + i * 20;
 
         // Fast reject: compare first 8 bytes as uint64
-        uint64_t target_prefix;
-        memcpy(&target_prefix, target, 8);
+        uint64_t target_prefix =
+            ((uint64_t)target[0] << 56) | ((uint64_t)target[1] << 48) |
+            ((uint64_t)target[2] << 40) | ((uint64_t)target[3] << 32) |
+            ((uint64_t)target[4] << 24) | ((uint64_t)target[5] << 16) |
+            ((uint64_t)target[6] << 8) | (uint64_t)target[7];
         if (hash_prefix != target_prefix) continue;
 
         // Full comparison only if prefix matches (rare)
@@ -1113,7 +1185,11 @@ __device__ __forceinline__ int target_search_smart(const uint8_t * __restrict__ 
                                                     const uint8_t * __restrict__ hash20) {
     // For small N, linear is faster (no branch overhead)
     // For large N, binary search wins O(log N) vs O(N)
-    if (target_count <= 32) {
+    if (target_count <= MAX_SMALL_TARGETS) {
+        // If the host provided a constant-memory copy, use it.
+        if ((size_t)d_targets_small_count == target_count && target_count > 0) {
+            return target_search_linear(d_targets_small, target_count, hash20);
+        }
         return target_search_linear(targets, target_count, hash20);
     }
     return target_search(targets, target_count, hash20);
@@ -1164,6 +1240,8 @@ __global__ void kernel_full_search(
     const uint256_d start_key,
     uint64_t key_offset,
     uint64_t keys_per_thread,
+    uint64_t keys_limit,
+    int compressed_only,
     const uint8_t * __restrict__ gtable,
     const uint8_t * __restrict__ targets, size_t target_count,
     const uint8_t * __restrict__ bloom, size_t bloom_size, int bloom_hashes,
@@ -1172,6 +1250,16 @@ __global__ void kernel_full_search(
 ) {
     uint64_t thread_id = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t base_offset = key_offset + thread_id * keys_per_thread;
+
+    // Clamp per-thread work so the final launch never runs past the requested range.
+    if (base_offset >= keys_limit) {
+        return;
+    }
+    uint64_t keys_remaining = keys_per_thread;
+    uint64_t max_keys_for_thread = keys_limit - base_offset;
+    if (keys_remaining > max_keys_for_thread) {
+        keys_remaining = max_keys_for_thread;
+    }
 
     // Compute starting key for this thread
     uint256_d current_key;
@@ -1192,8 +1280,9 @@ __global__ void kernel_full_search(
     uint256_d batch_x_affine[BATCH_INV_SIZE];
     int batch_y_parity[BATCH_INV_SIZE];
 
-    // Process keys in batches
-    uint64_t keys_remaining = keys_per_thread;
+    // Preload generator point for fast increments (constant across the loop).
+    uint256_d Gx, Gy;
+    gtable_get_point(&Gx, &Gy, gtable, 0, 1);
 
     while (keys_remaining > 0 && !(*should_stop)) {
         // Determine batch size (up to BATCH_INV_SIZE)
@@ -1201,10 +1290,6 @@ __global__ void kernel_full_search(
 
         // Phase 1: Generate batch_size Jacobian points
         // OPTIMIZED: Compute first point via scalar_mul_G, then increment by G using point_add_affine
-
-        // Get G point for incrementing
-        uint256_d Gx, Gy;
-        gtable_get_point(&Gx, &Gy, gtable, 0, 1);
 
         // First point via scalar_mul_G
         scalar_mul_G(&batch_points[0], &current_key, gtable);
@@ -1274,23 +1359,27 @@ __global__ void kernel_full_search(
                 report_found_key(&batch_keys[b], pubkey[0]);
             }
 
-            // Check opposite parity (02↔03) - reuse pubkey, only change prefix
-            pubkey[0] ^= 0x01;  // Toggle between 02 and 03
+            // In compressed-only mode we already have Y parity, so only one prefix is valid.
+            // The opposite prefix would correspond to -P (order - k), which is a different key.
+            if (!compressed_only) {
+                // Check opposite parity (02↔03) - reuse pubkey, only change prefix
+                pubkey[0] ^= 0x01;  // Toggle between 02 and 03
 
 #if USE_OPTIMIZED_HASH
-            hash160_33_optimized(pubkey, hash160);
+                hash160_33_optimized(pubkey, hash160);
 #else
-            sha256_33(pubkey, sha_hash);
-            ripemd160_32(sha_hash, hash160);
+                sha256_33(pubkey, sha_hash);
+                ripemd160_32(sha_hash, hash160);
 #endif
 
-            found = -1;
-            if (!use_bloom || !bloom || bloom_size == 0 ||
-                bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
-                found = target_search_smart(targets, target_count, hash160);
-            }
-            if (found >= 0) {
-                report_found_key(&batch_keys[b], pubkey[0]);
+                found = -1;
+                if (!use_bloom || !bloom || bloom_size == 0 ||
+                    bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
+                    found = target_search_smart(targets, target_count, hash160);
+                }
+                if (found >= 0) {
+                    report_found_key(&batch_keys[b], pubkey[0]);
+                }
             }
         }
 
@@ -1529,6 +1618,17 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
     if (err != cudaSuccess) { cudaFree(d_targets); d_targets = NULL; return 1; }
 
     g_target_count = count;
+
+    // Populate constant-memory fast path for very small target sets.
+    // This speeds up linear search and avoids global memory loads.
+    {
+        int small_count = 0;
+        if (count > 0 && count <= MAX_SMALL_TARGETS) {
+            cudaMemcpyToSymbol(d_targets_small, targets, size);
+            small_count = (int)count;
+        }
+        cudaMemcpyToSymbol(d_targets_small_count, &small_count, sizeof(int));
+    }
     return 0;
 }
 
@@ -1579,42 +1679,47 @@ int gpu_full_search(const gpu_search_config_t *config) {
                        ((uint32_t)config->end_key[(7-i)*4] << 24);
     }
 
-    // Calculate range size (simplified: assumes range fits in 64 bits for small tests)
-    uint64_t range_size = 0;
-    if (end_key.d[7] == 0 && end_key.d[6] == 0 && end_key.d[5] == 0 && end_key.d[4] == 0 &&
-        end_key.d[3] == 0 && end_key.d[2] == 0) {
-        // Small range: fits in 64 bits
-        uint64_t end_val = ((uint64_t)end_key.d[1] << 32) | end_key.d[0];
-        uint64_t start_val = ((uint64_t)start_key.d[1] << 32) | start_key.d[0];
-        range_size = end_val - start_val + 1;
-    } else {
-        // Large range: process up to 2^40 keys per session
-        range_size = 1ULL << 40;
-    }
+    // Treat ranges as [start_key, end_key) (end is exclusive), consistent with keyhunt CPU code.
+    uint256_d cursor;
+    memcpy(&cursor, &start_key, sizeof(uint256_d));
 
     // Configure kernel launch
     // Uses optimized point_add_affine increment (only 1 scalar_mul_G per BATCH_INV_SIZE)
     // Higher keys_per_thread = more G additions (cheap) vs scalar_mul_G (expensive)
     int threads_per_block = 256;
-    int blocks = g_info.multiprocessors * 24;  // Optimal: 24 blocks/SM (tested 16,24,32)
-    uint64_t keys_per_thread = 1024;  // Optimal: 370 Mkeys/s (2048 was slower)
+    int blocks_per_sm = 24;  // Default: tested 16/24/32 on RTX 2080 SUPER
+    uint64_t keys_per_thread = 1024;  // Default: tested 1024/2048 on RTX 2080 SUPER
+
+    // Optional runtime tuning (no rebuild needed):
+    //   KEYHUNT_GPU_BLOCKS_PER_SM=16|24|32
+    //   KEYHUNT_GPU_KEYS_PER_THREAD=256..8192
+    {
+        const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
+        if (env && *env) {
+            int v = atoi(env);
+            if (v >= 4 && v <= 64) blocks_per_sm = v;
+        }
+        env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
+        if (env && *env) {
+            unsigned long long v = strtoull(env, NULL, 10);
+            if (v >= 64 && v <= 65536) keys_per_thread = (uint64_t)v;
+        }
+    }
+
+    int blocks = g_info.multiprocessors * blocks_per_sm;
     uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
 
     uint64_t total_keys = 0;
-    uint64_t key_offset = 0;
     int total_found = 0;
     int pending_stream = -1;  // Track which stream has a pending kernel
 
-    // Timing for speed calculation
-    cudaEvent_t start_event, current_event;
-    cudaEventCreate(&start_event);
-    cudaEventCreate(&current_event);
-    cudaEventRecord(start_event);
+    // Timing for speed calculation (host clock; avoids multi-stream CUDA event pitfalls).
+    struct timeval tv0;
+    gettimeofday(&tv0, NULL);
 
     printf("[+] GPU multi-stream search: %d blocks x %d threads x %lu keys/thread = %lu keys/launch\n",
            blocks, threads_per_block, (unsigned long)keys_per_thread, (unsigned long)keys_per_launch);
-    printf("[+] Range size: %lu keys (using %d async streams)\n",
-           (unsigned long)range_size, NUM_SEARCH_STREAMS);
+    printf("[+] Range: [start, end) (using %d async streams)\n", NUM_SEARCH_STREAMS);
     fflush(stdout);
 
     // Double-buffering main search loop
@@ -1622,7 +1727,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
     // Stream 1: preparing/launching next kernel while stream 0 executes
     int current_stream_idx = 0;
 
-    while (!*(config->should_stop) && key_offset < range_size) {
+    while (!*(config->should_stop) && u256_cmp_host(&cursor, &end_key) < 0) {
         search_stream_t *stream = &g_search_streams[current_stream_idx];
 
         // Update should_stop on device (async on this stream)
@@ -1630,22 +1735,28 @@ int gpu_full_search(const gpu_search_config_t *config) {
         cudaMemcpyAsync(stream->d_should_stop, &should_stop_val, sizeof(int),
                         cudaMemcpyHostToDevice, stream->stream);
 
-        // Adjust keys_per_thread for last batch
-        uint64_t remaining = range_size - key_offset;
+        // Determine how many keys remain (saturates at UINT64_MAX for very large gaps).
+        uint64_t remaining64 = u256_sub_sat_u64_host(&end_key, &cursor);
+        if (remaining64 == 0) break;
+
+        // Clamp this launch so the final batch never runs past end_key.
+        uint64_t keys_this_launch = (remaining64 < keys_per_launch) ? remaining64 : keys_per_launch;
+
+        // Adjust keys_per_thread for last batch (avoids wasting threads for tiny tail ranges).
         uint64_t actual_keys_per_thread = keys_per_thread;
-        if (remaining < keys_per_launch) {
-            actual_keys_per_thread = (remaining + blocks * threads_per_block - 1) / (blocks * threads_per_block);
+        if (keys_this_launch < keys_per_launch) {
+            uint64_t denom = (uint64_t)blocks * (uint64_t)threads_per_block;
+            actual_keys_per_thread = (keys_this_launch + denom - 1) / denom;
             if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
         }
 
-        // Record start event for this kernel
-        cudaEventRecord(stream->start_event, stream->stream);
-
         // Launch kernel on this stream (non-blocking)
         kernel_full_search<<<blocks, threads_per_block, 0, stream->stream>>>(
-            start_key,
-            key_offset,
+            cursor,
+            0,
             actual_keys_per_thread,
+            keys_this_launch,
+            config->compressed_only,
             d_GTable,
             d_targets, g_target_count,
             d_bloom, g_bloom_size, g_bloom_hashes,
@@ -1653,12 +1764,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
             stream->d_should_stop
         );
 
-        // Record end event
-        cudaEventRecord(stream->end_event, stream->stream);
         stream->in_use = 1;
-
-        // Calculate keys for this launch
-        uint64_t keys_this_launch = (uint64_t)blocks * threads_per_block * actual_keys_per_thread;
 
         // If there's a previous stream pending, wait for it and check results
         if (pending_stream >= 0 && pending_stream != current_stream_idx) {
@@ -1707,8 +1813,8 @@ int gpu_full_search(const gpu_search_config_t *config) {
             }
         }
 
-        // Update offset for next iteration
-        key_offset += keys_this_launch;
+        // Advance cursor for next iteration (cursor += keys_this_launch)
+        u256_add_u64_host(&cursor, keys_this_launch);
         total_keys += keys_this_launch;
 
         if (config->keys_checked) {
@@ -1716,43 +1822,36 @@ int gpu_full_search(const gpu_search_config_t *config) {
         }
 
         // Progress output (less frequently to reduce overhead)
-        // Use non-blocking event query to avoid stalling the GPU
         static uint64_t last_progress_keys = 0;
-        if ((key_offset - last_progress_keys) >= (keys_per_launch * 20) || key_offset >= range_size) {
-            cudaEventRecord(current_event);
+        if ((total_keys - last_progress_keys) >= (keys_per_launch * 20)) {
+            struct timeval tv1;
+            gettimeofday(&tv1, NULL);
+            double elapsed_sec = (double)(tv1.tv_sec - tv0.tv_sec) +
+                                 (double)(tv1.tv_usec - tv0.tv_usec) / 1e6;
+            last_progress_keys = total_keys;
 
-            // Non-blocking query - only update if ready
-            if (cudaEventQuery(current_event) == cudaSuccess) {
-                float elapsed_ms = 0.0f;
-                cudaEventElapsedTime(&elapsed_ms, start_event, current_event);
-                float elapsed_sec = elapsed_ms / 1000.0f;
-                last_progress_keys = key_offset;
+            // Calculate speed
+            double speed = 0.0;
+            const char *speed_unit = "keys/s";
 
-                // Calculate speed
-                double speed = 0.0;
-                const char *speed_unit = "keys/s";
+            if (elapsed_sec > 0.1) {
+                speed = (double)total_keys / elapsed_sec;
 
-                if (elapsed_sec > 0.1f) {
-                    speed = (double)total_keys / elapsed_sec;
-
-                    if (speed >= 1e9) {
-                        speed /= 1e9;
-                        speed_unit = "Gkeys/s";
-                    } else if (speed >= 1e6) {
-                        speed /= 1e6;
-                        speed_unit = "Mkeys/s";
-                    } else if (speed >= 1e3) {
-                        speed /= 1e3;
-                        speed_unit = "Kkeys/s";
-                    }
+                if (speed >= 1e9) {
+                    speed /= 1e9;
+                    speed_unit = "Gkeys/s";
+                } else if (speed >= 1e6) {
+                    speed /= 1e6;
+                    speed_unit = "Mkeys/s";
+                } else if (speed >= 1e3) {
+                    speed /= 1e3;
+                    speed_unit = "Kkeys/s";
                 }
-
-                printf("\r[+] GPU: %.2f %s | %lu / %lu keys (%.1f%%) | found: %d   ",
-                       speed, speed_unit,
-                       (unsigned long)key_offset, (unsigned long)range_size,
-                       (double)key_offset * 100.0 / (double)range_size, total_found);
-                fflush(stdout);
             }
+
+            printf("\r[+] GPU: %.2f %s | %lu keys | found: %d   ",
+                   speed, speed_unit, (unsigned long)total_keys, total_found);
+            fflush(stdout);
         }
 
         // Mark this stream as pending and switch to other stream
@@ -1794,11 +1893,10 @@ int gpu_full_search(const gpu_search_config_t *config) {
     }
 
     // Final timing
-    cudaEventRecord(current_event);
-    cudaEventSynchronize(current_event);
-    float total_elapsed_ms = 0.0f;
-    cudaEventElapsedTime(&total_elapsed_ms, start_event, current_event);
-    float total_elapsed_sec = total_elapsed_ms / 1000.0f;
+    struct timeval tv_end;
+    gettimeofday(&tv_end, NULL);
+    double total_elapsed_sec = (double)(tv_end.tv_sec - tv0.tv_sec) +
+                               (double)(tv_end.tv_usec - tv0.tv_usec) / 1e6;
 
     double final_speed = (total_elapsed_sec > 0) ? (double)total_keys / total_elapsed_sec : 0.0;
     const char *final_unit = "keys/s";
@@ -1809,8 +1907,6 @@ int gpu_full_search(const gpu_search_config_t *config) {
     printf("\n[+] GPU search completed in %.2f seconds (avg: %.2f %s)\n",
            total_elapsed_sec, final_speed, final_unit);
 
-    cudaEventDestroy(start_event);
-    cudaEventDestroy(current_event);
     return total_found;
 }
 

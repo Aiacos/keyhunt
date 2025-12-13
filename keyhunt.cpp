@@ -299,6 +299,7 @@ void checkpointer(void *ptr,const char *file,const char *function,const  char *n
 // GPU Full Search helper functions (forward declarations)
 static int gpu_upload_gtable_from_secp();
 static int gpu_upload_targets_from_addressTable(int64_t count);
+static int gpu_build_and_upload_bloom_from_addressTable(int64_t count);
 static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *userdata);
 static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count);
 
@@ -470,11 +471,23 @@ int FLAGGPU = 0;
 int FLAGGPU_FULL = 0;
 // GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
 int FLAGGPU_HYBRID = 0;
-// Volatile stats for GPU search
-volatile uint64_t g_gpu_keys_checked = 0;
-volatile int g_gpu_should_stop = 0;
-// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
-int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
+	// Volatile stats for GPU search
+	volatile uint64_t g_gpu_keys_checked = 0;
+	volatile int g_gpu_should_stop = 0;
+	// True if we uploaded a GPU-side bloom filter for targets (full mode).
+	static int g_gpu_bloom_uploaded = 0;
+	// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
+	int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
+
+	static inline bool hybrid_cpu_use_y_parity_for_compressed_btc() {
+		// In GPU FULL/HYBRID, the GPU computes the actual Y parity for each key (single compressed pubkey).
+		// The CPU path can match this by computing Y during point generation and hashing only the real prefix.
+		return (FLAGGPU_HYBRID && FLAGGPU_FULL == 1 &&
+				(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
+				FLAGCRYPTO == CRYPTO_BTC &&
+				!FLAGENDOMORPHISM &&
+				FLAGSEARCH == SEARCH_COMPRESS);
+	}
 
 int bitrange;
 char *str_N;
@@ -587,20 +600,59 @@ Int g_rangeProgressStart;
 Int g_rangeProgressEnd;
 Int g_rangeProgressSpan;
 
+static void format_keys_per_second(Int &rate, char *out, size_t outSize) {
+	if (outSize == 0) {
+		return;
+	}
+	char *raw = rate.GetBase10();
+	if (raw == NULL) {
+		snprintf(out, outSize, "? keys/s");
+		return;
+	}
+
+	if (rate.IsLower(&int_limits[0])) {
+		snprintf(out, outSize, "%s keys/s", raw);
+		free(raw);
+		return;
+	}
+
+	int idx = 0;
+	while (idx < 6 && !rate.IsLower(&int_limits[idx + 1])) {
+		idx++;
+	}
+
+	Int scaled;
+	scaled.Set(&rate);
+	scaled.Div(&int_limits[idx]);
+	char *scaledStr = scaled.GetBase10();
+	if (scaledStr == NULL) {
+		snprintf(out, outSize, "%s keys/s", raw);
+		free(raw);
+		return;
+	}
+
+	snprintf(out, outSize, "~%s %s (%s keys/s)", scaledStr, str_limits_prefixs[idx], raw);
+	free(raw);
+	free(scaledStr);
+}
+
 Int lambda,lambda2,beta,beta2;
 
 Secp256K1 *secp;
 
 #ifndef _WIN64
-static void configure_work_queue(size_t threadCount) {
-	if (FLAGRANDOM) {
-		g_workQueue.shutdown();
-		return;
+	static void configure_work_queue(size_t threadCount) {
+		if (FLAGRANDOM) {
+			g_workQueue.shutdown();
+			return;
+		}
+		// NOTE: chunk size must match the per-thread sequential loop (N_SEQUENTIAL_MAX),
+		// otherwise CPU threads would overlap/skip work.
+		uint64_t chunk = N_SEQUENTIAL_MAX;
+		size_t prefetch = std::max<size_t>(threadCount * 4, static_cast<size_t>(64));
+		g_workQueue.configure(&n_range_start, &n_range_end, chunk, prefetch);
+		g_workQueue.start();
 	}
-	size_t prefetch = std::max<size_t>(threadCount * 2, static_cast<size_t>(32));
-	g_workQueue.configure(&n_range_start, &n_range_end, N_SEQUENTIAL_MAX, prefetch);
-	g_workQueue.start();
-}
 
 static void shutdown_work_queue() {
 	g_workQueue.shutdown();
@@ -878,6 +930,7 @@ static bool acquire_base_key(Int &key) {
 static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &count) {
 	const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
 	const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
+	const bool haveYForCompressed = (wantUncompressed || hybrid_cpu_use_y_parity_for_compressed_btc());
 
 	if(!wantCompressed && !wantUncompressed) {
 		return;
@@ -888,7 +941,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 	alignas(32) char hashUncompressed[CPU_GRP_SIZE][20];
 
 		if (wantCompressed) {
-			if (wantUncompressed) {
+			if (haveYForCompressed) {
 				// Y is available: compute only the actual compressed hash (single parity)
 				if (g_sysinfo.has_avx512) {
 					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
@@ -1049,16 +1102,16 @@ cpu_compress_only_hash:
 		out.Add(&offset);
 	};
 
-	for (size_t base = 0; base < CPU_GRP_SIZE; base += BATCH_SIZE) {
-		const size_t batchEnd = (base + BATCH_SIZE > CPU_GRP_SIZE) ? CPU_GRP_SIZE : base + BATCH_SIZE;
-		const int batchCount = (int)(batchEnd - base);
+		for (size_t base = 0; base < CPU_GRP_SIZE; base += BATCH_SIZE) {
+			const size_t batchEnd = (base + BATCH_SIZE > CPU_GRP_SIZE) ? CPU_GRP_SIZE : base + BATCH_SIZE;
+			const int batchCount = (int)(batchEnd - base);
 
-		if (wantCompressed) {
-			if (wantUncompressed) {
-				// Actual compressed hash only (single parity 02)
-				if (direct_single_target) {
-					for (size_t idx = base; idx < batchEnd; ++idx) {
-						if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
+			if (wantCompressed) {
+				if (haveYForCompressed) {
+					// Actual compressed hash only (single parity, derived from Y)
+					if (direct_single_target) {
+						for (size_t idx = base; idx < batchEnd; ++idx) {
+							if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
 							Int candidate;
 							computeKeyAtIndex(candidate, idx);
 							writekey(true, &candidate);
@@ -1789,12 +1842,12 @@ int main(int argc, char **argv)	{
 	// ============================================================================
 	// GPU Mode Resolution and Validation
 	// ============================================================================
-	{
-		int gpu_available = gpu_backend_available();
-		int mode_supports_gpu = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
-								FLAGCRYPTO == CRYPTO_BTC &&
-								!FLAGENDOMORPHISM &&
-								FLAGSEARCH == SEARCH_COMPRESS;
+		{
+			int gpu_available = gpu_backend_available();
+			int mode_supports_gpu = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
+									FLAGCRYPTO == CRYPTO_BTC &&
+									!FLAGENDOMORPHISM &&
+									FLAGSEARCH == SEARCH_COMPRESS;
 
 		// Show GPU backend status
 		if (FLAGGPU != 0 || FLAGGPU_FULL != 0) {
@@ -1831,17 +1884,26 @@ int main(int argc, char **argv)	{
 			}
 		}
 
-		// Validate explicit GPU requests
-		if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
-			fprintf(stderr, "[W] GPU requested but not available, falling back to CPU\n");
-			FLAGGPU = 0;
-			FLAGGPU_FULL = 0;
-		}
+			// Validate explicit GPU requests
+			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
+				fprintf(stderr, "[W] GPU requested but not available, falling back to CPU\n");
+				FLAGGPU = 0;
+				FLAGGPU_FULL = 0;
+			}
 
-		// Validate mode support
-		if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !mode_supports_gpu) {
-			fprintf(stderr, "[W] GPU not supported for this mode/options, using CPU\n");
-			FLAGGPU = 0;
+			// GPU backends currently assume stride == 1 for correctness/performance.
+			// If the user specified a different stride, fall back to CPU.
+			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !stride.IsOne()) {
+				fprintf(stderr, "[W] GPU mode requires stride=1 (-I 1). Falling back to CPU.\n");
+				FLAGGPU = 0;
+				FLAGGPU_FULL = 0;
+				FLAGGPU_HYBRID = 0;
+			}
+
+			// Validate mode support
+			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !mode_supports_gpu) {
+				fprintf(stderr, "[W] GPU not supported for this mode/options, using CPU\n");
+				FLAGGPU = 0;
 			FLAGGPU_FULL = 0;
 		}
 
@@ -1863,14 +1925,21 @@ int main(int argc, char **argv)	{
 			}
 		}
 
-		// Cap threads for GPU mode
-		if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !FLAGTHREADS) {
-			int gpu_threads = g_sysinfo.cpu_physical_cores > 0 ? g_sysinfo.cpu_physical_cores : g_sysinfo.recommended_threads;
-			if (gpu_threads > 0 && gpu_threads < NTHREADS) {
-				NTHREADS = gpu_threads;
-				printf("[I] GPU active: using %d CPU threads\n", NTHREADS);
+			// Cap threads for GPU mode
+			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !FLAGTHREADS) {
+				int gpu_threads = 0;
+				if (FLAGGPU_HYBRID) {
+					// Hybrid benefits from more CPU threads (hashing is HT-friendly), but keep 1 core for the GPU thread/driver.
+					gpu_threads = g_sysinfo.cpu_logical_cores > 0 ? g_sysinfo.cpu_logical_cores : g_sysinfo.recommended_threads;
+					if (gpu_threads > 1) gpu_threads -= 1;
+				} else {
+					gpu_threads = g_sysinfo.cpu_physical_cores > 0 ? g_sysinfo.cpu_physical_cores : g_sysinfo.recommended_threads;
+				}
+				if (gpu_threads > 0 && gpu_threads < NTHREADS) {
+					NTHREADS = gpu_threads;
+					printf("[I] GPU active: using %d CPU threads\n", NTHREADS);
+				}
 			}
-		}
 	}
 	if(FLAGRANGE) {
 		n_range_start.SetBase16(range_start);
@@ -2028,29 +2097,39 @@ int main(int argc, char **argv)	{
 			writeFileIfNeeded(fileName);
 		}
 
-		// GPU Full Search initialization (upload G table and targets)
-		if (FLAGGPU_FULL == 1) {
-			printf("[+] Initializing GPU full search...\n");
+			// GPU Full Search initialization (upload G table and targets)
+			if (FLAGGPU_FULL == 1) {
+				printf("[+] Initializing GPU full search...\n");
 
-			// Upload precomputed G table to GPU
-			if (gpu_upload_gtable_from_secp() == 0) {
-				printf("[+] G table uploaded to GPU (8192 points)\n");
-			} else {
-				fprintf(stderr, "[E] Failed to upload G table to GPU\n");
-				FLAGGPU_FULL = 0;
-				FLAGGPU = 0;
-			}
+				// Upload precomputed G table to GPU
+				if (gpu_upload_gtable_from_secp() == 0) {
+					printf("[+] G table uploaded to GPU (8192 points)\n");
+				} else {
+					fprintf(stderr, "[E] Failed to upload G table to GPU\n");
+					FLAGGPU_FULL = 0;
+					FLAGGPU = 0;
+				}
 
-			// Upload targets to GPU
-			if (FLAGGPU_FULL && gpu_upload_targets_from_addressTable(N) == 0) {
-				printf("[+] Targets uploaded to GPU (%" PRIu64 " hashes)\n", N);
-			} else if (FLAGGPU_FULL) {
-				fprintf(stderr, "[E] Failed to upload targets to GPU\n");
-				FLAGGPU_FULL = 0;
-				FLAGGPU = 0;
+				// Upload targets to GPU
+				if (FLAGGPU_FULL && gpu_upload_targets_from_addressTable(N) == 0) {
+					printf("[+] Targets uploaded to GPU (%" PRIu64 " hashes)\n", N);
+					// Optional: build a GPU-specific bloom filter to reduce target searches for large N.
+					g_gpu_bloom_uploaded = 0;
+					if (N > 32) {
+						if (gpu_build_and_upload_bloom_from_addressTable(N) == 0) {
+							g_gpu_bloom_uploaded = 1;
+							printf("[+] GPU bloom uploaded (accelerates matching for large target sets)\n");
+						} else {
+							fprintf(stderr, "[W] GPU bloom upload failed; continuing without GPU bloom\n");
+						}
+					}
+				} else if (FLAGGPU_FULL) {
+					fprintf(stderr, "[E] Failed to upload targets to GPU\n");
+					FLAGGPU_FULL = 0;
+					FLAGGPU = 0;
+				}
 			}
 		}
-	}
 	
 	if(FLAGMODE == MODE_BSGS )	{
 		printf("[+] Opening file %s\n",fileName);
@@ -3278,17 +3357,15 @@ int main(int argc, char **argv)	{
 #endif
 		checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
 #ifndef _WIN64
-		if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
-			configure_work_queue(NTHREADS);
-		}
-		else {
+			// IMPORTANT: delay work-queue startup until after GPU FULL/HYBRID handling.
+			// The work-queue producer mutates `n_range_start` while enqueuing blocks, which would
+			// otherwise corrupt the GPU start range and/or the hybrid split.
 			shutdown_work_queue();
-		}
 #endif
 
-		// ============================================================================
-		// GPU Full Search Mode (ECC + hash160 + matching entirely on GPU)
-		// ============================================================================
+			// ============================================================================
+			// GPU Full Search Mode (ECC + hash160 + matching entirely on GPU)
+			// ============================================================================
 		if (FLAGGPU_FULL && !FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
 			printf("[+] Running GPU full search mode...\n");
 
@@ -3322,54 +3399,69 @@ int main(int argc, char **argv)	{
 		// GPU Hybrid Mode (GPU + CPU in parallel with STATIC SPLIT)
 		// GPU gets g_gpu_range_percent% of range, CPU uses normal fast algorithm
 		// ============================================================================
-		if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
-			if (!gpu_backend_available()) {
-				fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
-				FLAGGPU_HYBRID = 0;
-			} else {
-				printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
+			if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
+				if (!gpu_backend_available()) {
+					fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
+					FLAGGPU_HYBRID = 0;
+				} else {
+					printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
 
-			// Calculate range split: GPU gets g_gpu_range_percent% of range
-			Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
-			range_diff.Set(&n_range_end);
-			range_diff.Sub(&n_range_start);
+				// Calculate range split: GPU gets g_gpu_range_percent% of range.
+				// Ranges are treated as [start, end) (end is exclusive) throughout keyhunt.
+				Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
+				range_diff.Set(&n_range_end);
+				range_diff.Sub(&n_range_start);
 
-			// GPU gets g_gpu_range_percent% of the range
-			gpu_portion.Set(&range_diff);
-			gpu_portion.Mult(g_gpu_range_percent);
-			Int divisor;
-			divisor.SetInt32(100);
-			gpu_portion.Div(&divisor);
+				// GPU gets g_gpu_range_percent% of the range
+				gpu_portion.Set(&range_diff);
+				gpu_portion.Mult(g_gpu_range_percent);
+				Int divisor;
+				divisor.SetInt32(100);
+				gpu_portion.Div(&divisor);
 
-			// GPU range: n_range_start to (n_range_start + gpu_portion)
-			gpu_range_end.Set(&n_range_start);
-			gpu_range_end.Add(&gpu_portion);
+				// GPU range: n_range_start to (n_range_start + gpu_portion)
+				gpu_range_end.Set(&n_range_start);
+				gpu_range_end.Add(&gpu_portion);
 
-			// CPU range: starts right after GPU ends
-			cpu_range_start.Set(&gpu_range_end);
-			cpu_range_start.AddOne();
+				// CPU range: starts at GPU end (no +1, end is exclusive)
+				cpu_range_start.Set(&gpu_range_end);
 
-			printf("[+] GPU handles %d%% of range, CPU handles %d%%\n",
-				   g_gpu_range_percent, 100 - g_gpu_range_percent);
+				printf("[+] GPU handles %d%% of range, CPU handles %d%%\n",
+					   g_gpu_range_percent, 100 - g_gpu_range_percent);
 
-			char *hextemp = n_range_start.GetBase16();
-			printf("[+] GPU range: 0x%s", hextemp);
-			free(hextemp);
-			hextemp = gpu_range_end.GetBase16();
-			printf(" - 0x%s\n", hextemp);
-			free(hextemp);
-			hextemp = cpu_range_start.GetBase16();
-			printf("[+] CPU range: 0x%s", hextemp);
-			free(hextemp);
-			hextemp = n_range_end.GetBase16();
-			printf(" - 0x%s\n", hextemp);
-			free(hextemp);
+				// Print ranges in inclusive form for readability.
+				char *hextemp = n_range_start.GetBase16();
+				printf("[+] GPU range: 0x%s", hextemp);
+				free(hextemp);
+				{
+					Int gpu_end_inclusive;
+					gpu_end_inclusive.Set(&gpu_range_end);
+					if (gpu_end_inclusive.IsGreater(&n_range_start)) {
+						gpu_end_inclusive.SubOne();
+					}
+					hextemp = gpu_end_inclusive.GetBase16();
+					printf(" - 0x%s\n", hextemp);
+					free(hextemp);
+				}
+				hextemp = cpu_range_start.GetBase16();
+				printf("[+] CPU range: 0x%s", hextemp);
+				free(hextemp);
+				{
+					Int cpu_end_inclusive;
+					cpu_end_inclusive.Set(&n_range_end);
+					if (cpu_end_inclusive.IsGreater(&cpu_range_start)) {
+						cpu_end_inclusive.SubOne();
+					}
+					hextemp = cpu_end_inclusive.GetBase16();
+					printf(" - 0x%s\n", hextemp);
+					free(hextemp);
+				}
 
-			// Setup GPU thread arguments with its portion of the range
-			gpu_hybrid_args.start_key.Set(&n_range_start);
-			gpu_hybrid_args.end_key.Set(&gpu_range_end);
-			gpu_hybrid_args.stride.Set(&stride);
-			gpu_hybrid_args.target_count = N;
+				// Setup GPU thread arguments with its portion of the range
+				gpu_hybrid_args.start_key.Set(&n_range_start);
+				gpu_hybrid_args.end_key.Set(&gpu_range_end);
+				gpu_hybrid_args.stride.Set(&stride);
+				gpu_hybrid_args.target_count = N;
 			gpu_hybrid_args.result = 0;
 			gpu_hybrid_args.completed = 0;
 
@@ -3382,22 +3474,30 @@ int main(int argc, char **argv)	{
 			if (err != 0) {
 				fprintf(stderr, "[W] Failed to start GPU thread, falling back to CPU-only\n");
 				FLAGGPU_HYBRID = 0;
-			} else {
-				gpu_hybrid_started = 1;
-				// Update n_range_start for CPU threads - they use normal algorithm
-				n_range_start.Set(&cpu_range_start);
-				printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
-			}
-			}  // End of else (GPU available)
-		}
+					} else {
+						gpu_hybrid_started = 1;
+						// Update n_range_start for CPU threads - they use normal algorithm
+						n_range_start.Set(&cpu_range_start);
+						printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
+					}
+					}  // End of else (GPU available)
+				}
 
-		// ============================================================================
-		// CPU Thread Mode (fall-through or default)
-		// ============================================================================
-		for(j= 0;j < NTHREADS; j++)	{
-			tt = (tothread*) malloc(sizeof(struct tothread));
-			checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
-			tt->nt = j;
+			// ============================================================================
+			// CPU Thread Mode (fall-through or default)
+			// ============================================================================
+#ifndef _WIN64
+			if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
+				configure_work_queue((size_t)NTHREADS);
+			}
+			else {
+				shutdown_work_queue();
+			}
+#endif
+			for(j= 0;j < NTHREADS; j++)	{
+				tt = (tothread*) malloc(sizeof(struct tothread));
+				checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
+				tt->nt = j;
 			steps[j].value = 0;
 			s = 0;
 			switch(FLAGMODE)	{
@@ -3438,15 +3538,18 @@ int main(int argc, char **argv)	{
 		int_limits[j].SetBase10((char*)str_limits[j]);
 	}
 	
-	continue_flag = 1;
-	total.SetInt32(0);
-	pretotal.SetInt32(0);
-	debugcount_mpz.Set(&BSGS_N);
-	seconds.SetInt32(0);
-	do	{
-		sleep_ms(1000);
-		seconds.AddOne();
-		check_flag = 1;
+		continue_flag = 1;
+		total.SetInt32(0);
+		pretotal.SetInt32(0);
+		debugcount_mpz.Set(&BSGS_N);
+		seconds.SetInt32(0);
+		Int prev_cpu_total;
+		prev_cpu_total.SetInt32(0);
+		uint64_t prev_gpu_total_u64 = 0;
+		do	{
+			sleep_ms(1000);
+			seconds.AddOne();
+			check_flag = 1;
 		for(j = 0; j <NTHREADS && check_flag; j++) {
 			check_flag &= ends[j].value;
 		}
@@ -3456,93 +3559,179 @@ int main(int argc, char **argv)	{
 		if(OUTPUTSECONDS.IsGreater(&ZERO) ){
 			MPZAUX.Set(&seconds);
 			MPZAUX.Mod(&OUTPUTSECONDS);
-			if(MPZAUX.IsZero()) {
-				total.SetInt32(0);
-				for(j = 0; j < NTHREADS; j++) {
-					pretotal.Set(&debugcount_mpz);
-						pretotal.Mult(steps[j].value);					
-					total.Add(&pretotal);
-				}
-				
-				if(FLAGENDOMORPHISM)	{
-					if(FLAGMODE == MODE_XPOINT)	{
-						total.Mult(3);
-					}
-					else	{
-						total.Mult(6);
-					}
-				}
-				else	{
-					if(FLAGSEARCH == SEARCH_COMPRESS)	{
-						total.Mult(2);
-					}
-				}
-				
-#ifdef _WIN64
-				WaitForSingleObject(bsgs_thread, INFINITE);
-#else
-				pthread_mutex_lock(&bsgs_thread);
-#endif			
-				pretotal.Set(&total);
-				pretotal.Div(&seconds);
-				str_seconds = seconds.GetBase10();
-				str_pretotal = pretotal.GetBase10();
-				str_total = total.GetBase10();
-				
-				
-				if(pretotal.IsLower(&int_limits[0]))	{
-					if(FLAGMATRIX)	{
-						sprintf(buffer,"[+] Total %s keys in %s seconds: %s keys/s\n",str_total,str_seconds,str_pretotal);
-					}
-					else	{
-						sprintf(buffer,"\r[+] Total %s keys in %s seconds: %s keys/s\r",str_total,str_seconds,str_pretotal);
-					}
-				}
-				else	{
-					i = 0;
-					salir = 0;
-					while( i < 6 && !salir)	{
-						if(pretotal.IsLower(&int_limits[i+1]))	{
-							salir = 1;
+				if(MPZAUX.IsZero()) {
+	#ifdef _WIN64
+					WaitForSingleObject(bsgs_thread, INFINITE);
+	#else
+					pthread_mutex_lock(&bsgs_thread);
+	#endif
+					if (FLAGGPU_HYBRID && gpu_hybrid_started) {
+						Int cpu_total;
+						cpu_total.SetInt32(0);
+						for (j = 0; j < NTHREADS; j++) {
+							pretotal.Set(&debugcount_mpz);
+							pretotal.Mult(steps[j].value);
+							cpu_total.Add(&pretotal);
+						}
+
+						uint64_t gpu_total_u64 = g_gpu_keys_checked;
+						Int gpu_total;
+						{
+							char tmp[64];
+							snprintf(tmp, sizeof(tmp), "%" PRIu64, gpu_total_u64);
+							gpu_total.SetBase10(tmp);
+						}
+
+						Int cpu_delta;
+						cpu_delta.Set(&cpu_total);
+						cpu_delta.Sub(&prev_cpu_total);
+						uint64_t gpu_delta_u64 = gpu_total_u64 - prev_gpu_total_u64;
+						Int gpu_delta;
+						{
+							char tmp[64];
+							snprintf(tmp, sizeof(tmp), "%" PRIu64, gpu_delta_u64);
+							gpu_delta.SetBase10(tmp);
+						}
+
+						Int period;
+						period.Set(&OUTPUTSECONDS);
+						if (period.IsZero()) {
+							period.SetInt32(1);
+						}
+
+						Int overall_total;
+						overall_total.Set(&cpu_total);
+						overall_total.Add(&gpu_total);
+
+						Int cpu_rate;
+						cpu_rate.Set(&cpu_delta);
+						cpu_rate.Div(&period);
+						Int gpu_rate;
+						gpu_rate.Set(&gpu_delta);
+						gpu_rate.Div(&period);
+						Int overall_rate;
+						overall_rate.Set(&cpu_delta);
+						overall_rate.Add(&gpu_delta);
+						overall_rate.Div(&period);
+
+						char cpu_rate_str[128];
+						char gpu_rate_str[128];
+						char overall_rate_str[128];
+						format_keys_per_second(cpu_rate, cpu_rate_str, sizeof(cpu_rate_str));
+						format_keys_per_second(gpu_rate, gpu_rate_str, sizeof(gpu_rate_str));
+						format_keys_per_second(overall_rate, overall_rate_str, sizeof(overall_rate_str));
+
+						str_seconds = seconds.GetBase10();
+						str_total = overall_total.GetBase10();
+						char *str_period = period.GetBase10();
+
+						if (FLAGMATRIX) {
+							snprintf(buffer, sizeof(buffer),
+								"[+] Total %s keys in %s seconds (last %s s): CPU %s | GPU %s | TOTAL %s\n",
+								str_total ? str_total : "?", str_seconds ? str_seconds : "?",
+								str_period ? str_period : "?",
+								cpu_rate_str, gpu_rate_str, overall_rate_str);
+						} else {
+							snprintf(buffer, sizeof(buffer),
+								"\r[+] Total %s keys in %s seconds (last %s s): CPU %s | GPU %s | TOTAL %s\r",
+								str_total ? str_total : "?", str_seconds ? str_seconds : "?",
+								str_period ? str_period : "?",
+								cpu_rate_str, gpu_rate_str, overall_rate_str);
+						}
+
+						append_progress_info(buffer, sizeof(buffer));
+						printf("%s", buffer);
+						fflush(stdout);
+						THREADOUTPUT = 0;
+
+						prev_cpu_total.Set(&cpu_total);
+						prev_gpu_total_u64 = gpu_total_u64;
+
+						if (str_seconds) free(str_seconds);
+						if (str_total) free(str_total);
+						if (str_period) free(str_period);
+					} else {
+						total.SetInt32(0);
+						for(j = 0; j < NTHREADS; j++) {
+							pretotal.Set(&debugcount_mpz);
+							pretotal.Mult(steps[j].value);
+							total.Add(&pretotal);
+						}
+
+						if(FLAGENDOMORPHISM)	{
+							if(FLAGMODE == MODE_XPOINT)	{
+								total.Mult(3);
+							}
+							else	{
+								total.Mult(6);
+							}
 						}
 						else	{
-							i++;
+							if(FLAGSEARCH == SEARCH_COMPRESS)	{
+								total.Mult(2);
+							}
 						}
-					}
 
-					div_pretotal.Set(&pretotal);
-					div_pretotal.Div(&int_limits[salir ? i : i-1]);
-					str_divpretotal = div_pretotal.GetBase10();
-					if(FLAGMATRIX)	{
-						sprintf(buffer,"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
-					}
-					else	{
-						if(THREADOUTPUT == 1)	{
-							sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+						pretotal.Set(&total);
+						pretotal.Div(&seconds);
+						str_seconds = seconds.GetBase10();
+						str_pretotal = pretotal.GetBase10();
+						str_total = total.GetBase10();
+
+						if(pretotal.IsLower(&int_limits[0]))	{
+							if(FLAGMATRIX)	{
+								sprintf(buffer,"[+] Total %s keys in %s seconds: %s keys/s\n",str_total,str_seconds,str_pretotal);
+							}
+							else	{
+								sprintf(buffer,"\r[+] Total %s keys in %s seconds: %s keys/s\r",str_total,str_seconds,str_pretotal);
+							}
 						}
 						else	{
-							sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+							i = 0;
+							salir = 0;
+							while( i < 6 && !salir)	{
+								if(pretotal.IsLower(&int_limits[i+1]))	{
+									salir = 1;
+								}
+								else	{
+									i++;
+								}
+							}
+
+							div_pretotal.Set(&pretotal);
+							div_pretotal.Div(&int_limits[salir ? i : i-1]);
+							str_divpretotal = div_pretotal.GetBase10();
+							if(FLAGMATRIX)	{
+								sprintf(buffer,"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+							}
+							else	{
+								if(THREADOUTPUT == 1)	{
+									sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+								}
+								else	{
+									sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+								}
+							}
+							free(str_divpretotal);
+
 						}
+						append_progress_info(buffer, sizeof(buffer));
+						printf("%s",buffer);
+						fflush(stdout);
+						THREADOUTPUT = 0;
+
+						free(str_seconds);
+						free(str_pretotal);
+						free(str_total);
 					}
-					free(str_divpretotal);
-
+	#ifdef _WIN64
+					ReleaseMutex(bsgs_thread);
+	#else
+					pthread_mutex_unlock(&bsgs_thread);
+	#endif
 				}
-				append_progress_info(buffer, sizeof(buffer));
-				printf("%s",buffer);
-				fflush(stdout);
-				THREADOUTPUT = 0;			
-#ifdef _WIN64
-				ReleaseMutex(bsgs_thread);
-#else
-				pthread_mutex_unlock(&bsgs_thread);
-#endif
-
-				free(str_seconds);
-				free(str_pretotal);
-				free(str_total);
 			}
-		}
-	}while(continue_flag);
+		}while(continue_flag);
 
 	// Wait for GPU thread if hybrid mode was started
 	if (FLAGGPU_HYBRID && gpu_hybrid_started) {
@@ -3847,6 +4036,7 @@ void *thread_process(void *vargp)	{
 	char publickeyhashrmd160_endomorphism[12][4][20];
 	
 	bool calculate_y = FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH || FLAGCRYPTO  == CRYPTO_ETH;
+	calculate_y = calculate_y || hybrid_cpu_use_y_parity_for_compressed_btc();
 	Int key_mpz,keyfound;
 	Int key_center;
 	Int stride_half;
@@ -3864,12 +4054,30 @@ void *thread_process(void *vargp)	{
 		if(!acquire_base_key(key_mpz))	{
 			continue_flag = 0;
 		}
-		if(continue_flag)	{
-			count = 0;
-			if(FLAGMATRIX)	{
-					hextemp = key_mpz.GetBase16();
-					printf("Base key: %s thread %i\n",hextemp,thread_number);
-					fflush(stdout);
+			if(continue_flag)	{
+				count = 0;
+				uint64_t block_limit = N_SEQUENTIAL_MAX;
+				if (!FLAGRANDOM && stride.IsOne()) {
+					Int remaining;
+					remaining.Set(&n_range_end);
+					remaining.Sub(&key_mpz);
+
+					char *hex = remaining.GetBase16();
+					if (hex) {
+						size_t len = strlen(hex);
+						if (len > 0 && len <= 16) {
+							uint64_t rem_u64 = strtoull(hex, NULL, 16);
+							if (rem_u64 < block_limit) {
+								block_limit = rem_u64;
+							}
+						}
+						free(hex);
+					}
+				}
+				if(FLAGMATRIX)	{
+						hextemp = key_mpz.GetBase16();
+						printf("Base key: %s thread %i\n",hextemp,thread_number);
+						fflush(stdout);
 					free(hextemp);
 			}
 			else	{
@@ -4400,12 +4608,12 @@ void *thread_process(void *vargp)	{
 				pp.y.ModMulK1(&_s);
 				pp.y.ModSub(&_2Gn.y);
 				startP = pp;
-			}while(count < N_SEQUENTIAL_MAX && continue_flag);
-		}
-	} while(continue_flag);
-	ends[thread_number].value = 1;
-	return NULL;
-}
+				}while(count < block_limit && continue_flag);
+			}
+		} while(continue_flag);
+		ends[thread_number].value = 1;
+		return NULL;
+	}
 
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -4474,12 +4682,30 @@ void *thread_process_vanity(void *vargp)	{
 		if(!acquire_base_key(key_mpz))	{
 			continue_flag = 0;
 		}
-		if(continue_flag)	{
-			count = 0;
-			if(FLAGMATRIX)	{
-					hextemp = key_mpz.GetBase16();
-					printf("Base key: %s thread %i\n",hextemp,thread_number);
-					fflush(stdout);
+			if(continue_flag)	{
+				count = 0;
+				uint64_t block_limit = N_SEQUENTIAL_MAX;
+				if (!FLAGRANDOM && stride.IsOne()) {
+					Int remaining;
+					remaining.Set(&n_range_end);
+					remaining.Sub(&key_mpz);
+
+					char *hex = remaining.GetBase16();
+					if (hex) {
+						size_t len = strlen(hex);
+						if (len > 0 && len <= 16) {
+							uint64_t rem_u64 = strtoull(hex, NULL, 16);
+							if (rem_u64 < block_limit) {
+								block_limit = rem_u64;
+							}
+						}
+						free(hex);
+					}
+				}
+				if(FLAGMATRIX)	{
+						hextemp = key_mpz.GetBase16();
+						printf("Base key: %s thread %i\n",hextemp,thread_number);
+						fflush(stdout);
 					free(hextemp);
 			}
 			else	{
@@ -4974,12 +5200,12 @@ void *thread_process_vanity(void *vargp)	{
 				pp.y.ModMulK1(&_s);
 				pp.y.ModSub(&_2Gn.y);
 				startP = pp;
-			}while(count < N_SEQUENTIAL_MAX && continue_flag);
-		}
-	} while(continue_flag);
-	ends[thread_number].value = 1;
-	return NULL;
-}
+				}while(count < block_limit && continue_flag);
+			}
+		} while(continue_flag);
+		ends[thread_number].value = 1;
+		return NULL;
+	}
 
 void _swap(struct address_value *a,struct address_value *b)	{
 	struct address_value t;
@@ -7451,17 +7677,81 @@ static int gpu_upload_targets_from_addressTable(int64_t count) {
 	// addressTable is struct address_value* with 20-byte values
 	extern struct address_value *addressTable;
 
-	// Targets are already sorted, just upload the raw bytes
-	uint8_t *targets = (uint8_t*)malloc(count * 20);
-	if (!targets) return 1;
+	// Targets are already stored as contiguous 20-byte entries, upload directly.
+	return gpu_upload_targets((const uint8_t*)addressTable, (size_t)count);
+}
 
-	for (int64_t i = 0; i < count; i++) {
-		memcpy(targets + i * 20, addressTable[i].value, 20);
+// Build a GPU-side bloom filter that matches the CUDA bloom_check() logic and upload it.
+// This reduces expensive target searches when target_count is large.
+static int gpu_build_and_upload_bloom_from_addressTable(int64_t count) {
+	if (!gpu_backend_available() || count <= 32) return 1;  // Not beneficial for very small N
+
+	extern struct address_value *addressTable;
+
+	// 4 hashes are unrolled in the CUDA bloom_check and are the fastest choice.
+	const int num_hashes = 4;
+	const uint32_t GOLDEN = 0x9E3779B9u;
+
+	// Target bits-per-element tuned for low false-positive rate without excessive VRAM.
+	const uint64_t bits_per_element = 12;
+	uint64_t desired_bits = (uint64_t)count * bits_per_element;
+
+	// Minimum size to keep indexing efficient and word-aligned.
+	if (desired_bits < (1ULL << 16)) desired_bits = (1ULL << 16);  // 64K bits = 8 KB
+
+	// Round up to power-of-two bits (allows fast masking on GPU).
+	auto next_pow2_u64 = [](uint64_t v) -> uint64_t {
+		if (v <= 1) return 1;
+		v--;
+		v |= v >> 1;
+		v |= v >> 2;
+		v |= v >> 4;
+		v |= v >> 8;
+		v |= v >> 16;
+		v |= v >> 32;
+		return v + 1;
+	};
+
+	uint64_t bloom_bits = next_pow2_u64(desired_bits);
+	// CUDA bloom_check uses 32-bit indices; cap to 2^32 bits (512 MB) for safety.
+	if (bloom_bits > (1ULL << 32)) bloom_bits = (1ULL << 32);
+	if (bloom_bits < 64) bloom_bits = 64;
+
+	size_t bloom_bytes = (size_t)(bloom_bits / 8);
+	// Ensure 64-bit word access is safe.
+	if ((bloom_bytes & 7) != 0) {
+		bloom_bytes = (bloom_bytes + 7) & ~(size_t)7;
+		bloom_bits = (uint64_t)bloom_bytes * 8;
 	}
 
-	int result = gpu_upload_targets(targets, count);
-	free(targets);
-	return result;
+	uint8_t *bloom = (uint8_t*)calloc(bloom_bytes, 1);
+	if (!bloom) return 1;
+
+	uint64_t *bloom64 = (uint64_t*)bloom;
+	uint32_t mask = (uint32_t)(bloom_bits - 1);
+
+	for (int64_t i = 0; i < count; i++) {
+		const uint8_t *h = addressTable[i].value;
+
+		uint32_t h0 = ((uint32_t)h[0] << 8) | (uint32_t)h[1];
+		uint32_t h1 = ((uint32_t)h[2] << 8) | (uint32_t)h[3];
+		uint32_t h2 = ((uint32_t)h[4] << 8) | (uint32_t)h[5];
+		uint32_t h3 = ((uint32_t)h[6] << 8) | (uint32_t)h[7];
+
+		uint32_t idx0 = (h0 * GOLDEN) & mask;
+		uint32_t idx1 = (h1 * GOLDEN) & mask;
+		uint32_t idx2 = (h2 * GOLDEN) & mask;
+		uint32_t idx3 = (h3 * GOLDEN) & mask;
+
+		bloom64[idx0 >> 6] |= (1ULL << (idx0 & 63));
+		bloom64[idx1 >> 6] |= (1ULL << (idx1 & 63));
+		bloom64[idx2 >> 6] |= (1ULL << (idx2 & 63));
+		bloom64[idx3 >> 6] |= (1ULL << (idx3 & 63));
+	}
+
+	int rc = gpu_upload_bloom(bloom, bloom_bytes, num_hashes);
+	free(bloom);
+	return rc;
 }
 
 // Callback for found keys from GPU search
@@ -7547,10 +7837,11 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	stride_val->Get32Bytes(config.stride);
 
 	config.target_count = target_count;
-	// Use FLAGSEARCH to determine compressed mode (not hardcoded!)
-	// compressed_only=1 means only compressed, 0 means both parities
-	config.compressed_only = (FLAGSEARCH == SEARCH_COMPRESS) ? 1 : 0;
-	config.use_bloom = (target_count > 1) ? 1 : 0;
+		// Use FLAGSEARCH to determine compressed mode (not hardcoded!)
+		// compressed_only=1 means only compressed, 0 means both parities
+		config.compressed_only = (FLAGSEARCH == SEARCH_COMPRESS) ? 1 : 0;
+		// Use GPU-side bloom only when it was uploaded and the target set is large enough to benefit.
+		config.use_bloom = (g_gpu_bloom_uploaded && target_count > 32) ? 1 : 0;
 
 	config.callback = gpu_found_callback;
 	config.callback_userdata = NULL;
@@ -7558,10 +7849,11 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	config.keys_checked = &g_gpu_keys_checked;
 	config.should_stop = &g_gpu_should_stop;
 
-	printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
-	printf("[+] Target count: %" PRId64 ", using %s\n",
-		target_count,
-		target_count == 1 ? "direct comparison" : "bloom filter + binary search");
+		printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
+		printf("[+] Target count: %" PRId64 ", using %s\n",
+			target_count,
+			target_count == 1 ? "direct comparison" :
+				(config.use_bloom ? "GPU bloom + binary search" : "binary search"));
 	printf("[+] Search mode: %s\n",
 		config.compressed_only ? "compressed only" : "both (compressed + uncompressed)");
 
