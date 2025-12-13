@@ -586,6 +586,17 @@ const char *str_limits_prefixs[7] = {"Mkeys/s","Gkeys/s","Tkeys/s","Pkeys/s","Ek
 const char *str_limits[7] = {"1000000","1000000000","1000000000000","1000000000000000","1000000000000000000","1000000000000000000000","1000000000000000000000000"};
 Int int_limits[7];
 
+static void initialize_rate_limits() {
+	static int initialized = 0;
+	if (initialized) {
+		return;
+	}
+	for (int j = 0; j < 7; j++) {
+		int_limits[j].SetBase10((char*)str_limits[j]);
+	}
+	initialized = 1;
+}
+
 
 
 
@@ -856,22 +867,12 @@ static bool capture_progress_metrics(int &permille, char *position, size_t posit
 			total_checked.Add(&gpu_total);
 		}
 
-		// Apply multipliers for endomorphism and (CPU-only) dual-parity compressed search.
+		// Apply multipliers for endomorphism.
 		if (FLAGENDOMORPHISM) {
 			if (FLAGMODE == MODE_XPOINT) {
 				total_checked.Mult(3);
 			} else {
 				total_checked.Mult(6);
-			}
-		} else {
-			const bool dual_parity_compress =
-				(FLAGSEARCH == SEARCH_COMPRESS) &&
-				(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_VANITY) &&
-				(FLAGCRYPTO == CRYPTO_BTC) &&
-				!hybrid_cpu_use_y_parity_for_compressed_btc() &&
-				!FLAGENDOMORPHISM;
-			if (dual_parity_compress) {
-				total_checked.Mult(2);
 			}
 		}
 
@@ -983,6 +984,76 @@ static void append_progress_info(char *buffer, size_t bufferSize) {
 		buffer[len + 1] = '\0';
 	}
 }
+
+#ifndef _WIN64
+typedef struct {
+	int period_seconds;
+	volatile int *stop_flag;
+} gpu_full_stats_args_t;
+
+static void *gpu_full_stats_thread(void *arg) {
+	gpu_full_stats_args_t *args = (gpu_full_stats_args_t *)arg;
+	if (args == NULL || args->stop_flag == NULL) {
+		return NULL;
+	}
+	const int period = args->period_seconds;
+	if (period <= 0) {
+		return NULL;
+	}
+
+	uint64_t prev_total = 0;
+	uint64_t seconds = 0;
+	while (!*(args->stop_flag)) {
+		sleep_ms(1000);
+		seconds++;
+		if (*(args->stop_flag)) {
+			break;
+		}
+		if ((seconds % (uint64_t)period) != 0) {
+			continue;
+		}
+
+		uint64_t total_u64 = g_gpu_keys_checked;
+		uint64_t delta_u64 = total_u64 - prev_total;
+
+		Int total_i;
+		Int delta_i;
+		Int rate_i;
+		{
+			char tmp[64];
+			snprintf(tmp, sizeof(tmp), "%" PRIu64, total_u64);
+			total_i.SetBase10(tmp);
+			snprintf(tmp, sizeof(tmp), "%" PRIu64, delta_u64);
+			delta_i.SetBase10(tmp);
+		}
+
+		rate_i.Set(&delta_i);
+		Int period_i;
+		period_i.SetInt32(period);
+		rate_i.Div(&period_i);
+
+		char gpu_rate_str[128];
+		format_keys_per_second(rate_i, gpu_rate_str, sizeof(gpu_rate_str));
+
+		char *str_total = total_i.GetBase10();
+		char seconds_buf[32];
+		snprintf(seconds_buf, sizeof(seconds_buf), "%" PRIu64, seconds);
+
+		char buffer[512];
+		snprintf(buffer, sizeof(buffer),
+		         "[+] Total %s keys in %s seconds (last %d s): CPU 0 keys/s | GPU %s | TOTAL %s\n",
+		         str_total ? str_total : "?", seconds_buf, period, gpu_rate_str, gpu_rate_str);
+		append_progress_info(buffer, sizeof(buffer));
+		printf("%s", buffer);
+		fflush(stdout);
+
+		if (str_total) free(str_total);
+		prev_total = total_u64;
+	}
+
+	return NULL;
+}
+#endif
 
 // Thread-local block cache for work-stealing mode
 // Each CPU thread caches a block from the work pool to reduce contention
@@ -3443,12 +3514,13 @@ int main(int argc, char **argv)	{
 		}
 		free(aux);
 	}
-	if(FLAGMODE != MODE_BSGS)	{
-		// Apply auto-tuned thread count ONLY if user didn't specify -t
-		if (!FLAGTHREADS && NTHREADS == 1 && OPTIMAL_THREADS > 0) {
-			NTHREADS = OPTIMAL_THREADS;
-			printf("[I] Using auto-tuned thread count: %d\n", NTHREADS);
-		}
+		if(FLAGMODE != MODE_BSGS)	{
+			initialize_rate_limits();
+			// Apply auto-tuned thread count ONLY if user didn't specify -t
+			if (!FLAGTHREADS && NTHREADS == 1 && OPTIMAL_THREADS > 0) {
+				NTHREADS = OPTIMAL_THREADS;
+				printf("[I] Using auto-tuned thread count: %d\n", NTHREADS);
+			}
 		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
 		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
 		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));
@@ -3469,20 +3541,44 @@ int main(int argc, char **argv)	{
 			// ============================================================================
 			// GPU Full Search Mode (ECC + hash160 + matching entirely on GPU)
 			// ============================================================================
-		if (FLAGGPU_FULL && !FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
-			printf("[+] Running GPU full search mode...\n");
+			if (FLAGGPU_FULL && !FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
+				printf("[+] Running GPU full search mode...\n");
+	
+				// Reset stats
+				g_gpu_keys_checked = 0;
+				g_gpu_should_stop = 0;
 
-			// Reset stats
-			g_gpu_keys_checked = 0;
-			g_gpu_should_stop = 0;
+#ifndef _WIN64
+				pthread_t gpu_stats_tid;
+				int gpu_stats_started = 0;
+				volatile int gpu_stats_stop = 0;
+				gpu_full_stats_args_t gpu_stats_args;
+				memset(&gpu_stats_args, 0, sizeof(gpu_stats_args));
+				if (OUTPUTSECONDS.IsGreater(&ZERO)) {
+					gpu_stats_args.period_seconds = OUTPUTSECONDS.GetInt32();
+					gpu_stats_args.stop_flag = &gpu_stats_stop;
+					if (gpu_stats_args.period_seconds > 0) {
+						if (pthread_create(&gpu_stats_tid, NULL, gpu_full_stats_thread, &gpu_stats_args) == 0) {
+							gpu_stats_started = 1;
+						}
+					}
+				}
+#endif
+	
+				// Run GPU search
+				int gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
 
-			// Run GPU search
-			int gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
-
-			if (gpu_result >= 0) {
-				// GPU search completed successfully
-				printf("[+] GPU search finished. Keys found: %d\n", gpu_result);
-				printf("[+] Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
+#ifndef _WIN64
+				gpu_stats_stop = 1;
+				if (gpu_stats_started) {
+					pthread_join(gpu_stats_tid, NULL);
+				}
+#endif
+	
+				if (gpu_result >= 0) {
+					// GPU search completed successfully
+					printf("[+] GPU search finished. Keys found: %d\n", gpu_result);
+					printf("[+] Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
 
 				// Cleanup and exit
 #ifndef _WIN64
@@ -3651,9 +3747,7 @@ int main(int argc, char **argv)	{
 		}
 	}
 	
-	for(j =0; j < 7; j++)	{
-		int_limits[j].SetBase10((char*)str_limits[j]);
-	}
+		initialize_rate_limits();
 	
 		continue_flag = 1;
 		total.SetInt32(0);
@@ -3782,11 +3876,6 @@ int main(int argc, char **argv)	{
 							}
 							else	{
 								total.Mult(6);
-							}
-						}
-						else	{
-							if(FLAGSEARCH == SEARCH_COMPRESS)	{
-								total.Mult(2);
 							}
 						}
 
@@ -8001,7 +8090,7 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 
 	config.keys_checked = &g_gpu_keys_checked;
 	config.should_stop = &g_gpu_should_stop;
-	config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0);
+	config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
 
 		printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
 		printf("[+] Target count: %" PRId64 ", using %s\n",
@@ -8011,11 +8100,9 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	printf("[+] Search mode: %s\n",
 		config.compressed_only ? "compressed only" : "both (compressed + uncompressed)");
 
-	int found = gpu_full_search(&config);
-
-	printf("[+] GPU search completed. Found: %d keys\n", found);
-	return found;
-}
+		int found = gpu_full_search(&config);
+		return found;
+	}
 
 void checkpointer(void *ptr,const char *file,const char *function,const  char *name,int line)	{
 	if(ptr == NULL)	{
