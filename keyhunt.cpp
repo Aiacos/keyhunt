@@ -12,6 +12,7 @@ email: albertobsd@gmail.com
 #include <chrono>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include <inttypes.h>
 #include "base58/libbase58.h"
 #include "oldbloom/oldbloom.h"
@@ -76,6 +77,105 @@ static bool g_avx2_available = false;
 #ifndef _WIN64
 static WorkQueue<Int> g_workQueue;
 #endif
+
+// ============================================================================
+// Work-stealing pool for GPU/CPU collaboration
+// Both GPU and CPU threads pull work blocks from the same pool for dynamic
+// load balancing. The faster processor (GPU) naturally gets more work.
+// ============================================================================
+struct WorkPool {
+	std::atomic<uint64_t> next_block;      // Next available block index
+	uint64_t total_blocks;                  // Total blocks to process
+	uint64_t block_size;                    // Keys per block
+	Int range_base;                         // Starting point of range
+	Int range_end;                          // End of range
+	volatile bool enabled;                  // Work pool is active
+	volatile bool exhausted;                // All work has been taken
+
+	WorkPool() : next_block(0), total_blocks(0), block_size(0), enabled(false), exhausted(false) {}
+
+	// Initialize work pool with a range
+	void init(Int *start, Int *end, uint64_t blk_size) {
+		range_base.Set(start);
+		range_end.Set(end);
+		block_size = blk_size;
+
+		// Calculate total blocks
+		Int diff;
+		diff.Set(end);
+		diff.Sub(start);
+
+		// Divide range by block_size to get number of blocks
+		Int blocks_int;
+		blocks_int.Set(&diff);
+		Int blk_int;
+		blk_int.SetInt64(block_size);
+		blocks_int.Div(&blk_int);
+
+		// Extract total_blocks (capped at practical limit)
+		total_blocks = 1000000000ULL;  // Default cap at 1B blocks
+		if (!blocks_int.IsZero()) {
+			// Get the 64-bit value if it fits
+			char *hex = blocks_int.GetBase16();
+			if (hex && strlen(hex) <= 16) {
+				total_blocks = strtoull(hex, NULL, 16);
+			}
+			if (hex) free(hex);
+		}
+		total_blocks = (total_blocks == 0) ? 1 : total_blocks + 1;  // At least 1 block
+
+		next_block.store(0, std::memory_order_release);
+		exhausted = false;
+		enabled = true;
+	}
+
+	// Get next work block (thread-safe, lock-free)
+	// Returns true if work was assigned, false if no more work
+	bool get_block(Int &start_out, Int &end_out) {
+		if (!enabled || exhausted) return false;
+
+		uint64_t block_idx = next_block.fetch_add(1, std::memory_order_acq_rel);
+		if (block_idx >= total_blocks) {
+			exhausted = true;
+			return false;
+		}
+
+		// Calculate start = range_base + block_idx * block_size
+		Int offset;
+		offset.SetInt64(block_size);
+		Int mult;
+		mult.SetInt64(block_idx);
+		offset.Mult(&mult);
+
+		start_out.Set(&range_base);
+		start_out.Add(&offset);
+
+		// Calculate end = min(start + block_size, range_end)
+		end_out.Set(&start_out);
+		Int blk;
+		blk.SetInt64(block_size);
+		end_out.Add(&blk);
+
+		if (end_out.IsGreater(&range_end)) {
+			end_out.Set(&range_end);
+		}
+
+		return true;
+	}
+
+	// Check if pool is exhausted
+	bool is_exhausted() const {
+		return exhausted || (next_block.load(std::memory_order_acquire) >= total_blocks);
+	}
+
+	// Disable the pool
+	void disable() {
+		enabled = false;
+	}
+};
+
+// Global work pool instance
+static WorkPool g_work_pool;
 
 struct checksumsha256	{
 	char data[32];
@@ -720,7 +820,29 @@ static void append_progress_info(char *buffer, size_t bufferSize) {
 	}
 }
 
+// Thread-local block cache for work-stealing mode
+// Each CPU thread caches a block from the work pool to reduce contention
+static thread_local Int cpu_cached_block_start;
+static thread_local Int cpu_cached_block_end;
+static thread_local bool cpu_cached_block_valid = false;
+
 static bool acquire_base_key(Int &key) {
+	// Work pool mode for hybrid (work-stealing)
+	if (g_work_pool.enabled) {
+		// Check if we have a valid cached block with remaining work
+		if (!cpu_cached_block_valid || !cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
+			// Get a new block from the work pool
+			if (!g_work_pool.get_block(cpu_cached_block_start, cpu_cached_block_end)) {
+				return false;  // No more work available
+			}
+			cpu_cached_block_valid = true;
+		}
+		// Return next key from cached block
+		key.Set(&cpu_cached_block_start);
+		cpu_cached_block_start.Add(N_SEQUENTIAL_MAX);
+		return true;
+	}
+
 #ifndef _WIN64
 	if (!FLAGRANDOM && g_workQueue.enabled()) {
 		return g_workQueue.pop(key);
@@ -3147,52 +3269,34 @@ int main(int argc, char **argv)	{
 		}
 
 		// ============================================================================
-		// GPU Hybrid Mode (GPU + CPU in parallel for maximum throughput)
+		// GPU Hybrid Mode (GPU + CPU in parallel with work-stealing)
+		// Both GPU and CPU pull work from a shared pool for dynamic load balancing
 		// ============================================================================
 		if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
-			Int gpu_range_end;  // GPU gets the first portion of the range
-			printf("[+] Running GPU+CPU hybrid mode...\n");
+			if (!gpu_backend_available()) {
+				fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
+				FLAGGPU_HYBRID = 0;
+			} else {
+				printf("[+] Running GPU+CPU hybrid mode with work-stealing...\n");
 
-			// Calculate range split point: GPU gets g_gpu_range_percent% of range
-			Int range_diff, gpu_portion;
-			range_diff.Set(&n_range_end);
-			range_diff.Sub(&n_range_start);
+			// Initialize work pool with the entire range
+			// Block size: 16M keys (2^24) - good balance for both GPU and CPU
+			const uint64_t WORK_BLOCK_SIZE = 1ULL << 24;  // 16M keys per block
+			g_work_pool.init(&n_range_start, &n_range_end, WORK_BLOCK_SIZE);
 
-			// GPU gets g_gpu_range_percent% of the range
-			gpu_portion.Set(&range_diff);
-			gpu_portion.Mult(g_gpu_range_percent);
-			Int divisor;
-			divisor.SetInt32(100);
-			gpu_portion.Div(&divisor);
-
-			// GPU range: n_range_start to (n_range_start + gpu_portion)
-			gpu_range_end.Set(&n_range_start);
-			gpu_range_end.Add(&gpu_portion);
-
-			// Store original CPU start for later
-			Int cpu_range_start;
-			cpu_range_start.Set(&gpu_range_end);
-			cpu_range_start.AddOne();  // CPU starts right after GPU ends
-
-			printf("[+] GPU handles %d%% of range, CPU handles %d%%\n",
-				   g_gpu_range_percent, 100 - g_gpu_range_percent);
+			printf("[+] Work-stealing pool initialized:\n");
+			printf("[+]   Block size: %lu keys (%.1f M)\n",
+				   (unsigned long)WORK_BLOCK_SIZE, WORK_BLOCK_SIZE / 1e6);
+			printf("[+]   Total blocks: %lu\n", (unsigned long)g_work_pool.total_blocks);
 
 			char *hextemp = n_range_start.GetBase16();
-			printf("[+] GPU range: 0x%s", hextemp);
-			free(hextemp);
-			hextemp = gpu_range_end.GetBase16();
-			printf(" - 0x%s\n", hextemp);
-			free(hextemp);
-			hextemp = cpu_range_start.GetBase16();
-			printf("[+] CPU range: 0x%s", hextemp);
+			printf("[+]   Range: 0x%s", hextemp);
 			free(hextemp);
 			hextemp = n_range_end.GetBase16();
 			printf(" - 0x%s\n", hextemp);
 			free(hextemp);
 
-			// Setup GPU thread arguments
-			gpu_hybrid_args.start_key.Set(&n_range_start);
-			gpu_hybrid_args.end_key.Set(&gpu_range_end);
+			// Setup GPU thread arguments (stride and target_count for GPU search)
 			gpu_hybrid_args.stride.Set(&stride);
 			gpu_hybrid_args.target_count = N;
 			gpu_hybrid_args.result = 0;
@@ -3202,17 +3306,18 @@ int main(int argc, char **argv)	{
 			g_gpu_keys_checked = 0;
 			g_gpu_should_stop = 0;
 
-			// Start GPU thread
+			// Start GPU thread (will pull work from g_work_pool)
 			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
 			if (err != 0) {
-				fprintf(stderr, "[W] Failed to start GPU thread, falling back to GPU-only\n");
+				fprintf(stderr, "[W] Failed to start GPU thread, falling back to CPU-only\n");
 				FLAGGPU_HYBRID = 0;
+				g_work_pool.disable();
 			} else {
 				gpu_hybrid_started = 1;
-				// Update n_range_start for CPU threads to use CPU's portion
-				n_range_start.Set(&cpu_range_start);
-				printf("[+] GPU thread started, CPU threads will process remaining range\n");
+				printf("[+] GPU thread started (work-stealing mode)\n");
+				printf("[+] CPU threads will also pull from the same work pool\n");
 			}
+			}  // End of else (GPU available)
 		}
 
 		// ============================================================================
@@ -7336,12 +7441,42 @@ static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *
 	writekey(compressed ? true : false, &key);
 }
 
-// GPU hybrid thread function
+// GPU hybrid thread function with work-stealing
 static void *gpu_hybrid_thread(void *arg) {
 	gpu_hybrid_args_t *args = (gpu_hybrid_args_t *)arg;
+	int total_found = 0;
+	uint64_t blocks_processed = 0;
 
-	// Run GPU search on its portion of the range
-	args->result = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
+	printf("[GPU] Work-stealing thread started\n");
+
+	// Loop: pull work blocks from shared pool until exhausted
+	while (!g_gpu_should_stop && g_work_pool.enabled) {
+		Int block_start, block_end;
+
+		// Try to get a work block
+		if (!g_work_pool.get_block(block_start, block_end)) {
+			// No more work available
+			break;
+		}
+
+		// Run GPU search on this block
+		int found = gpu_run_full_search(&block_start, &block_end, &args->stride, args->target_count);
+		if (found > 0) {
+			total_found += found;
+		}
+		blocks_processed++;
+
+		// Brief status every 10 blocks
+		if (blocks_processed % 10 == 0) {
+			printf("[GPU] Processed %lu blocks, total found: %d\n",
+				   (unsigned long)blocks_processed, total_found);
+		}
+	}
+
+	printf("[GPU] Work-stealing thread completed: %lu blocks, %d keys found\n",
+		   (unsigned long)blocks_processed, total_found);
+
+	args->result = total_found;
 	args->completed = 1;
 
 	return NULL;
