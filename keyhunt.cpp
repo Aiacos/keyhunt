@@ -833,21 +833,21 @@ static void format_keys_per_second(Int &rate, char *out, size_t outSize) {
 }
 
 static bool span_u64_from_range(Int &start, Int &end, uint64_t &out) {
-	Int diff;
-	diff.Set(&end);
-	diff.Sub(&start);
-
-	char *hex = diff.GetBase16();
-	if (hex == NULL) {
-		return false;
+	// Compute (end - start) if it fits in uint64_t. Return false otherwise.
+	// Assumes start/end are non-negative and end >= start in normal usage.
+	uint64_t d0 = end.bits64[0] - start.bits64[0];
+	uint64_t borrow = (end.bits64[0] < start.bits64[0]) ? 1ULL : 0ULL;
+	for (int i = 1; i < NB64BLOCK; i++) {
+		const uint64_t ei = end.bits64[i];
+		const uint64_t si = start.bits64[i];
+		const uint64_t si_borrow = si + borrow;
+		const uint64_t di = ei - si_borrow;
+		if (di != 0) return false;
+		borrow = (ei < si_borrow) ? 1ULL : 0ULL;
 	}
-	size_t len = strlen(hex);
-	bool ok = (len > 0 && len <= 16);
-	if (ok) {
-		out = strtoull(hex, NULL, 16);
-	}
-	free(hex);
-	return ok;
+	if (borrow) return false;
+	out = d0;
+	return true;
 }
 
 Int lambda,lambda2,beta,beta2;
@@ -873,7 +873,11 @@ static void shutdown_work_queue() {
 }
 #endif
 
-static void maybe_adjust_hybrid_cpu_sequential_max(size_t threadCount, Int &cpuStart, Int &rangeEnd) {
+static void maybe_adjust_cpu_sequential_max(size_t threadCount,
+                                            Int &cpuStart,
+                                            Int &rangeEnd,
+                                            const char *env_override,
+                                            const char *tag) {
 	if (FLAG_N) {
 		return;
 	}
@@ -885,7 +889,15 @@ static void maybe_adjust_hybrid_cpu_sequential_max(size_t threadCount, Int &cpuS
 		return;
 	}
 
-	const char *env = getenv("KEYHUNT_HYBRID_CPU_N");
+	// If the span already contains plenty of chunks, keep the default larger N to avoid extra setup overhead.
+	{
+		const uint64_t min_blocks = (uint64_t)threadCount * 4ULL;
+		if (N_SEQUENTIAL_MAX > 0 && (span / N_SEQUENTIAL_MAX) >= min_blocks) {
+			return;
+		}
+	}
+
+	const char *env = (env_override && env_override[0]) ? getenv(env_override) : NULL;
 	if (env && env[0]) {
 		uint64_t forced = 0;
 		if (env[0] == '0' && env[1] == 'x') {
@@ -896,8 +908,10 @@ static void maybe_adjust_hybrid_cpu_sequential_max(size_t threadCount, Int &cpuS
 		if (forced >= 1024 && (forced % 1024ULL) == 0) {
 			if (forced != N_SEQUENTIAL_MAX) {
 				N_SEQUENTIAL_MAX = forced;
-				printf("[I] HYBRID: forced CPU N to 0x%llx via KEYHUNT_HYBRID_CPU_N\n",
-				       (unsigned long long)N_SEQUENTIAL_MAX);
+				printf("[I] %s: forced CPU N to 0x%llx via %s\n",
+				       tag ? tag : "CPU",
+				       (unsigned long long)N_SEQUENTIAL_MAX,
+				       env_override ? env_override : "ENV");
 			}
 		}
 		return;
@@ -917,7 +931,8 @@ static void maybe_adjust_hybrid_cpu_sequential_max(size_t threadCount, Int &cpuS
 
 	if (desired < N_SEQUENTIAL_MAX) {
 		N_SEQUENTIAL_MAX = desired;
-		printf("[I] HYBRID: adjusted CPU N to 0x%llx for better thread utilization\n",
+		printf("[I] %s: adjusted CPU N to 0x%llx for better thread utilization\n",
+		       tag ? tag : "CPU",
 		       (unsigned long long)N_SEQUENTIAL_MAX);
 	}
 }
@@ -2487,7 +2502,15 @@ int main(int argc, char **argv)	{
 			free(hextemp);
 		}
 
-		initialize_range_progress_tracker();
+			initialize_range_progress_tracker();
+
+			// Improve CPU thread utilization on small finite ranges when N wasn't explicitly specified.
+			// This avoids the common case where N_SEQUENTIAL_MAX is larger than the entire range and only 1 CPU thread gets work.
+			if (!FLAGGPU_HYBRID && !g_work_pool.enabled && !FLAGRANDOM &&
+			    (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_VANITY)) {
+				maybe_adjust_cpu_sequential_max((size_t)NTHREADS, n_range_start, n_range_end,
+				                                "KEYHUNT_CPU_N", "CPU");
+			}
 
 		switch(FLAGMODE)	{
 			case MODE_MINIKEYS:
@@ -4060,24 +4083,25 @@ int main(int argc, char **argv)	{
 						gpu_hybrid_started = 1;
 						// Update n_range_start for CPU threads - they use normal algorithm
 						n_range_start.Set(&cpu_range_start);
-						maybe_adjust_hybrid_cpu_sequential_max((size_t)NTHREADS, cpu_range_start, n_range_end);
-						printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
-					}
+							maybe_adjust_cpu_sequential_max((size_t)NTHREADS, cpu_range_start, n_range_end,
+							                                "KEYHUNT_HYBRID_CPU_N", "HYBRID");
+							printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
 						}
-					}  // End of else (GPU available)
+							}
+						}  // End of else (GPU available)
 				}
 
 			// ============================================================================
 			// CPU Thread Mode (fall-through or default)
 			// ============================================================================
 #ifndef _WIN64
-			if (g_work_pool.enabled) {
-				shutdown_work_queue();
-			} else if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
-				configure_work_queue((size_t)NTHREADS);
-			} else {
-				shutdown_work_queue();
-			}
+				if (g_work_pool.enabled) {
+					shutdown_work_queue();
+				} else if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
+					configure_work_queue((size_t)NTHREADS);
+				} else {
+					shutdown_work_queue();
+				}
 #endif
 			profile_init_threads((int)NTHREADS);
 			for(j= 0;j < NTHREADS; j++)	{
