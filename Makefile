@@ -8,10 +8,11 @@ WARN_FLAGS := -Wall -Wextra
 CXXFLAGS ?=
 CFLAGS ?=
 
-# LTO disabled due to GCC optimization bug causing incorrect hash computation
-# See issue with GetHash160 producing wrong results when -flto is enabled
-# This appears to be a GCC bug with LTO and big integer operations
-LTO_FLAGS ?=
+# LTO enabled with -fno-strict-aliasing to fix GCC optimization bug
+# The Int class uses a union with uint32_t bits[] and uint64_t bits64[]
+# Type punning through this union causes incorrect aliasing assumptions in LTO
+# See secp256k1/Int.h for the union definition
+LTO_FLAGS ?= -flto=auto -fno-strict-aliasing
 
 # Optional CUDA backend (auto-detected if nvcc is available)
 NVCC ?= nvcc
