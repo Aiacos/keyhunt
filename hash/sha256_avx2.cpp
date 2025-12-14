@@ -13,13 +13,34 @@
 #include <string.h>
 #include <stdint.h>
 
+#if defined(__i386__) || defined(__x86_64__)
+static inline uint64_t xgetbv_u32(uint32_t index) {
+    uint32_t eax, edx;
+    __asm__ volatile (".byte 0x0f, 0x01, 0xd0" : "=a"(eax), "=d"(edx) : "c"(index));
+    return ((uint64_t)edx << 32) | eax;
+}
+
+static inline int os_avx_enabled(void) {
+    unsigned int eax, ebx, ecx, edx;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) return 0;
+    if (!(ecx & bit_OSXSAVE)) return 0;
+    if (!(ecx & bit_AVX)) return 0;
+    return (xgetbv_u32(0) & 0x6u) == 0x6u; /* XMM (bit1) + YMM (bit2) state enabled */
+}
+#endif
+
 // Check CPU support for AVX2
 int sha256_avx2_available(void) {
     unsigned int eax, ebx, ecx, edx;
 
     // Check for AVX2 support (CPUID function 7, subleaf 0, EBX bit 5)
     if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
-        return (ebx & (1 << 5)) != 0;  // AVX2 bit
+        if ((ebx & (1 << 5)) == 0) return 0;  // AVX2 bit
+#if defined(__i386__) || defined(__x86_64__)
+        return os_avx_enabled();
+#else
+        return 1;
+#endif
     }
     return 0;
 }

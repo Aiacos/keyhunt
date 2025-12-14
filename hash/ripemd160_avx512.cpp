@@ -12,6 +12,24 @@
 #include <immintrin.h>
 #include <cpuid.h>
 #include <stdio.h>
+#include <stdint.h>
+
+#if defined(__i386__) || defined(__x86_64__)
+static inline uint64_t xgetbv_u32(uint32_t index) {
+    uint32_t eax, edx;
+    __asm__ volatile (".byte 0x0f, 0x01, 0xd0" : "=a"(eax), "=d"(edx) : "c"(index));
+    return ((uint64_t)edx << 32) | eax;
+}
+
+static inline int os_avx512_enabled(void) {
+    unsigned int eax, ebx, ecx, edx;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) return 0;
+    if (!(ecx & bit_OSXSAVE)) return 0;
+    if (!(ecx & bit_AVX)) return 0;
+    /* XCR0: require XMM, YMM, opmask, ZMM_hi256, Hi16_ZMM (bits 1,2,5,6,7). */
+    return (xgetbv_u32(0) & 0xE6u) == 0xE6u;
+}
+#endif
 
 // Check CPU support for AVX-512F
 int ripemd160_avx512_available(void) {
@@ -19,7 +37,12 @@ int ripemd160_avx512_available(void) {
 
     // Check for AVX-512F support (CPUID function 7, subleaf 0, EBX bit 16)
     if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
-        return (ebx & (1 << 16)) != 0;  // AVX-512F bit
+        if ((ebx & (1 << 16)) == 0) return 0;  // AVX-512F bit
+#if defined(__i386__) || defined(__x86_64__)
+        return os_avx512_enabled();
+#else
+        return 1;
+#endif
     }
     return 0;
 }

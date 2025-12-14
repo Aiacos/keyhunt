@@ -667,6 +667,69 @@ __device__ void batch_points_to_affine(Point256_d *points, uint256_d *x_affine, 
     }
 }
 
+// Variant that also returns affine Y (needed for uncompressed pubkeys).
+__device__ void batch_points_to_affine_xy(Point256_d *points,
+                                         uint256_d *x_affine,
+                                         uint256_d *y_affine,
+                                         int *y_parity,
+                                         int n) {
+    if (n <= 0) return;
+    if (n == 1) {
+        if (u256_is_zero(&points[0].z)) {
+            u256_set_zero(&x_affine[0]);
+            u256_set_zero(&y_affine[0]);
+            y_parity[0] = 0;
+            return;
+        }
+        uint256_d z_inv, z_inv2, z_inv3;
+        mod_inv(&z_inv, &points[0].z);
+        mod_sqr(&z_inv2, &z_inv);
+        mod_mul(&x_affine[0], &points[0].x, &z_inv2);
+        mod_mul(&z_inv3, &z_inv2, &z_inv);
+        mod_mul(&y_affine[0], &points[0].y, &z_inv3);
+        y_parity[0] = y_affine[0].d[0] & 1;
+        return;
+    }
+
+    uint256_d z_vals[BATCH_INV_SIZE];
+    uint256_d products[BATCH_INV_SIZE];
+
+    u256_set(&z_vals[0], &points[0].z);
+    u256_set(&products[0], &points[0].z);
+    for (int i = 1; i < n; i++) {
+        u256_set(&z_vals[i], &points[i].z);
+        mod_mul(&products[i], &products[i-1], &z_vals[i]);
+    }
+
+    uint256_d inv_all;
+    mod_inv(&inv_all, &products[n-1]);
+
+    for (int i = n - 1; i > 0; i--) {
+        uint256_d z_inv, z_inv2, z_inv3;
+
+        mod_mul(&z_inv, &inv_all, &products[i-1]);
+
+        uint256_d tmp;
+        mod_mul(&tmp, &inv_all, &z_vals[i]);
+        u256_set(&inv_all, &tmp);
+
+        mod_sqr(&z_inv2, &z_inv);
+        mod_mul(&x_affine[i], &points[i].x, &z_inv2);
+        mod_mul(&z_inv3, &z_inv2, &z_inv);
+        mod_mul(&y_affine[i], &points[i].y, &z_inv3);
+        y_parity[i] = y_affine[i].d[0] & 1;
+    }
+
+    {
+        uint256_d z_inv2, z_inv3;
+        mod_sqr(&z_inv2, &inv_all);
+        mod_mul(&x_affine[0], &points[0].x, &z_inv2);
+        mod_mul(&z_inv3, &z_inv2, &inv_all);
+        mod_mul(&y_affine[0], &points[0].y, &z_inv3);
+        y_parity[0] = y_affine[0].d[0] & 1;
+    }
+}
+
 // ============================================================================
 // SHA-256 (device)
 // ============================================================================
@@ -742,6 +805,82 @@ __device__ void sha256_33(const uint8_t *msg, uint8_t *hash) {
         hash[i*4+2] = (H[i] >> 8) & 0xFF;
         hash[i*4+3] = H[i] & 0xFF;
     }
+}
+
+// SHA256 for 65-byte message (uncompressed pubkey: 0x04||X32||Y32).
+// This is a 2-block SHA256 with a fixed-length message.
+__device__ __forceinline__ void sha256_compress_block(uint32_t *H, const uint8_t *block) {
+    uint32_t W[64];
+
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        W[i] = ((uint32_t)block[i*4] << 24) | ((uint32_t)block[i*4+1] << 16) |
+               ((uint32_t)block[i*4+2] << 8) | (uint32_t)block[i*4+3];
+    }
+    #pragma unroll
+    for (int i = 16; i < 64; i++) {
+        uint32_t s0 = rotr(W[i-15], 7) ^ rotr(W[i-15], 18) ^ (W[i-15] >> 3);
+        uint32_t s1 = rotr(W[i-2], 17) ^ rotr(W[i-2], 19) ^ (W[i-2] >> 10);
+        W[i] = W[i-16] + s0 + W[i-7] + s1;
+    }
+
+    uint32_t a = H[0], b = H[1], c = H[2], d = H[3];
+    uint32_t e = H[4], f = H[5], g = H[6], h = H[7];
+
+    #pragma unroll
+    for (int i = 0; i < 64; i++) {
+        uint32_t S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        uint32_t ch = (e & f) ^ (~e & g);
+        uint32_t t1 = h + S1 + ch + SHA256_K[i] + W[i];
+        uint32_t S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t t2 = S0 + maj;
+
+        h = g; g = f; f = e; e = d + t1;
+        d = c; c = b; b = a; a = t1 + t2;
+    }
+
+    H[0] += a; H[1] += b; H[2] += c; H[3] += d;
+    H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+}
+
+__device__ void sha256_65(const uint8_t *msg, uint8_t *hash) {
+    uint32_t H[8];
+    #pragma unroll
+    for (int i = 0; i < 8; i++) H[i] = SHA256_H0[i];
+
+    // Block 0: msg[0..63]
+    sha256_compress_block(H, msg);
+
+    // Block 1: msg[64] + padding + length (520 bits)
+    uint8_t block[64];
+    #pragma unroll
+    for (int i = 0; i < 64; i++) block[i] = 0;
+    block[0] = msg[64];
+    block[1] = 0x80;
+    // last 8 bytes: big-endian length in bits (65*8 = 520 = 0x208)
+    block[62] = 0x02;
+    block[63] = 0x08;
+
+    sha256_compress_block(H, block);
+
+    // Output (big-endian)
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        hash[i*4]   = (H[i] >> 24) & 0xFF;
+        hash[i*4+1] = (H[i] >> 16) & 0xFF;
+        hash[i*4+2] = (H[i] >> 8) & 0xFF;
+        hash[i*4+3] = H[i] & 0xFF;
+    }
+}
+
+// Forward declaration (defined in RIPEMD-160 section below).
+__device__ void ripemd160_32(const uint8_t *msg, uint8_t *hash);
+
+__device__ __forceinline__ void hash160_65(const uint8_t *pubkey65, uint8_t *hash160) {
+    uint8_t sha_hash[32];
+    sha256_65(pubkey65, sha_hash);
+    ripemd160_32(sha_hash, hash160);
 }
 
 // ============================================================================
@@ -1320,7 +1459,8 @@ __device__ __forceinline__ int target_search_smart(const uint8_t * __restrict__ 
 
 struct FoundKey {
     uint256_d privkey;
-    int compressed;  // 2 = prefix 02, 3 = prefix 03
+    // 0 = uncompressed match, 2/3 = compressed prefix byte (02/03)
+    int compressed;
     int valid;
 };
 
@@ -1355,12 +1495,11 @@ __device__ __constant__ uint32_t SECP_GY[8] = {
     0x0E1108A8, 0x5DA4FBFC, 0x26A3C465, 0x483ADA77
 };
 
-__global__ void kernel_full_search(
+__global__ void kernel_full_search_compressed(
     const uint256_d start_key,
     uint64_t key_offset,
     uint64_t keys_per_thread,
     uint64_t keys_limit,
-    int compressed_only,
     const uint8_t * __restrict__ gtable,
     const uint8_t * __restrict__ targets, size_t target_count,
     const uint8_t * __restrict__ bloom, size_t bloom_size, int bloom_hashes,
@@ -1456,7 +1595,7 @@ __global__ void kernel_full_search(
 
             uint8_t hash160[20];
 
-            // Check prefix 02 (even Y)
+            // Compressed pubkey: prefix (02/03) + X
             pubkey[0] = 0x02 + batch_y_parity[b];  // 0x02 if even, 0x03 if odd
 
 #if USE_OPTIMIZED_HASH
@@ -1477,27 +1616,146 @@ __global__ void kernel_full_search(
             if (found >= 0) {
                 report_found_key(&batch_keys[b], pubkey[0]);
             }
+        }
 
-            // In compressed-only mode we already have Y parity, so only one prefix is valid.
-            // The opposite prefix would correspond to -P (order - k), which is a different key.
-            if (!compressed_only) {
-                // Check opposite parity (02↔03) - reuse pubkey, only change prefix
-                pubkey[0] ^= 0x01;  // Toggle between 02 and 03
+        keys_remaining -= batch_size;
+    }
+}
+
+__global__ void kernel_full_search_xy(
+    const uint256_d start_key,
+    uint64_t key_offset,
+    uint64_t keys_per_thread,
+    uint64_t keys_limit,
+    int search_compressed,
+    int search_uncompressed,
+    const uint8_t * __restrict__ gtable,
+    const uint8_t * __restrict__ targets, size_t target_count,
+    const uint8_t * __restrict__ bloom, size_t bloom_size, int bloom_hashes,
+    int use_bloom,
+    volatile int *should_stop
+) {
+    uint64_t thread_id = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t base_offset = key_offset + thread_id * keys_per_thread;
+
+    if (base_offset >= keys_limit) {
+        return;
+    }
+    uint64_t keys_remaining = keys_per_thread;
+    uint64_t max_keys_for_thread = keys_limit - base_offset;
+    if (keys_remaining > max_keys_for_thread) {
+        keys_remaining = max_keys_for_thread;
+    }
+
+    uint256_d current_key;
+    u256_set(&current_key, &start_key);
+
+    uint64_t carry = base_offset;
+    #pragma unroll
+    for (int i = 0; i < 8 && carry; i++) {
+        uint64_t sum = (uint64_t)current_key.d[i] + (carry & 0xFFFFFFFF);
+        current_key.d[i] = (uint32_t)sum;
+        carry = (sum >> 32) + (carry >> 32);
+    }
+
+    Point256_d batch_points[BATCH_INV_SIZE];
+    uint256_d batch_keys[BATCH_INV_SIZE];
+    uint256_d batch_x_affine[BATCH_INV_SIZE];
+    uint256_d batch_y_affine[BATCH_INV_SIZE];
+    int batch_y_parity[BATCH_INV_SIZE];
+
+    uint256_d Gx, Gy;
+    gtable_get_point(&Gx, &Gy, gtable, 0, 1);
+
+    while (keys_remaining > 0 && !(*should_stop)) {
+        int batch_size = (keys_remaining >= BATCH_INV_SIZE) ? BATCH_INV_SIZE : (int)keys_remaining;
+
+        scalar_mul_G(&batch_points[0], &current_key, gtable);
+        u256_set(&batch_keys[0], &current_key);
+
+        uint64_t c = 1;
+        for (int j = 0; j < 8 && c; j++) {
+            uint64_t sum = (uint64_t)current_key.d[j] + c;
+            current_key.d[j] = (uint32_t)sum;
+            c = sum >> 32;
+        }
+
+        for (int b = 1; b < batch_size; b++) {
+            point_add_affine(&batch_points[b], &batch_points[b-1], &Gx, &Gy);
+            u256_set(&batch_keys[b], &current_key);
+
+            c = 1;
+            for (int j = 0; j < 8 && c; j++) {
+                uint64_t sum = (uint64_t)current_key.d[j] + c;
+                current_key.d[j] = (uint32_t)sum;
+                c = sum >> 32;
+            }
+        }
+
+        batch_points_to_affine_xy(batch_points, batch_x_affine, batch_y_affine, batch_y_parity, batch_size);
+
+        #pragma unroll 2
+        for (int b = 0; b < batch_size; b++) {
+            uint8_t hash160[20];
+
+            if (search_compressed) {
+                uint8_t pubkey33[33];
+                #pragma unroll
+                for (int w = 0; w < 8; w++) {
+                    uint32_t val = batch_x_affine[b].d[7 - w];
+                    pubkey33[w*4 + 1] = (val >> 24);
+                    pubkey33[w*4 + 2] = (val >> 16);
+                    pubkey33[w*4 + 3] = (val >> 8);
+                    pubkey33[w*4 + 4] = val;
+                }
+                pubkey33[0] = 0x02 + batch_y_parity[b];
 
 #if USE_OPTIMIZED_HASH
-                hash160_33_optimized(pubkey, hash160);
+                hash160_33_optimized(pubkey33, hash160);
 #else
-                sha256_33(pubkey, sha_hash);
+                uint8_t sha_hash[32];
+                sha256_33(pubkey33, sha_hash);
                 ripemd160_32(sha_hash, hash160);
 #endif
 
-                found = -1;
+                int found = -1;
                 if (!use_bloom || !bloom || bloom_size == 0 ||
                     bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
                     found = target_search_smart(targets, target_count, hash160);
                 }
                 if (found >= 0) {
-                    report_found_key(&batch_keys[b], pubkey[0]);
+                    report_found_key(&batch_keys[b], pubkey33[0]);
+                }
+            }
+
+            if (search_uncompressed) {
+                uint8_t pubkey65[65];
+                pubkey65[0] = 0x04;
+
+                #pragma unroll
+                for (int w = 0; w < 8; w++) {
+                    uint32_t vx = batch_x_affine[b].d[7 - w];
+                    pubkey65[w*4 + 1]  = (vx >> 24);
+                    pubkey65[w*4 + 2]  = (vx >> 16);
+                    pubkey65[w*4 + 3]  = (vx >> 8);
+                    pubkey65[w*4 + 4]  = vx;
+
+                    uint32_t vy = batch_y_affine[b].d[7 - w];
+                    pubkey65[33 + w*4]     = (vy >> 24);
+                    pubkey65[33 + w*4 + 1] = (vy >> 16);
+                    pubkey65[33 + w*4 + 2] = (vy >> 8);
+                    pubkey65[33 + w*4 + 3] = vy;
+                }
+
+                hash160_65(pubkey65, hash160);
+
+                int found = -1;
+                if (!use_bloom || !bloom || bloom_size == 0 ||
+                    bloom_check(bloom, bloom_size, bloom_hashes, hash160)) {
+                    found = target_search_smart(targets, target_count, hash160);
+                }
+                if (found >= 0) {
+                    report_found_key(&batch_keys[b], 0);
                 }
             }
         }
@@ -1584,7 +1842,8 @@ static int gpu_autotune_launch_params(int threads_per_block,
                                      int *io_blocks_per_sm,
                                      uint64_t *io_keys_per_thread,
                                      const uint256_d *start_key,
-                                     int compressed_only) {
+                                     int search_compressed,
+                                     int search_uncompressed) {
     if (!io_blocks_per_sm || !io_keys_per_thread || !start_key) return 0;
     if (!g_available) return 0;
 
@@ -1627,9 +1886,16 @@ static int gpu_autotune_launch_params(int threads_per_block,
     {
         const int blocks = g_info.multiprocessors * best_blocks_per_sm;
         const uint64_t keys_limit = (uint64_t)blocks * (uint64_t)threads_per_block * best_kpt;
-        kernel_full_search<<<blocks, threads_per_block, 0, stream>>>(
-            *start_key, 0, best_kpt, keys_limit, compressed_only,
-            d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+        if (search_uncompressed) {
+            kernel_full_search_xy<<<blocks, threads_per_block, 0, stream>>>(
+                *start_key, 0, best_kpt, keys_limit,
+                search_compressed, search_uncompressed,
+                d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+        } else {
+            kernel_full_search_compressed<<<blocks, threads_per_block, 0, stream>>>(
+                *start_key, 0, best_kpt, keys_limit,
+                d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+        }
         cudaStreamSynchronize(stream);
     }
 
@@ -1644,9 +1910,16 @@ static int gpu_autotune_launch_params(int threads_per_block,
             const uint64_t keys_limit = (uint64_t)blocks * (uint64_t)threads_per_block * kpt;
 
             cudaEventRecord(ev_start, stream);
-            kernel_full_search<<<blocks, threads_per_block, 0, stream>>>(
-                *start_key, 0, kpt, keys_limit, compressed_only,
-                d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+            if (search_uncompressed) {
+                kernel_full_search_xy<<<blocks, threads_per_block, 0, stream>>>(
+                    *start_key, 0, kpt, keys_limit,
+                    search_compressed, search_uncompressed,
+                    d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+            } else {
+                kernel_full_search_compressed<<<blocks, threads_per_block, 0, stream>>>(
+                    *start_key, 0, kpt, keys_limit,
+                    d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
+            }
             cudaEventRecord(ev_end, stream);
             err = cudaEventSynchronize(ev_end);
             if (err != cudaSuccess) {
@@ -2269,19 +2542,34 @@ int gpu_full_search(const gpu_search_config_t *config) {
             cudaMemcpyAsync(ctx->d_should_stop[worker->stream_idx], &should_stop_val, sizeof(int),
                            cudaMemcpyHostToDevice, ctx->streams[worker->stream_idx]);
 
-            // Launch kernel
-            kernel_full_search<<<blocks, threads_per_block, 0, ctx->streams[worker->stream_idx]>>>(
-                cursor,
-                0,
-                actual_keys_per_thread,
-                keys_this_launch,
-                config->compressed_only,
-                ctx->d_GTable,
-                ctx->d_targets, g_target_count,
-                ctx->d_bloom, g_bloom_size, g_bloom_hashes,
-                config->use_bloom,
-                ctx->d_should_stop[worker->stream_idx]
-            );
+            // Launch kernel (keep the compressed-only kernel as the fast path)
+            if (config->search_uncompressed) {
+                kernel_full_search_xy<<<blocks, threads_per_block, 0, ctx->streams[worker->stream_idx]>>>(
+                    cursor,
+                    0,
+                    actual_keys_per_thread,
+                    keys_this_launch,
+                    config->search_compressed,
+                    config->search_uncompressed,
+                    ctx->d_GTable,
+                    ctx->d_targets, g_target_count,
+                    ctx->d_bloom, g_bloom_size, g_bloom_hashes,
+                    config->use_bloom,
+                    ctx->d_should_stop[worker->stream_idx]
+                );
+            } else {
+                kernel_full_search_compressed<<<blocks, threads_per_block, 0, ctx->streams[worker->stream_idx]>>>(
+                    cursor,
+                    0,
+                    actual_keys_per_thread,
+                    keys_this_launch,
+                    ctx->d_GTable,
+                    ctx->d_targets, g_target_count,
+                    ctx->d_bloom, g_bloom_size, g_bloom_hashes,
+                    config->use_bloom,
+                    ctx->d_should_stop[worker->stream_idx]
+                );
+            }
 
             // Advance cursor
             u256_add_u64_host(&cursor, keys_this_launch);
@@ -2331,11 +2619,11 @@ int gpu_full_search(const gpu_search_config_t *config) {
                             privkey_be[w2*4 + 3] = val & 0xFF;
                         }
 
-                        if (config->callback) {
-                            config->callback(privkey_be,
-                                           h_found[i].compressed == 2 || h_found[i].compressed == 3,
-                                           config->callback_userdata);
-                        }
+	                        if (config->callback) {
+	                            config->callback(privkey_be,
+	                                           h_found[i].compressed != 0,
+	                                           config->callback_userdata);
+	                        }
                     }
                 }
 
@@ -2416,11 +2704,11 @@ int gpu_full_search(const gpu_search_config_t *config) {
                         privkey_be[w2*4 + 2] = (val >> 8) & 0xFF;
                         privkey_be[w2*4 + 3] = val & 0xFF;
                     }
-                    if (config->callback) {
-                        config->callback(privkey_be,
-                                        h_found[i].compressed == 2 || h_found[i].compressed == 3,
-                                        config->callback_userdata);
-                    }
+	                    if (config->callback) {
+	                        config->callback(privkey_be,
+	                                        h_found[i].compressed != 0,
+	                                        config->callback_userdata);
+	                    }
                 }
             }
         }

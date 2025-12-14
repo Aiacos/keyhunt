@@ -86,6 +86,10 @@ Optional work-stealing (dynamic load balancing; opt-in):
 | `xpoint` | No | Planned |
 | `bsgs` | No | No |
 
+Notes:
+- `GPU Full` supports `-l compress`, `-l uncompress`, and `-l both` for BTC (`rmd160` / `address`). `-l both` is slower than `-l compress` because it computes and checks both pubkey encodings.
+- `GPU Hash` mode supports only compressed pubkeys (`-l compress`).
+
 ## Performance
 
 Benchmark on RTX 2080 SUPER (puzzle 71, compress mode):

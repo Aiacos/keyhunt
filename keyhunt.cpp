@@ -7,6 +7,7 @@ email: albertobsd@gmail.com
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 #include <math.h>
 #include <time.h>
 #include <chrono>
@@ -14,6 +15,9 @@ email: albertobsd@gmail.com
 #include <algorithm>
 #include <atomic>
 #include <inttypes.h>
+#ifndef _WIN64
+#include <time.h>
+#endif
 #include "base58/libbase58.h"
 #include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
@@ -43,6 +47,9 @@ email: albertobsd@gmail.com
 #include <pthread.h>
 #include <sys/random.h>
 #include <strings.h>
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
 #endif
 
 #ifdef __unix__
@@ -77,6 +84,147 @@ static bool g_avx2_available = false;
 #ifndef _WIN64
 static WorkQueue<Int> g_workQueue;
 #endif
+
+// ---------------------------------------------------------------------------
+// Lightweight internal profiler (enabled via KEYHUNT_PROFILE=1)
+// ---------------------------------------------------------------------------
+
+static inline bool env_truthy_kh(const char *name) {
+	const char *v = getenv(name);
+	if (!v || !*v) return false;
+	if (v[0] == '0' && v[1] == '\0') return false;
+	if ((v[0] == 'f' || v[0] == 'F') && (v[1] == 'a' || v[1] == 'A')) return false;
+	if ((v[0] == 'n' || v[0] == 'N') && (v[1] == 'o' || v[1] == 'O')) return false;
+	return true;
+}
+
+typedef struct {
+	uint64_t ns_ec;
+	uint64_t ns_hash;
+	uint64_t ns_bloom;
+	uint64_t ns_binsearch;
+	uint64_t ns_write;
+	uint64_t keys;
+} profile_counters_t;
+
+static bool g_profile_enabled = false;
+static profile_counters_t *g_profile_counters = NULL;
+static int g_profile_thread_count = 0;
+static profile_counters_t g_profile_prev_agg;
+
+static thread_local profile_counters_t *tls_prof = NULL;
+
+static inline uint64_t profile_now_ns() {
+#if defined(_WIN64) && !defined(__CYGWIN__)
+	return 0;
+#else
+	struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+	clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+#else
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
+	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+#endif
+}
+
+struct profile_scope_t {
+	uint64_t start;
+	uint64_t *target;
+	explicit profile_scope_t(uint64_t *t) : start(0), target(t) {
+		if (t) start = profile_now_ns();
+	}
+	~profile_scope_t() {
+		if (target) {
+			*target += (profile_now_ns() - start);
+		}
+	}
+};
+
+#define KH_PROF_PTR() ((__builtin_expect(g_profile_enabled, 0) && tls_prof) ? tls_prof : NULL)
+#define KH_PROF_SCOPE(field) profile_scope_t _kh_prof_scope_##__LINE__(KH_PROF_PTR() ? &KH_PROF_PTR()->field : NULL)
+#define KH_PROF_ADD_KEYS(n) do { profile_counters_t *p = KH_PROF_PTR(); if (p) p->keys += (uint64_t)(n); } while(0)
+
+static inline void profile_init_threads(int nthreads) {
+	if (!g_profile_enabled || nthreads <= 0 || g_profile_counters) return;
+	g_profile_counters = (profile_counters_t *)calloc((size_t)nthreads, sizeof(profile_counters_t));
+	if (!g_profile_counters) {
+		fprintf(stderr, "[W] Profiling requested but allocation failed\n");
+		g_profile_enabled = false;
+		return;
+	}
+	g_profile_thread_count = nthreads;
+	memset(&g_profile_prev_agg, 0, sizeof(g_profile_prev_agg));
+}
+
+static inline void profile_set_thread(int idx) {
+	if (!g_profile_enabled || !g_profile_counters || idx < 0 || idx >= g_profile_thread_count) {
+		tls_prof = NULL;
+		return;
+	}
+	tls_prof = &g_profile_counters[idx];
+}
+
+static inline void profile_aggregate(profile_counters_t *out) {
+	memset(out, 0, sizeof(*out));
+	if (!g_profile_enabled || !g_profile_counters) return;
+	for (int i = 0; i < g_profile_thread_count; i++) {
+		out->ns_ec += g_profile_counters[i].ns_ec;
+		out->ns_hash += g_profile_counters[i].ns_hash;
+		out->ns_bloom += g_profile_counters[i].ns_bloom;
+		out->ns_binsearch += g_profile_counters[i].ns_binsearch;
+		out->ns_write += g_profile_counters[i].ns_write;
+		out->keys += g_profile_counters[i].keys;
+	}
+}
+
+static void append_profile_info(char *buffer, size_t bufferSize) {
+	if (!g_profile_enabled || !g_profile_counters || bufferSize < 4) return;
+
+	profile_counters_t cur;
+	profile_aggregate(&cur);
+
+	profile_counters_t delta;
+	delta.ns_ec = cur.ns_ec - g_profile_prev_agg.ns_ec;
+	delta.ns_hash = cur.ns_hash - g_profile_prev_agg.ns_hash;
+	delta.ns_bloom = cur.ns_bloom - g_profile_prev_agg.ns_bloom;
+	delta.ns_binsearch = cur.ns_binsearch - g_profile_prev_agg.ns_binsearch;
+	delta.ns_write = cur.ns_write - g_profile_prev_agg.ns_write;
+	delta.keys = cur.keys - g_profile_prev_agg.keys;
+	g_profile_prev_agg = cur;
+
+	const uint64_t total_ns = delta.ns_ec + delta.ns_hash + delta.ns_bloom + delta.ns_binsearch + delta.ns_write;
+	if (delta.keys == 0 || total_ns == 0) return;
+
+	const unsigned ec_pct = (unsigned)((delta.ns_ec * 100ULL) / total_ns);
+	const unsigned hash_pct = (unsigned)((delta.ns_hash * 100ULL) / total_ns);
+	const unsigned bloom_pct = (unsigned)((delta.ns_bloom * 100ULL) / total_ns);
+	const unsigned bin_pct = (unsigned)((delta.ns_binsearch * 100ULL) / total_ns);
+	const unsigned write_pct = (unsigned)((delta.ns_write * 100ULL) / total_ns);
+	const uint64_t ns_per_key = total_ns / delta.keys;
+
+	char addition[256];
+	snprintf(addition, sizeof(addition),
+	         " | prof %luns/key EC%u Hash%u Bloom%u Bin%u Write%u",
+	         (unsigned long)ns_per_key, ec_pct, hash_pct, bloom_pct, bin_pct, write_pct);
+
+	size_t len = strlen(buffer);
+	char tail = 0;
+	if (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
+		tail = buffer[len - 1];
+		buffer[len - 1] = '\0';
+		len--;
+	}
+	size_t remaining = (len < bufferSize) ? bufferSize - len : 0;
+	if (remaining > 1) {
+		strncat(buffer, addition, remaining - 1);
+		len = strlen(buffer);
+	}
+	if (tail != 0 && len + 1 < bufferSize) {
+		buffer[len] = tail;
+		buffer[len + 1] = '\0';
+	}
+}
 
 // ============================================================================
 // Work-stealing pool for GPU/CPU collaboration
@@ -1050,6 +1198,7 @@ static void *gpu_full_stats_thread(void *arg) {
 		         "[+] Total %s keys in %s seconds (last %d s): CPU 0 keys/s | GPU %s | TOTAL %s\n",
 		         str_total ? str_total : "?", seconds_buf, period, gpu_rate_str, gpu_rate_str);
 		append_progress_info(buffer, sizeof(buffer));
+		append_profile_info(buffer, sizeof(buffer));
 		printf("%s", buffer);
 		fflush(stdout);
 
@@ -1129,6 +1278,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 
 				if (wantCompressed) {
 					if (haveYForCompressed) {
+						KH_PROF_SCOPE(ns_hash);
 						// Y is available: compute only the actual compressed hash (single parity)
 						if (g_sysinfo.has_avx512) {
 							for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
@@ -1168,6 +1318,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 					// Compressed-only: Y is not computed, so check both parities from X.
 					// Only use GPU hash-only offload in HASH mode; in FULL/HYBRID it would contend with the GPU search.
 					if (FLAGGPU == 1 && FLAGGPU_FULL == 0 && gpu_backend_available()) {
+						KH_PROF_SCOPE(ns_hash);
 						alignas(32) uint8_t x32_be[CPU_GRP_SIZE * 32];
 						for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
 							pts[idx].x.Get32Bytes(x32_be + idx * 32);
@@ -1180,6 +1331,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 					}
 				} else {
 cpu_compress_only_hash:
+				KH_PROF_SCOPE(ns_hash);
 				if (g_sysinfo.has_avx512) {
 					for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
 						secp->GetHash160_fromX_02_03_AVX512(P2PKH,
@@ -1233,6 +1385,7 @@ cpu_compress_only_hash:
 		}
 
 	if (wantUncompressed) {
+		KH_PROF_SCOPE(ns_hash);
 		if (g_sysinfo.has_avx512) {
 			// AVX-512 path: process 16 hashes at a time
 			for (size_t idx = 0; idx < CPU_GRP_SIZE; idx += 16) {
@@ -1278,7 +1431,7 @@ cpu_compress_only_hash:
 
 	// Batch bloom filter checking - process 64 hashes at a time
 	const size_t BATCH_SIZE = 64;
-	const uint8_t *batchPtrs[BATCH_SIZE];
+	const size_t HASH_STRIDE = 20;
 
 	// Helper lambda to compute key at index using O(1) multiplication
 	// Note: stride is a global variable, no need to capture it
@@ -1306,15 +1459,22 @@ cpu_compress_only_hash:
 								}
 							}
 						} else {
-							for (int i = 0; i < batchCount; i++) {
-								batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
+							uint64_t hits;
+							{
+								KH_PROF_SCOPE(ns_bloom);
+								hits = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashCompressed02[base], HASH_STRIDE, batchCount);
 							}
-							uint64_t hits = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
 							while (hits) {
 								int i = __builtin_ctzll(hits);
 								hits &= hits - 1;
 								size_t idx = base + (size_t)i;
-								if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+								int found;
+								{
+									KH_PROF_SCOPE(ns_binsearch);
+									found = searchbinary(addressTable, hashCompressed02[idx], N);
+								}
+								if (found) {
+									KH_PROF_SCOPE(ns_write);
 									Int candidate;
 									computeKeyAtIndex(candidate, idx);
 									writekey(true, &candidate);
@@ -1347,15 +1507,22 @@ cpu_compress_only_hash:
 								}
 							}
 						} else {
-							for (int i = 0; i < batchCount; i++) {
-								batchPtrs[i] = (const uint8_t*)hashCompressed02[base + i];
+							uint64_t hits02;
+							{
+								KH_PROF_SCOPE(ns_bloom);
+								hits02 = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashCompressed02[base], HASH_STRIDE, batchCount);
 							}
-							uint64_t hits02 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
 							while (hits02) {
 								int i = __builtin_ctzll(hits02);
 								hits02 &= hits02 - 1;
 								size_t idx = base + (size_t)i;
-								if (searchbinary(addressTable, hashCompressed02[idx], N)) {
+								int found;
+								{
+									KH_PROF_SCOPE(ns_binsearch);
+									found = searchbinary(addressTable, hashCompressed02[idx], N);
+								}
+								if (found) {
+									KH_PROF_SCOPE(ns_write);
 									Int candidate;
 									computeKeyAtIndex(candidate, idx);
 									publickey = secp->ComputePublicKey(&candidate);
@@ -1366,15 +1533,22 @@ cpu_compress_only_hash:
 									writekey(true, &candidate);
 								}
 							}
-							for (int i = 0; i < batchCount; i++) {
-								batchPtrs[i] = (const uint8_t*)hashCompressed03[base + i];
+							uint64_t hits03;
+							{
+								KH_PROF_SCOPE(ns_bloom);
+								hits03 = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashCompressed03[base], HASH_STRIDE, batchCount);
 							}
-							uint64_t hits03 = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
 							while (hits03) {
 								int i = __builtin_ctzll(hits03);
 								hits03 &= hits03 - 1;
 								size_t idx = base + (size_t)i;
-								if (searchbinary(addressTable, hashCompressed03[idx], N)) {
+								int found;
+								{
+									KH_PROF_SCOPE(ns_binsearch);
+									found = searchbinary(addressTable, hashCompressed03[idx], N);
+								}
+								if (found) {
+									KH_PROF_SCOPE(ns_write);
 									Int candidate;
 									computeKeyAtIndex(candidate, idx);
 									publickey = secp->ComputePublicKey(&candidate);
@@ -1400,16 +1574,23 @@ cpu_compress_only_hash:
 				}
 			} else {
 				// Batch bloom check for uncompressed hashes
-				for (int i = 0; i < batchCount; i++) {
-					batchPtrs[i] = (const uint8_t*)hashUncompressed[base + i];
+				uint64_t hitsU;
+				{
+					KH_PROF_SCOPE(ns_bloom);
+					hitsU = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashUncompressed[base], HASH_STRIDE, batchCount);
 				}
-				uint64_t hitsU = bloom_ext_check_rmd160_batch(&bloom, batchPtrs, batchCount);
 				// Process hits
 				while (hitsU) {
 					int i = __builtin_ctzll(hitsU);
 					hitsU &= hitsU - 1;
 					size_t idx = base + i;
-					if (searchbinary(addressTable, hashUncompressed[idx], N)) {
+					int found;
+					{
+						KH_PROF_SCOPE(ns_binsearch);
+						found = searchbinary(addressTable, hashUncompressed[idx], N);
+					}
+					if (found) {
+						KH_PROF_SCOPE(ns_write);
 						Int candidate;
 						computeKeyAtIndex(candidate, idx);
 						writekey(false, &candidate);
@@ -1425,6 +1606,7 @@ cpu_compress_only_hash:
 	strideTotal.Mult(&stride);
 	key_mpz.Add(&strideTotal);
 	count += CPU_GRP_SIZE;
+	KH_PROF_ADD_KEYS(CPU_GRP_SIZE);
 }
 
 static bool gpu_selftest_hash160_fromX() {
@@ -1487,7 +1669,6 @@ int main(int argc, char **argv)	{
 	char *str_total = NULL;
 	char *str_pretotal = NULL;
 	char *str_divpretotal = NULL;
-	char *bf_ptr = NULL;
 	char *bPload_threads_available;
 	FILE *fd,*fd_aux1,*fd_aux2,*fd_aux3;
 	uint64_t i,BASE,PERTHREAD_R,itemsbloom,itemsbloom2,itemsbloom3;
@@ -1549,6 +1730,11 @@ int main(int argc, char **argv)	{
 	
 	
 	printf("[+] Version %s, developed by AlbertoBSD\n",version);
+
+	g_profile_enabled = env_truthy_kh("KEYHUNT_PROFILE");
+	if (g_profile_enabled) {
+		fprintf(stderr, "[I] Profiling enabled (KEYHUNT_PROFILE=1)\n");
+	}
 
 	// Auto-detect system configuration and optimize parameters
 	// (sysinfo is now a global variable for memory checks)
@@ -1673,6 +1859,7 @@ int main(int argc, char **argv)	{
 					raw_baseminikey = (char*) malloc(23);
 					checkpointer((void *)raw_baseminikey,__FILE__,"malloc","raw_baseminikey" ,__LINE__ - 1);
 					strncpy(str_baseminikey,optarg,22);
+					str_baseminikey[22] = '\0';
 					for(i = 0; i< 21; i++)	{
 						if(strchr(Ccoinbuffer,str_baseminikey[i+1]) != NULL)	{
 							raw_baseminikey[i] = (int)(strchr(Ccoinbuffer,str_baseminikey[i+1]) - Ccoinbuffer) % 58;
@@ -1683,9 +1870,10 @@ int main(int argc, char **argv)	{
 						}
 						
 					}
+					raw_baseminikey[21] = '\0';
 				}
 				else	{
-					fprintf(stderr,"[E] Invalid Minikey length %li : %s\n",strlen(optarg),optarg);
+					fprintf(stderr,"[E] Invalid Minikey length %zu : %s\n",strlen(optarg),optarg);
 					exit(EXIT_FAILURE);
 				}
 				
@@ -2013,21 +2201,31 @@ int main(int argc, char **argv)	{
 	if(FLAGFILE == 0) {
 		fileName =(char*) default_fileName;
 	}
-	
-	if(FLAGMODE == MODE_ADDRESS && FLAGCRYPTO == CRYPTO_NONE) {	//When none crypto is defined the default search is for Bitcoin
-		FLAGCRYPTO = CRYPTO_BTC;
-		printf("[+] Setting search for btc adddress\n");
-	}
+		
+		if(FLAGMODE == MODE_ADDRESS && FLAGCRYPTO == CRYPTO_NONE) {	//When none crypto is defined the default search is for Bitcoin
+			FLAGCRYPTO = CRYPTO_BTC;
+			printf("[+] Setting search for btc adddress\n");
+		}
+		if(FLAGMODE == MODE_RMD160 && FLAGCRYPTO == CRYPTO_NONE) {	// Default rmd160 search is Bitcoin HASH160 (same pipeline as address mode)
+			FLAGCRYPTO = CRYPTO_BTC;
+			printf("[+] Setting search for btc rmd160\n");
+		}
 
 	// ============================================================================
 	// GPU Mode Resolution and Validation
 	// ============================================================================
-		{
-			int gpu_available = gpu_backend_available();
-			int mode_supports_gpu = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
-									FLAGCRYPTO == CRYPTO_BTC &&
-									!FLAGENDOMORPHISM &&
-									FLAGSEARCH == SEARCH_COMPRESS;
+			{
+				int gpu_available = gpu_backend_available();
+				const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
+				const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
+				const int mode_supports_gpu_full = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
+										FLAGCRYPTO == CRYPTO_BTC &&
+										!FLAGENDOMORPHISM &&
+										(wantCompressed || wantUncompressed);
+				const int mode_supports_gpu_hash = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
+										FLAGCRYPTO == CRYPTO_BTC &&
+										!FLAGENDOMORPHISM &&
+										wantCompressed && !wantUncompressed;
 
 		// Show GPU backend status
 		if (FLAGGPU != 0 || FLAGGPU_FULL != 0) {
@@ -2046,26 +2244,26 @@ int main(int argc, char **argv)	{
 			}
 		}
 
-		// Resolve auto mode (-G auto)
-		if (FLAGGPU == -1 || FLAGGPU_FULL == -1) {
-			if (gpu_available && mode_supports_gpu) {
-				// Auto: prefer full GPU mode if available
-				FLAGGPU = 1;
-				FLAGGPU_FULL = 1;
-				printf("[+] GPU auto: using full mode (ECC + hash160 + matching on GPU)\n");
-			} else {
+			// Resolve auto mode (-G auto)
+			if (FLAGGPU == -1 || FLAGGPU_FULL == -1) {
+				if (gpu_available && mode_supports_gpu_full) {
+					// Auto: prefer full GPU mode if available
+					FLAGGPU = 1;
+					FLAGGPU_FULL = 1;
+					printf("[+] GPU auto: using full mode (ECC + hash160 + matching on GPU)\n");
+				} else {
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
-				if (!gpu_available) {
-					fprintf(stderr, "[I] GPU auto: falling back to CPU (no GPU available)\n");
-				} else if (!mode_supports_gpu) {
-					fprintf(stderr, "[I] GPU auto: falling back to CPU (mode not supported)\n");
+					if (!gpu_available) {
+						fprintf(stderr, "[I] GPU auto: falling back to CPU (no GPU available)\n");
+					} else if (!mode_supports_gpu_full) {
+						fprintf(stderr, "[I] GPU auto: falling back to CPU (mode not supported)\n");
+					}
 				}
 			}
-		}
 
-			// Validate explicit GPU requests
-			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
+				// Validate explicit GPU requests
+				if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
 				fprintf(stderr, "[W] GPU requested but not available, falling back to CPU\n");
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
@@ -2080,12 +2278,23 @@ int main(int argc, char **argv)	{
 				FLAGGPU_HYBRID = 0;
 			}
 
-			// Validate mode support
-			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !mode_supports_gpu) {
-				fprintf(stderr, "[W] GPU not supported for this mode/options, using CPU\n");
-				FLAGGPU = 0;
-			FLAGGPU_FULL = 0;
-		}
+				// Validate mode support
+				if (FLAGGPU_FULL == 1 && !mode_supports_gpu_full) {
+					fprintf(stderr, "[W] GPU FULL not supported for this mode/options, using CPU\n");
+					FLAGGPU = 0;
+					FLAGGPU_FULL = 0;
+				}
+				if (FLAGGPU == 1 && FLAGGPU_FULL == 0 && !mode_supports_gpu_hash) {
+					// If the user asked for HASH mode but also requested uncompressed, upgrade to FULL when possible.
+					if (wantUncompressed && gpu_available && mode_supports_gpu_full) {
+						fprintf(stderr, "[I] GPU HASH mode does not support uncompressed; upgrading to GPU FULL\n");
+						FLAGGPU_FULL = 1;
+					} else {
+						fprintf(stderr, "[W] GPU HASH not supported for this mode/options, using CPU\n");
+						FLAGGPU = 0;
+						FLAGGPU_FULL = 0;
+					}
+				}
 
 		// Show final GPU mode
 		if (FLAGGPU_FULL == 1) {
@@ -2123,17 +2332,33 @@ int main(int argc, char **argv)	{
 	}
 	if(FLAGRANGE) {
 		n_range_start.SetBase16(range_start);
+		// `-r start:end` is user-facing and treated as inclusive for `end`.
+		// Internally we keep `n_range_end` as an exclusive upper bound (like Int::Rand()).
+		n_range_end.SetBase16(range_end);
 		if(n_range_start.IsZero())	{
 			n_range_start.AddOne();
 		}
-		n_range_end.SetBase16(range_end);
-		if(n_range_start.IsEqual(&n_range_end) == false ) {
+		if(n_range_end.IsZero())	{
+			fprintf(stderr,"[E] End range can't be zero\nFallback to random mode!\n");
+			FLAGRANGE = 0;
+		}
+		if(FLAGRANGE)	{
+			if( n_range_start.IsGreater(&n_range_end)) {
+				fprintf(stderr,"[W] Opps, start range can't be great than end range. Swapping them\n");
+				n_range_aux.Set(&n_range_start);
+				n_range_start.Set(&n_range_end);
+				n_range_end.Set(&n_range_aux);
+				if(n_range_start.IsZero())	{
+					n_range_start.AddOne();
+				}
+			}
 			if(  n_range_start.IsLower(&secp->order) &&  n_range_end.IsLowerOrEqual(&secp->order) )	{
-				if( n_range_start.IsGreater(&n_range_end)) {
-					fprintf(stderr,"[W] Opps, start range can't be great than end range. Swapping them\n");
-					n_range_aux.Set(&n_range_start);
-					n_range_start.Set(&n_range_end);
-					n_range_end.Set(&n_range_aux);
+				// Convert inclusive end -> exclusive end, clamped to curve order.
+				if (n_range_end.IsLower(&secp->order)) {
+					n_range_end.AddOne();
+				} else {
+					// If user specified order, clamp: valid keys are [1, order-1].
+					n_range_end.Set(&secp->order);
 				}
 				n_range_diff.Set(&n_range_end);
 				n_range_diff.Sub(&n_range_start);
@@ -2142,10 +2367,6 @@ int main(int argc, char **argv)	{
 				fprintf(stderr,"[E] Start and End range can't be great than N\nFallback to random mode!\n");
 				FLAGRANGE = 0;
 			}
-		}
-		else	{
-			fprintf(stderr,"[E] Start and End range can't be the same\nFallback to random mode!\n");
-			FLAGRANGE = 0;
 		}
 	}
 	if(FLAGMODE != MODE_BSGS && FLAGMODE != MODE_MINIKEYS)	{
@@ -2179,11 +2400,20 @@ int main(int argc, char **argv)	{
 			printf("[I] Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
 		}
 		else if(FLAG_N){
-			if(str_N[0] == '0' && str_N[1] == 'x')	{
-				N_SEQUENTIAL_MAX =strtol(str_N,NULL,16);
+			int base = 10;
+			const char *num = str_N;
+			if (num[0] == '0' && (num[1] == 'x' || num[1] == 'X')) {
+				base = 16;
 			}
-			else	{
-				N_SEQUENTIAL_MAX =strtol(str_N,NULL,10);
+			errno = 0;
+			char *endp = NULL;
+			unsigned long long parsed = strtoull(num, &endp, base);
+			if (errno != 0 || endp == num || (endp && *endp != '\0')) {
+				fprintf(stderr,"[E] Invalid -n value: %s\n", str_N);
+				FLAG_N = 0;
+				N_SEQUENTIAL_MAX = 0x100000000;
+			} else {
+				N_SEQUENTIAL_MAX = (uint64_t)parsed;
 			}
 			
 			if(N_SEQUENTIAL_MAX < 1024)	{
@@ -2201,7 +2431,7 @@ int main(int argc, char **argv)	{
 			// No user param and no auto-tuning: use default
 			N_SEQUENTIAL_MAX = 0x100000000;
 		}
-		printf("[+] N = %p\n",(void*)N_SEQUENTIAL_MAX);
+		printf("[+] N = 0x%llx\n",(unsigned long long)N_SEQUENTIAL_MAX);
 		if(FLAGMODE == MODE_MINIKEYS)	{
 			BSGS_N.SetInt32(DEBUGCOUNT);
 			if(FLAGBASEMINIKEY)	{
@@ -2245,7 +2475,14 @@ int main(int argc, char **argv)	{
 			hextemp = n_range_start.GetBase16();
 			printf("[+] -- from : 0x%s\n",hextemp);
 			free(hextemp);
-			hextemp = n_range_end.GetBase16();
+			if (FLAGRANGE) {
+				Int end_inclusive;
+				end_inclusive.Set(&n_range_end);
+				end_inclusive.SubOne();
+				hextemp = end_inclusive.GetBase16();
+			} else {
+				hextemp = n_range_end.GetBase16();
+			}
 			printf("[+] -- to   : 0x%s\n",hextemp);
 			free(hextemp);
 		}
@@ -2845,18 +3082,44 @@ int main(int argc, char **argv)	{
 					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
-						bf_ptr = (char*)bloom_ext_get_bf(&bloom_bP[i]);	/*We need to save the current bf pointer*/
-						readed = fread(&bloom_bP[i].orig,sizeof(struct bloom),1,fd_aux1);
+						struct bloom tmp_bloom;
+						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux1);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						bloom_bP[i].orig.bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
+
+						// Reallocate bloom filter to exactly match the cache (avoids size mismatch / memory corruption).
+						bloom_ext_free(&bloom_bP[i]);
+						bloom_bP[i].orig = tmp_bloom;
+						bloom_bP[i].orig.bf = NULL;
+						const bool cache_fast = (bloom_bP[i].orig.major == BLOOM_EXT_FAST_MAJOR && bloom_bP[i].orig.minor == BLOOM_EXT_FAST_MINOR);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+						if (cache_fast) {
+							bloom_bP[i].orig.bf = (uint8_t*)_aligned_malloc(bloom_bP[i].orig.bytes, 64);
+						} else {
+							bloom_bP[i].orig.bf = (uint8_t*)malloc(bloom_bP[i].orig.bytes);
+						}
+#else
+						if (cache_fast) {
+							void *ptr = NULL;
+							if (posix_memalign(&ptr, 64, bloom_bP[i].orig.bytes) != 0) ptr = NULL;
+							bloom_bP[i].orig.bf = (uint8_t*)ptr;
+						} else {
+							bloom_bP[i].orig.bf = (uint8_t*)malloc(bloom_bP[i].orig.bytes);
+						}
+#endif
+						if (!bloom_bP[i].orig.bf) {
+							fprintf(stderr,"[E] Error allocating memory for bloom cache %s\n",buffer_bloom_file);
+							exit(EXIT_FAILURE);
+						}
+
 						readed = fread(bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,1,fd_aux1);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
+						bloom_ext_sync_from_orig(&bloom_bP[i]);
 						readed = fread(&bloom_bP_checksums[i],sizeof(struct checksumsha256),1,fd_aux1);
 					if(readed != 1)	{
 						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
@@ -2896,18 +3159,43 @@ int main(int argc, char **argv)	{
 					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
-						bf_ptr = (char*)bloom_ext_get_bf(&bloom_bPx2nd[i]);	/*We need to save the current bf pointer*/
-						readed = fread(&bloom_bPx2nd[i].orig,sizeof(struct bloom),1,fd_aux2);
+						struct bloom tmp_bloom;
+						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						bloom_bPx2nd[i].orig.bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
+
+						bloom_ext_free(&bloom_bPx2nd[i]);
+						bloom_bPx2nd[i].orig = tmp_bloom;
+						bloom_bPx2nd[i].orig.bf = NULL;
+						const bool cache_fast = (bloom_bPx2nd[i].orig.major == BLOOM_EXT_FAST_MAJOR && bloom_bPx2nd[i].orig.minor == BLOOM_EXT_FAST_MINOR);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+						if (cache_fast) {
+							bloom_bPx2nd[i].orig.bf = (uint8_t*)_aligned_malloc(bloom_bPx2nd[i].orig.bytes, 64);
+						} else {
+							bloom_bPx2nd[i].orig.bf = (uint8_t*)malloc(bloom_bPx2nd[i].orig.bytes);
+						}
+#else
+						if (cache_fast) {
+							void *ptr = NULL;
+							if (posix_memalign(&ptr, 64, bloom_bPx2nd[i].orig.bytes) != 0) ptr = NULL;
+							bloom_bPx2nd[i].orig.bf = (uint8_t*)ptr;
+						} else {
+							bloom_bPx2nd[i].orig.bf = (uint8_t*)malloc(bloom_bPx2nd[i].orig.bytes);
+						}
+#endif
+						if (!bloom_bPx2nd[i].orig.bf) {
+							fprintf(stderr,"[E] Error allocating memory for bloom cache %s\n",buffer_bloom_file);
+							exit(EXIT_FAILURE);
+						}
+
 						readed = fread(bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
+						bloom_ext_sync_from_orig(&bloom_bPx2nd[i]);
 						readed = fread(&bloom_bPx2nd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 					if(readed != 1)	{
 						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
@@ -2986,18 +3274,43 @@ int main(int argc, char **argv)	{
 					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
-						bf_ptr = (char*)bloom_ext_get_bf(&bloom_bPx3rd[i]);	/*We need to save the current bf pointer*/
-						readed = fread(&bloom_bPx3rd[i].orig,sizeof(struct bloom),1,fd_aux2);
+						struct bloom tmp_bloom;
+						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						bloom_bPx3rd[i].orig.bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
+
+						bloom_ext_free(&bloom_bPx3rd[i]);
+						bloom_bPx3rd[i].orig = tmp_bloom;
+						bloom_bPx3rd[i].orig.bf = NULL;
+						const bool cache_fast = (bloom_bPx3rd[i].orig.major == BLOOM_EXT_FAST_MAJOR && bloom_bPx3rd[i].orig.minor == BLOOM_EXT_FAST_MINOR);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+						if (cache_fast) {
+							bloom_bPx3rd[i].orig.bf = (uint8_t*)_aligned_malloc(bloom_bPx3rd[i].orig.bytes, 64);
+						} else {
+							bloom_bPx3rd[i].orig.bf = (uint8_t*)malloc(bloom_bPx3rd[i].orig.bytes);
+						}
+#else
+						if (cache_fast) {
+							void *ptr = NULL;
+							if (posix_memalign(&ptr, 64, bloom_bPx3rd[i].orig.bytes) != 0) ptr = NULL;
+							bloom_bPx3rd[i].orig.bf = (uint8_t*)ptr;
+						} else {
+							bloom_bPx3rd[i].orig.bf = (uint8_t*)malloc(bloom_bPx3rd[i].orig.bytes);
+						}
+#endif
+						if (!bloom_bPx3rd[i].orig.bf) {
+							fprintf(stderr,"[E] Error allocating memory for bloom cache %s\n",buffer_bloom_file);
+							exit(EXIT_FAILURE);
+						}
+
 						readed = fread(bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,1,fd_aux2);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
+						bloom_ext_sync_from_orig(&bloom_bPx3rd[i]);
 						readed = fread(&bloom_bPx3rd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 					if(readed != 1)	{
 						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
@@ -3467,6 +3780,7 @@ int main(int argc, char **argv)	{
 		}
 #endif
 		
+		profile_init_threads((int)NTHREADS);
 		for(j= 0;j < NTHREADS; j++)	{
 			tt = (tothread*) malloc(sizeof(struct tothread));
 			checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
@@ -3765,6 +4079,7 @@ int main(int argc, char **argv)	{
 				shutdown_work_queue();
 			}
 #endif
+			profile_init_threads((int)NTHREADS);
 			for(j= 0;j < NTHREADS; j++)	{
 				tt = (tothread*) malloc(sizeof(struct tothread));
 				checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
@@ -3910,6 +4225,7 @@ int main(int argc, char **argv)	{
 							}
 
 						append_progress_info(buffer, sizeof(buffer));
+						append_profile_info(buffer, sizeof(buffer));
 						printf("%s", buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
@@ -3982,6 +4298,7 @@ int main(int argc, char **argv)	{
 
 						}
 						append_progress_info(buffer, sizeof(buffer));
+						append_profile_info(buffer, sizeof(buffer));
 						printf("%s",buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
@@ -4109,30 +4426,37 @@ static inline int cmp_hash20(const uint8_t *a, const uint8_t *b) {
 	return 0;
 }
 
-int searchbinary(struct address_value *buffer,char *data,int64_t array_length) {
-	int64_t half,min,max,current;
-	int r = 0,rcmp;
-	min = 0;
-	current = 0;
-	max = array_length;
-	half = array_length;
-	while(!r && half >= 1) {
-		half = (max - min)/2;
-		rcmp = cmp_hash20((const uint8_t*)data, (const uint8_t*)buffer[current+half].value);
-		if(rcmp == 0)	{
-			r = 1;	//Found!!
-		}
-		else	{
-			if(rcmp < 0) { //data < temp_read
-				max = (max-half);
-			}
-			else	{ // data > temp_read
-				min = (min+half);
-			}
-			current = min;
-		}
+static inline bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
+	// Compute (a - b) if it fits in uint64_t. Return false otherwise.
+	// Assumes Int represents non-negative values here.
+	if (!out) return false;
+	uint64_t d0 = a.bits64[0] - b.bits64[0];
+	uint64_t borrow = (a.bits64[0] < b.bits64[0]) ? 1ULL : 0ULL;
+	for (int i = 1; i < NB64BLOCK; i++) {
+		const uint64_t ai = a.bits64[i];
+		const uint64_t bi = b.bits64[i];
+		const uint64_t bi_borrow = bi + borrow;
+		const uint64_t di = ai - bi_borrow;
+		if (di != 0) return false;
+		borrow = (ai < bi_borrow) ? 1ULL : 0ULL;
 	}
-	return r;
+	if (borrow) return false;
+	*out = d0;
+	return true;
+}
+
+int searchbinary(struct address_value *buffer,char *data,int64_t array_length) {
+	if (array_length <= 0) return 0;
+	int64_t lo = 0;
+	int64_t hi = array_length; // exclusive
+	while (lo < hi) {
+		const int64_t mid = lo + ((hi - lo) >> 1);
+		const int rcmp = cmp_hash20((const uint8_t*)data, (const uint8_t*)buffer[mid].value);
+		if (rcmp == 0) return 1;
+		if (rcmp < 0) hi = mid;
+		else lo = mid + 1;
+	}
+	return 0;
 }
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -4154,6 +4478,7 @@ void *thread_process_minikeys(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread(thread_number);
 	rawbuffer = (char*) &counter.bits64;
 	count_valid = 0;
 	for(k = 0; k < 4; k++)	{
@@ -4347,6 +4672,7 @@ void *thread_process(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread(thread_number);
 	grp->Set(dx);
 	stride_half.SetInt32(CPU_GRP_SIZE / 2);
 	stride_half.Mult(&stride);
@@ -4361,27 +4687,16 @@ void *thread_process(void *vargp)	{
 					count = 0;
 					uint64_t block_limit = N_SEQUENTIAL_MAX;
 					if (!FLAGRANDOM && stride.IsOne()) {
-						Int remaining;
 						Int range_end_local;
 						if (g_work_pool.enabled && cpu_cached_block_valid) {
 							range_end_local.Set(&cpu_cached_block_end);
 						} else {
 							range_end_local.Set(&n_range_end);
 						}
-						remaining.Set(&range_end_local);
-						remaining.Sub(&key_mpz);
-	
-						char *hex = remaining.GetBase16();
-						if (hex) {
-							size_t len = strlen(hex);
-						if (len > 0 && len <= 16) {
-							uint64_t rem_u64 = strtoull(hex, NULL, 16);
-							if (rem_u64 < block_limit) {
-								block_limit = rem_u64;
-							}
+						uint64_t rem_u64 = 0;
+						if (sub_u64_if_fits(range_end_local, key_mpz, &rem_u64) && rem_u64 < block_limit) {
+							block_limit = rem_u64;
 						}
-						free(hex);
-					}
 				}
 				if(FLAGMATRIX)	{
 						hextemp = key_mpz.GetBase16();
@@ -4405,6 +4720,9 @@ void *thread_process(void *vargp)	{
 						key_center.Add(&stride_half);
 						startP = secp->ComputePublicKey(&key_center);
 					}
+
+				profile_counters_t *prof = KH_PROF_PTR();
+				const uint64_t ec_start = prof ? profile_now_ns() : 0;
 
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
@@ -4533,6 +4851,7 @@ void *thread_process(void *vargp)	{
 					endomorphism_beta2[0].x.ModMulK1(&pn.x, &beta2);
 				}
 								
+				if (prof) prof->ns_ec += (profile_now_ns() - ec_start);
 				if((FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) && FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM) {
 					process_rmd160_batch_btc_simple(key_mpz, pts, count);
 				}
@@ -4963,6 +5282,7 @@ void *thread_process_vanity(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread(thread_number);
 	grp->Set(dx);
 	stride_half.SetInt32(CPU_GRP_SIZE / 2);
 	stride_half.Mult(&stride);
@@ -4995,27 +5315,16 @@ void *thread_process_vanity(void *vargp)	{
 					count = 0;
 					uint64_t block_limit = N_SEQUENTIAL_MAX;
 					if (!FLAGRANDOM && stride.IsOne()) {
-						Int remaining;
 						Int range_end_local;
 						if (g_work_pool.enabled && cpu_cached_block_valid) {
 							range_end_local.Set(&cpu_cached_block_end);
 						} else {
 							range_end_local.Set(&n_range_end);
 						}
-						remaining.Set(&range_end_local);
-						remaining.Sub(&key_mpz);
-	
-						char *hex = remaining.GetBase16();
-						if (hex) {
-							size_t len = strlen(hex);
-						if (len > 0 && len <= 16) {
-							uint64_t rem_u64 = strtoull(hex, NULL, 16);
-							if (rem_u64 < block_limit) {
-								block_limit = rem_u64;
-							}
+						uint64_t rem_u64 = 0;
+						if (sub_u64_if_fits(range_end_local, key_mpz, &rem_u64) && rem_u64 < block_limit) {
+							block_limit = rem_u64;
 						}
-						free(hex);
-					}
 				}
 				if(FLAGMATRIX)	{
 						hextemp = key_mpz.GetBase16();
@@ -5736,32 +6045,25 @@ void bsgs_myheapsort(struct bsgs_xvalue	*arr, int64_t n)	{
 
 /*	Optimized with uint64_t comparison	*/
 int bsgs_searchbinary(struct bsgs_xvalue *buffer,char *data,int64_t array_length,uint64_t *r_value) {
-	int64_t min,max,half,current;
+	if (array_length <= 0) return 0;
+	int64_t lo = 0;
+	int64_t hi = array_length; // exclusive
 	int r = 0;
-	min = 0;
-	current = 0;
-	max = array_length;
-	half = array_length;
 
 	// Load search key as uint64_t (bytes 16-23 of X coordinate)
 	uint64_t search_key;
 	memcpy(&search_key, data + 16, 8);
 
-	while(!r && half >= 1) {
-		half = (max - min)/2;
-		uint64_t table_value = buffer[current+half].value;
-		if(search_key == table_value) {
-			*r_value = buffer[current+half].index;
+	while (lo < hi) {
+		const int64_t mid = lo + ((hi - lo) >> 1);
+		const uint64_t table_value = buffer[mid].value;
+		if (search_key == table_value) {
+			*r_value = buffer[mid].index;
 			r = 1;
+			break;
 		}
-		else if(search_key < table_value) {
-			max = (max-half);
-			current = min;
-		}
-		else {
-			min = (min+half);
-			current = min;
-		}
+		if (search_key < table_value) hi = mid;
+		else lo = mid + 1;
 	}
 	return r;
 }
@@ -5801,6 +6103,7 @@ void *thread_process_bsgs(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread((int)thread_number);
 	
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -6036,6 +6339,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread((int)thread_number);
 	
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -6801,6 +7105,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread((int)thread_number);
 	
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -7086,6 +7391,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread((int)thread_number);
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -7341,6 +7647,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
+	profile_set_thread((int)thread_number);
 	
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -8135,8 +8442,8 @@ static void *gpu_hybrid_thread(void *arg) {
 	return NULL;
 }
 
-// Run full GPU search with CPU fallback
-static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count) {
+	// Run full GPU search with CPU fallback
+	static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count) {
 	if (!gpu_backend_available()) {
 		fprintf(stderr, "[W] GPU not available, cannot run full GPU search\n");
 		return -1;
@@ -8149,14 +8456,13 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 	// Convert start key to big-endian bytes
 	start_key->Get32Bytes(config.start_key);
 	end_key->Get32Bytes(config.end_key);
-	stride_val->Get32Bytes(config.stride);
+		stride_val->Get32Bytes(config.stride);
 
-	config.target_count = target_count;
-		// Use FLAGSEARCH to determine compressed mode (not hardcoded!)
-		// compressed_only=1 means only compressed, 0 means both parities
-		config.compressed_only = (FLAGSEARCH == SEARCH_COMPRESS) ? 1 : 0;
-		// Use GPU-side bloom only when it was uploaded and the target set is large enough to benefit.
-		config.use_bloom = (g_gpu_bloom_uploaded && target_count > 32) ? 1 : 0;
+		config.target_count = target_count;
+		config.search_compressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH) ? 1 : 0;
+		config.search_uncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH) ? 1 : 0;
+			// Use GPU-side bloom only when it was uploaded and the target set is large enough to benefit.
+			config.use_bloom = (g_gpu_bloom_uploaded && target_count > 32) ? 1 : 0;
 
 	config.callback = gpu_found_callback;
 	config.callback_userdata = NULL;
@@ -8175,10 +8481,12 @@ static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, in
 			target_count,
 			target_count == 1 ? "direct comparison" :
 				(config.use_bloom ? "GPU bloom + binary search" : "binary search"));
-	printf("[+] Search mode: %s\n",
-		config.compressed_only ? "compressed only" : "both (compressed + uncompressed)");
+		printf("[+] Search mode: %s\n",
+			(config.search_compressed && config.search_uncompressed) ? "compressed + uncompressed" :
+			(config.search_compressed ? "compressed only" :
+				(config.search_uncompressed ? "uncompressed only" : "none")));
 
-				int found = gpu_full_search(&config);
+					int found = gpu_full_search(&config);
 				if (g_work_pool.enabled) {
 					uint64_t done = __atomic_load_n(&g_gpu_keys_checked_cur, __ATOMIC_ACQUIRE);
 					__atomic_fetch_add(&g_gpu_keys_checked, done, __ATOMIC_RELEASE);
@@ -8399,7 +8707,22 @@ bool readFileAddress(char *fileName)	{
 			
 			printf("[+] Bloom filter for %" PRIu64 " elements.\n",bloom.orig.entries);
 
-			bloom.orig.bf = (uint8_t*) malloc(bloom.orig.bytes);
+			const bool cache_fast = (bloom.orig.major == BLOOM_EXT_FAST_MAJOR && bloom.orig.minor == BLOOM_EXT_FAST_MINOR);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+			if (cache_fast) {
+				bloom.orig.bf = (uint8_t*)_aligned_malloc(bloom.orig.bytes, 64);
+			} else {
+				bloom.orig.bf = (uint8_t*)malloc(bloom.orig.bytes);
+			}
+#else
+			if (cache_fast) {
+				void *ptr = NULL;
+				if (posix_memalign(&ptr, 64, bloom.orig.bytes) != 0) ptr = NULL;
+				bloom.orig.bf = (uint8_t*)ptr;
+			} else {
+				bloom.orig.bf = (uint8_t*)malloc(bloom.orig.bytes);
+			}
+#endif
 			if(bloom.orig.bf == NULL)	{
 				fprintf(stderr,"[E] Error allocating memory, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
@@ -8441,6 +8764,20 @@ bool readFileAddress(char *fileName)	{
 				printf("[D] bloom.orig.bf points to %p\n",bloom.orig.bf);
 			}
 			*/
+
+			// If this cache was built with the fast bloom implementation, restore fast metadata so
+			// bloom_ext_check* uses the correct hashing algorithm (XXH3) for this bitset.
+			bloom_ext_sync_from_orig(&bloom);
+#if USE_FAST_BLOOM
+			if (bloom_ext_is_fast(&bloom)) {
+				printf("[+] Using FAST bloom filter (cached)\n");
+			}
+#endif
+#ifdef __linux__
+			if (bloom_ext_is_fast(&bloom)) {
+				(void)madvise(bloom.fast.bf, bloom.fast.bits / 8, MADV_HUGEPAGE);
+			}
+#endif
 			
 			bytesRead = fread(dataChecksum,1,32,fileDescriptor);
 			if(bytesRead != 32)	{
@@ -8912,7 +9249,9 @@ void writeFileIfNeeded(const char *fileName)	{
 		snprintf(fileBloomName,30,"data_%s.dat",hexPrefix);
 		fileDescriptor = fopen(fileBloomName,"wb");
 		dataSize = N * (sizeof(struct address_value));
-		printf("[D] size data %li\n",dataSize);
+		if (FLAGDEBUG) {
+			printf("[D] size data %" PRIu64 "\n", dataSize);
+		}
 		if(fileDescriptor != NULL)	{
 			printf("[+] Writing file %s ",fileBloomName);
 			

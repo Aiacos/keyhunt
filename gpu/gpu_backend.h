@@ -27,6 +27,7 @@ typedef struct {
 } gpu_backend_info_t;
 
 // Callback for found keys
+// - compressed: 1 if the match is for the compressed pubkey encoding, 0 if uncompressed.
 typedef void (*gpu_found_callback_t)(const uint8_t *privkey, int compressed, void *userdata);
 
 // Search configuration
@@ -38,7 +39,11 @@ typedef struct {
     const uint8_t *targets;     // Target hashes (20 bytes each, concatenated)
     size_t target_count;        // Number of targets
 
-    int compressed_only;        // 1 = only compressed, 0 = both parities
+    // What to search (Bitcoin HASH160 targets are the same regardless of pubkey encoding).
+    // - search_compressed: check HASH160 of compressed pubkey (33 bytes, prefix 02/03 + X)
+    // - search_uncompressed: check HASH160 of uncompressed pubkey (65 bytes, prefix 04 + X + Y)
+    int search_compressed;      // 1 = enabled, 0 = disabled
+    int search_uncompressed;    // 1 = enabled, 0 = disabled
     int use_bloom;              // 1 = use bloom filter for N>1
 
     gpu_found_callback_t callback;

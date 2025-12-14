@@ -16,7 +16,11 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include "../xxhash/xxhash.h"
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -67,6 +71,10 @@ static inline int bloom_fast_init(bloom_fast_t *bf, uint8_t bits_log2, uint8_t h
     }
 
     memset(bf->bf, 0, bytes);
+#ifdef __linux__
+    /* Best-effort: reduce TLB pressure on large bloom filters. */
+    (void)madvise(bf->bf, bytes, MADV_HUGEPAGE);
+#endif
     bf->ready = true;
     return 0;
 }
@@ -102,16 +110,20 @@ static inline int bloom_fast_check(bloom_fast_t *bf, const void *data, int len) 
      * We use different bit ranges for each hash function
      * This avoids multiple hash calls while maintaining good distribution
      */
-    uint64_t h1 = h.low64;
-    uint64_t h2 = h.high64;
+    uint64_t probe = h.low64;
+    const uint64_t step = h.high64;
+    const uint64_t mask = bf->mask;
+    uint8_t *bits = bf->bf;
 
-    /* Generate k indices using h1 + i*h2 (Kirsch-Mitzenmacher optimization) */
+    /* Generate k indices using h1 + i*h2 (Kirsch-Mitzenmacher optimization).
+     * Use running addition (probe += step) to avoid per-iteration multiplication. */
     for (uint8_t i = 0; i < bf->hashes; i++) {
-        uint64_t idx = (h1 + (uint64_t)i * h2) & bf->mask;
-        uint64_t byte_idx = idx >> 3;
-        uint8_t bit_mask = 1 << (idx & 7);
+        const uint64_t idx = probe & mask;
+        probe += step;
+        const uint64_t byte_idx = idx >> 3;
+        const uint8_t bit_mask = (uint8_t)(1u << (unsigned)(idx & 7u));
 
-        if (!(bf->bf[byte_idx] & bit_mask)) {
+        if (!(bits[byte_idx] & bit_mask)) {
             return 0;  /* Early exit on first miss */
         }
     }
@@ -126,14 +138,17 @@ static inline void bloom_fast_add(bloom_fast_t *bf, const void *data, int len) {
     if (!bf || !bf->ready) return;
 
     XXH128_hash_t h = XXH3_128bits(data, len);
-    uint64_t h1 = h.low64;
-    uint64_t h2 = h.high64;
+    uint64_t probe = h.low64;
+    const uint64_t step = h.high64;
+    const uint64_t mask = bf->mask;
+    uint8_t *bits = bf->bf;
 
     for (uint8_t i = 0; i < bf->hashes; i++) {
-        uint64_t idx = (h1 + (uint64_t)i * h2) & bf->mask;
-        uint64_t byte_idx = idx >> 3;
-        uint8_t bit_mask = 1 << (idx & 7);
-        bf->bf[byte_idx] |= bit_mask;
+        const uint64_t idx = probe & mask;
+        probe += step;
+        const uint64_t byte_idx = idx >> 3;
+        const uint8_t bit_mask = (uint8_t)(1u << (unsigned)(idx & 7u));
+        bits[byte_idx] |= bit_mask;
     }
 }
 
@@ -163,14 +178,15 @@ static inline uint64_t bloom_fast_check_batch(
 
     /* Second pass: check all bits */
     for (int i = 0; i < count; i++) {
-        uint64_t h1 = hashes[i].low64;
-        uint64_t h2 = hashes[i].high64;
+        uint64_t probe = hashes[i].low64;
+        const uint64_t step = hashes[i].high64;
         bool found = true;
 
         for (uint8_t j = 0; j < bf->hashes && found; j++) {
-            uint64_t idx = (h1 + (uint64_t)j * h2) & bf->mask;
-            uint64_t byte_idx = idx >> 3;
-            uint8_t bit_mask = 1 << (idx & 7);
+            const uint64_t idx = probe & bf->mask;
+            probe += step;
+            const uint64_t byte_idx = idx >> 3;
+            const uint8_t bit_mask = (uint8_t)(1u << (unsigned)(idx & 7u));
 
             if (!(bf->bf[byte_idx] & bit_mask)) {
                 found = false;
@@ -194,33 +210,34 @@ static inline int bloom_fast_check_rmd160(bloom_fast_t *bf, const uint8_t *rmd16
 
     /* Direct hash of 20 bytes */
     XXH128_hash_t h = XXH3_128bits(rmd160, 20);
-    uint64_t h1 = h.low64;
-    uint64_t h2 = h.high64;
+    uint64_t probe = h.low64;
+    const uint64_t step = h.high64;
+    const uint64_t mask = bf->mask;
+    uint8_t *bits = bf->bf;
 
     /* Unrolled fast path (common k >= 7), but keep correctness for k < 7 */
     const uint8_t k = bf->hashes;
-    #define CHECK_BIT(i) do { \
-        uint64_t idx = (h1 + (uint64_t)(i) * h2) & bf->mask; \
-        if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) return 0; \
+    #define CHECK_PROBE() do { \
+        const uint64_t idx = probe & mask; \
+        probe += step; \
+        if (!(bits[idx >> 3] & (uint8_t)(1u << (unsigned)(idx & 7u)))) return 0; \
     } while(0)
 
-    if (k >= 1) CHECK_BIT(0);
-    if (k >= 2) CHECK_BIT(1);
-    if (k >= 3) CHECK_BIT(2);
-    if (k >= 4) CHECK_BIT(3);
-    if (k >= 5) CHECK_BIT(4);
-    if (k >= 6) CHECK_BIT(5);
-    if (k >= 7) CHECK_BIT(6);
+    if (k >= 1) CHECK_PROBE();
+    if (k >= 2) CHECK_PROBE();
+    if (k >= 3) CHECK_PROBE();
+    if (k >= 4) CHECK_PROBE();
+    if (k >= 5) CHECK_PROBE();
+    if (k >= 6) CHECK_PROBE();
+    if (k >= 7) CHECK_PROBE();
 
     /* Handle additional hashes if needed */
     for (uint8_t i = 7; i < k; i++) {
-        uint64_t idx = (h1 + (uint64_t)i * h2) & bf->mask;
-        if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) {
-            return 0;
-        }
+        (void)i;
+        CHECK_PROBE();
     }
 
-    #undef CHECK_BIT
+    #undef CHECK_PROBE
 
     return 1;
 }
@@ -253,35 +270,97 @@ static inline uint64_t bloom_fast_check_rmd160_batch(
 
     /* Second pass: check all bits with early exit per item */
     for (int i = 0; i < count; i++) {
-        uint64_t h1 = xxh[i].low64;
-        uint64_t h2 = xxh[i].high64;
+        uint64_t probe = xxh[i].low64;
+        const uint64_t step = xxh[i].high64;
         bool found = true;
 
         /* Unrolled loop for common k values */
-        #define CHECK_BIT_BATCH(j) do { \
-            uint64_t idx = (h1 + (uint64_t)(j) * h2) & bf->mask; \
-            if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) { found = false; break; } \
+        #define CHECK_PROBE_BATCH() do { \
+            const uint64_t idx = probe & bf->mask; \
+            probe += step; \
+            if (!(bf->bf[idx >> 3] & (uint8_t)(1u << (unsigned)(idx & 7u)))) { found = false; break; } \
         } while(0)
 
         do {
-            if (k >= 1) { CHECK_BIT_BATCH(0); if (!found) break; }
-            if (k >= 2) { CHECK_BIT_BATCH(1); if (!found) break; }
-            if (k >= 3) { CHECK_BIT_BATCH(2); if (!found) break; }
-            if (k >= 4) { CHECK_BIT_BATCH(3); if (!found) break; }
-            if (k >= 5) { CHECK_BIT_BATCH(4); if (!found) break; }
-            if (k >= 6) { CHECK_BIT_BATCH(5); if (!found) break; }
-            if (k >= 7) { CHECK_BIT_BATCH(6); if (!found) break; }
+            if (k >= 1) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 2) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 3) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 4) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 5) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 6) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 7) { CHECK_PROBE_BATCH(); if (!found) break; }
 
             /* Additional hashes if k > 7 */
             for (uint8_t j = 7; j < k && found; j++) {
-                uint64_t idx = (h1 + (uint64_t)j * h2) & bf->mask;
-                if (!(bf->bf[idx >> 3] & (1 << (idx & 7)))) {
-                    found = false;
-                }
+                (void)j;
+                CHECK_PROBE_BATCH();
             }
         } while(0);
 
-        #undef CHECK_BIT_BATCH
+        #undef CHECK_PROBE_BATCH
+
+        if (found) {
+            results |= (1ULL << i);
+        }
+    }
+
+    return results;
+}
+
+/*
+ * Strided batch check for contiguous 20-byte RMD160 hashes.
+ * Avoids building a pointer array on hot paths that store hashes densely.
+ *
+ * base points to the first hash, stride is the byte distance between hashes.
+ * count must be <= 64.
+ */
+static inline uint64_t bloom_fast_check_rmd160_strided(
+    bloom_fast_t *bf,
+    const uint8_t *base,
+    size_t stride,
+    int count)
+{
+    if (!bf || !bf->ready || !base || stride < 20 || count <= 0 || count > 64) return 0;
+
+    uint64_t results = 0;
+    XXH128_hash_t xxh[64];
+
+    for (int i = 0; i < count; i++) {
+        const uint8_t *ptr = base + (size_t)i * stride;
+        xxh[i] = XXH3_128bits(ptr, 20);
+        uint64_t idx = xxh[i].low64 & bf->mask;
+        __builtin_prefetch(&bf->bf[idx >> 3], 0, 0);
+    }
+
+    const uint8_t k = bf->hashes;
+
+    for (int i = 0; i < count; i++) {
+        uint64_t probe = xxh[i].low64;
+        const uint64_t step = xxh[i].high64;
+        bool found = true;
+
+        #define CHECK_PROBE_BATCH() do { \
+            const uint64_t idx = probe & bf->mask; \
+            probe += step; \
+            if (!(bf->bf[idx >> 3] & (uint8_t)(1u << (unsigned)(idx & 7u)))) { found = false; break; } \
+        } while(0)
+
+        do {
+            if (k >= 1) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 2) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 3) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 4) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 5) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 6) { CHECK_PROBE_BATCH(); if (!found) break; }
+            if (k >= 7) { CHECK_PROBE_BATCH(); if (!found) break; }
+
+            for (uint8_t j = 7; j < k && found; j++) {
+                (void)j;
+                CHECK_PROBE_BATCH();
+            }
+        } while(0);
+
+        #undef CHECK_PROBE_BATCH
 
         if (found) {
             results |= (1ULL << i);

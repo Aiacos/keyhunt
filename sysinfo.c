@@ -227,6 +227,20 @@ static void detect_cpu_features(system_info_t *info) {
     info->has_avx512 = false;
     info->has_sha_ni = false;
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+    /* Prefer compiler-provided runtime detection on x86: it accounts for OS
+     * support (XSAVE/XGETBV) and avoids false positives that can crash when
+     * executing AVX/AVX-512 instructions. */
+    __builtin_cpu_init();
+    info->has_avx2 = __builtin_cpu_supports("avx2");
+    info->has_avx512 = __builtin_cpu_supports("avx512f");
+    /* SHA-NI doesn't require OS extended state; detect via /proc/cpuinfo below
+     * for maximum compatibility across compiler versions. */
+    bool used_builtin = true;
+#else
+    bool used_builtin = false;
+#endif
+
 #ifdef __linux__
     FILE *f = fopen("/proc/cpuinfo", "r");
     if (!f) return;
@@ -235,14 +249,20 @@ static void detect_cpu_features(system_info_t *info) {
     size_t cap = 0;
     while (getline(&line, &cap, f) != -1) {
         if (strncmp(line, "flags", 5) == 0 || strncmp(line, "Features", 8) == 0) {
-            if (token_present(line, "avx2")) info->has_avx2 = true;
-            if (token_present(line, "avx512f")) info->has_avx512 = true;
+            if (!used_builtin) {
+                if (token_present(line, "avx2")) info->has_avx2 = true;
+                if (token_present(line, "avx512f")) info->has_avx512 = true;
+            }
             // Intel uses "sha_ni", some platforms report "sha".
             if (token_present(line, "sha_ni") || token_present(line, "sha")) info->has_sha_ni = true;
         }
     }
     free(line);
     fclose(f);
+#endif
+
+#ifndef __linux__
+    (void)used_builtin;
 #endif
 }
 
