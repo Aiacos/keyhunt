@@ -59,17 +59,25 @@ void Point::Set(Point &p) {
 }
 
 bool Point::isZero() {
-  return x.IsZero() && y.IsZero();
+  // In projective coordinates, point at infinity has z = 0
+  // Also check traditional (0,0) representation for compatibility
+  return z.IsZero() || (x.IsZero() && y.IsZero());
 }
 
 void Point::Reduce() {
+  // Check for point at infinity (z = 0) - cannot reduce
+  if (z.IsZero()) {
+    // Point at infinity - set to canonical form
+    x.SetInt32(0);
+    y.SetInt32(0);
+    return;
+  }
 
   Int i(&z);
   i.ModInv();
   x.ModMul(&x,&i);
   y.ModMul(&y,&i);
   z.SetInt32(1);
-
 }
 
 bool Point::equals(Point &p) {

@@ -16,7 +16,7 @@ email: albertobsd@gmail.com
 #include <atomic>
 #include <inttypes.h>
 #ifndef _WIN64
-#include <time.h>
+// time.h already included above
 #endif
 #include "base58/libbase58.h"
 #include "oldbloom/oldbloom.h"
@@ -848,6 +848,117 @@ static bool span_u64_from_range(Int &start, Int &end, uint64_t &out) {
 	if (borrow) return false;
 	out = d0;
 	return true;
+}
+
+// Cleanup function for general resources to prevent memory leaks
+static void cleanup_general_resources(void) {
+	// Free addressTable if allocated
+	if (addressTable != NULL) {
+		free(addressTable);
+		addressTable = NULL;
+	}
+	// Note: secp is cleaned up separately as it's declared after this function
+}
+
+// Cleanup function for BSGS resources to prevent memory leaks
+static void cleanup_bsgs_resources(void) {
+	// Cleanup general resources first
+	cleanup_general_resources();
+
+	// Only cleanup BSGS specific resources if BSGS mode was used
+	if (!FLAGBSGSMODE) return;
+
+	// Free bPtable
+	if (bPtable != NULL) {
+		free(bPtable);
+		bPtable = NULL;
+	}
+
+	// Free bloom filters (256 elements each)
+	if (bloom_bP != NULL) {
+		for (int i = 0; i < 256; i++) {
+			bloom_ext_free(&bloom_bP[i]);
+		}
+		free(bloom_bP);
+		bloom_bP = NULL;
+	}
+
+	if (bloom_bPx2nd != NULL) {
+		for (int i = 0; i < 256; i++) {
+			bloom_ext_free(&bloom_bPx2nd[i]);
+		}
+		free(bloom_bPx2nd);
+		bloom_bPx2nd = NULL;
+	}
+
+	if (bloom_bPx3rd != NULL) {
+		for (int i = 0; i < 256; i++) {
+			bloom_ext_free(&bloom_bPx3rd[i]);
+		}
+		free(bloom_bPx3rd);
+		bloom_bPx3rd = NULL;
+	}
+
+	// Free checksums
+	if (bloom_bP_checksums != NULL) {
+		free(bloom_bP_checksums);
+		bloom_bP_checksums = NULL;
+	}
+	if (bloom_bPx2nd_checksums != NULL) {
+		free(bloom_bPx2nd_checksums);
+		bloom_bPx2nd_checksums = NULL;
+	}
+	if (bloom_bPx3rd_checksums != NULL) {
+		free(bloom_bPx3rd_checksums);
+		bloom_bPx3rd_checksums = NULL;
+	}
+
+	// Free mutexes
+#if defined(_WIN64) && !defined(__CYGWIN__)
+	// Windows: vectors are auto-cleaned, but close handles
+	for (size_t i = 0; i < bloom_bP_mutex.size(); i++) {
+		if (bloom_bP_mutex[i]) CloseHandle(bloom_bP_mutex[i]);
+	}
+	bloom_bP_mutex.clear();
+	for (size_t i = 0; i < bloom_bPx2nd_mutex.size(); i++) {
+		if (bloom_bPx2nd_mutex[i]) CloseHandle(bloom_bPx2nd_mutex[i]);
+	}
+	bloom_bPx2nd_mutex.clear();
+	for (size_t i = 0; i < bloom_bPx3rd_mutex.size(); i++) {
+		if (bloom_bPx3rd_mutex[i]) CloseHandle(bloom_bPx3rd_mutex[i]);
+	}
+	bloom_bPx3rd_mutex.clear();
+#else
+	if (bloom_bP_mutex != NULL) {
+		for (int i = 0; i < 256; i++) {
+			pthread_mutex_destroy(&bloom_bP_mutex[i]);
+		}
+		free(bloom_bP_mutex);
+		bloom_bP_mutex = NULL;
+	}
+	if (bloom_bPx2nd_mutex != NULL) {
+		for (int i = 0; i < 256; i++) {
+			pthread_mutex_destroy(&bloom_bPx2nd_mutex[i]);
+		}
+		free(bloom_bPx2nd_mutex);
+		bloom_bPx2nd_mutex = NULL;
+	}
+	if (bloom_bPx3rd_mutex != NULL) {
+		for (int i = 0; i < 256; i++) {
+			pthread_mutex_destroy(&bloom_bPx3rd_mutex[i]);
+		}
+		free(bloom_bPx3rd_mutex);
+		bloom_bPx3rd_mutex = NULL;
+	}
+#endif
+
+	// Clear vectors
+	BSGS_AMP2.clear();
+	BSGS_AMP2.shrink_to_fit();
+	BSGS_AMP3.clear();
+	BSGS_AMP3.shrink_to_fit();
+	GSn.clear();
+	GSn.shrink_to_fit();
 }
 
 Int lambda,lambda2,beta,beta2;
@@ -1711,6 +1822,9 @@ int main(int argc, char **argv)	{
 #endif
 
 	srand(time(NULL));
+
+	// Register cleanup function for memory leak prevention
+	atexit(cleanup_bsgs_resources);
 
 	secp = new Secp256K1();
 	secp->Init();
@@ -2580,15 +2694,13 @@ int main(int argc, char **argv)	{
 		}
 		aux = (char*) malloc(1024);
 		checkpointer((void *)aux,__FILE__,"malloc","aux" ,__LINE__ - 1);
-		while(!feof(fd))	{
-			if(fgets(aux,1022,fd) == aux)	{
-				trim(aux," \t\n\r");
-				if(strlen(aux) >= 128)	{	//Length of a full address in hexadecimal without 04
-						N++;
-				}else	{
-					if(strlen(aux) >= 66)	{
-						N++;
-					}
+		while(fgets(aux,1022,fd) != NULL)	{
+			trim(aux," \t\n\r");
+			if(strlen(aux) >= 128)	{	//Length of a full address in hexadecimal without 04
+					N++;
+			}else	{
+				if(strlen(aux) >= 66)	{
+					N++;
 				}
 			}
 		}
@@ -2607,42 +2719,40 @@ int main(int argc, char **argv)	{
 		checkpointer((void *)pointy_str,__FILE__,"malloc","pointy_str" ,__LINE__ -1 );
 		fseek(fd,0,SEEK_SET);
 		i = 0;
-		while(!feof(fd))	{
-			if(fgets(aux,1022,fd) == aux)	{
-				trim(aux," \t\n\r");
-				if(strlen(aux) >= 66)	{
-					stringtokenizer(aux,&tokenizerbsgs);
-					aux2 = nextToken(&tokenizerbsgs);
-					memset(pointx_str,0,65);
-					memset(pointy_str,0,65);
-					switch(strlen(aux2))	{
-						case 66:	//Compress
+		while(fgets(aux,1022,fd) != NULL)	{
+			trim(aux," \t\n\r");
+			if(strlen(aux) >= 66)	{
+				stringtokenizer(aux,&tokenizerbsgs);
+				aux2 = nextToken(&tokenizerbsgs);
+				memset(pointx_str,0,65);
+				memset(pointy_str,0,65);
+				switch(strlen(aux2))	{
+					case 66:	//Compress
 
-							if(secp->ParsePublicKeyHex(aux2,OriginalPointsBSGS[i],OriginalPointsBSGScompressed[i]))	{
-								i++;
-							}
-							else	{
-								N--;
-							}
-
-						break;
-						case 130:	//With the 04
-
-							if(secp->ParsePublicKeyHex(aux2,OriginalPointsBSGS[i],OriginalPointsBSGScompressed[i]))	{
-								i++;
-							}
-							else	{
-								N--;
-							}
-
-						break;
-						default:
-							printf("Invalid length: %s\n",aux2);
+						if(secp->ParsePublicKeyHex(aux2,OriginalPointsBSGS[i],OriginalPointsBSGScompressed[i]))	{
+							i++;
+						}
+						else	{
 							N--;
-						break;
-					}
-					freetokenizer(&tokenizerbsgs);
+						}
+
+					break;
+					case 130:	//With the 04
+
+						if(secp->ParsePublicKeyHex(aux2,OriginalPointsBSGS[i],OriginalPointsBSGScompressed[i]))	{
+							i++;
+						}
+						else	{
+							N--;
+						}
+
+					break;
+					default:
+						printf("Invalid length: %s\n",aux2);
+						N--;
+					break;
 				}
+				freetokenizer(&tokenizerbsgs);
 			}
 		}
 		fclose(fd);
@@ -3442,7 +3552,8 @@ int main(int argc, char **argv)	{
 					}
 
 					if(OLDFINISHED_ITEMS != FINISHED_ITEMS)	{
-						printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m2,(int) (((double)FINISHED_ITEMS/(double)bsgs_m2)*100));
+						int percent = (bsgs_m2 > 0) ? (int)(((double)FINISHED_ITEMS/(double)bsgs_m2)*100) : 0;
+						printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m2,percent);
 						fflush(stdout);
 						OLDFINISHED_ITEMS = FINISHED_ITEMS;
 					}
@@ -4286,10 +4397,10 @@ int main(int argc, char **argv)	{
 							const bool line_mode = (FLAGMATRIX || FLAGQUIET || FLAGGPU_HYBRID);
 							if(pretotal.IsLower(&int_limits[0]))	{
 								if(line_mode)	{
-									sprintf(buffer,"[+] Total %s keys in %s seconds: %s keys/s\n",str_total,str_seconds,str_pretotal);
+									snprintf(buffer,sizeof(buffer),"[+] Total %s keys in %s seconds: %s keys/s\n",str_total,str_seconds,str_pretotal);
 								}
 								else	{
-									sprintf(buffer,"\r[+] Total %s keys in %s seconds: %s keys/s\r",str_total,str_seconds,str_pretotal);
+									snprintf(buffer,sizeof(buffer),"\r[+] Total %s keys in %s seconds: %s keys/s\r",str_total,str_seconds,str_pretotal);
 								}
 							}
 							else	{
@@ -4308,14 +4419,14 @@ int main(int argc, char **argv)	{
 							div_pretotal.Div(&int_limits[salir ? i : i-1]);
 							str_divpretotal = div_pretotal.GetBase10();
 								if(line_mode)	{
-									sprintf(buffer,"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+									snprintf(buffer,sizeof(buffer),"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
 								}
 								else	{
 									if(THREADOUTPUT == 1)	{
-										sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+										snprintf(buffer,sizeof(buffer),"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
 								}
 								else	{
-									sprintf(buffer,"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
+									snprintf(buffer,sizeof(buffer),"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
 								}
 							}
 							free(str_divpretotal);
@@ -6216,11 +6327,6 @@ void *thread_process_bsgs(void *vargp)	{
 						pp.x.ModNeg();
 						pp.x.ModAdd(&_p);
 						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-#if 0
-  pp.y.ModSub(&GSn[i].x,&pp.x);
-  pp.y.ModMulK1(&_s);
-  pp.y.ModSub(&GSn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
 						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 						dyn.Set(&GSn[i].y);
 						dyn.ModNeg();
@@ -6232,12 +6338,6 @@ void *thread_process_bsgs(void *vargp)	{
 						pn.x.ModNeg();
 						pn.x.ModAdd(&_p);
 						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-  pn.y.ModSub(&GSn[i].x,&pn.x);
-  pn.y.ModMulK1(&_s);
-  pn.y.ModAdd(&GSn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
 
 						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -6255,11 +6355,6 @@ void *thread_process_bsgs(void *vargp)	{
 					pn.x.ModAdd(&_p);
 					pn.x.ModSub(&GSn[i].x);
 
-#if 0
-pn.y.ModSub(&GSn[i].x,&pn.x);
-pn.y.ModMulK1(&_s);
-pn.y.ModAdd(&GSn[i].y);
-#endif
 					pts[0] = pn;
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
 						pts[i].x.GetHi16Bytes(xpoint_raw);
@@ -6455,12 +6550,6 @@ void *thread_process_bsgs_random(void *vargp)	{
 						pp.x.ModNeg();
 						pp.x.ModAdd(&_p);
 						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-						
-#if 0
-  pp.y.ModSub(&GSn[i].x,&pp.x);
-  pp.y.ModMulK1(&_s);
-  pp.y.ModSub(&GSn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
 
 						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 						dyn.Set(&GSn[i].y);
@@ -6473,13 +6562,6 @@ void *thread_process_bsgs_random(void *vargp)	{
 						pn.x.ModNeg();
 						pn.x.ModAdd(&_p);
 						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-  pn.y.ModSub(&GSn[i].x,&pn.x);
-  pn.y.ModMulK1(&_s);
-  pn.y.ModAdd(&GSn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
-
 
 						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -6498,12 +6580,6 @@ void *thread_process_bsgs_random(void *vargp)	{
 					pn.x.ModNeg();
 					pn.x.ModAdd(&_p);
 					pn.x.ModSub(&GSn[i].x);
-
-#if 0
-pn.y.ModSub(&GSn[i].x,&pn.x);
-pn.y.ModMulK1(&_s);
-pn.y.ModAdd(&GSn[i].y);
-#endif
 
 					pts[0] = pn;
 
@@ -6781,12 +6857,6 @@ void *thread_bPload(void *vargp)	{
 			pp.x.ModAdd(&_p);
 			pp.x.ModSub(&Gn[i].x);           // rx = pow2(s) - p1.x - p2.x;
 
-#if 0
-			pp.y.ModSub(&Gn[i].x,&pp.x);
-			pp.y.ModMulK1(&_s);
-			pp.y.ModSub(&Gn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);
-#endif
-
 			// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 			dyn.Set(&Gn[i].y);
 			dyn.ModNeg();
@@ -6798,12 +6868,6 @@ void *thread_bPload(void *vargp)	{
 			pn.x.ModNeg();
 			pn.x.ModAdd(&_p);
 			pn.x.ModSub(&Gn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-			pn.y.ModSub(&Gn[i].x,&pn.x);
-			pn.y.ModMulK1(&_s);
-			pn.y.ModAdd(&Gn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);
-#endif
 
 			pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 			pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -6821,12 +6885,6 @@ void *thread_bPload(void *vargp)	{
 		pn.x.ModNeg();
 		pn.x.ModAdd(&_p);
 		pn.x.ModSub(&Gn[i].x);
-
-#if 0
-		pn.y.ModSub(&Gn[i].x,&pn.x);
-		pn.y.ModMulK1(&_s);
-		pn.y.ModAdd(&Gn[i].y);
-#endif
 
 		pts[0] = pn;
 		for(j=0;j<CPU_GRP_SIZE;j++)	{
@@ -6970,12 +7028,6 @@ void *thread_bPload_2blooms(void *vargp)	{
 			pp.x.ModAdd(&_p);
 			pp.x.ModSub(&Gn[i].x);           // rx = pow2(s) - p1.x - p2.x;
 
-#if 0
-			pp.y.ModSub(&Gn[i].x,&pp.x);
-			pp.y.ModMulK1(&_s);
-			pp.y.ModSub(&Gn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);
-#endif
-
 			// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 			dyn.Set(&Gn[i].y);
 			dyn.ModNeg();
@@ -6987,12 +7039,6 @@ void *thread_bPload_2blooms(void *vargp)	{
 			pn.x.ModNeg();
 			pn.x.ModAdd(&_p);
 			pn.x.ModSub(&Gn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-			pn.y.ModSub(&Gn[i].x,&pn.x);
-			pn.y.ModMulK1(&_s);
-			pn.y.ModAdd(&Gn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);
-#endif
 
 			pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 			pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -7010,12 +7056,6 @@ void *thread_bPload_2blooms(void *vargp)	{
 		pn.x.ModNeg();
 		pn.x.ModAdd(&_p);
 		pn.x.ModSub(&Gn[i].x);
-
-#if 0
-		pn.y.ModSub(&Gn[i].x,&pn.x);
-		pn.y.ModMulK1(&_s);
-		pn.y.ModAdd(&Gn[i].y);
-#endif
 
 		pts[0] = pn;
 		for(j=0;j<CPU_GRP_SIZE;j++)	{
@@ -7259,12 +7299,6 @@ void *thread_process_bsgs_dance(void *vargp)	{
 						pp.x.ModNeg();
 						pp.x.ModAdd(&_p);
 						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-						
-#if 0
-  pp.y.ModSub(&GSn[i].x,&pp.x);
-  pp.y.ModMulK1(&_s);
-  pp.y.ModSub(&GSn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
 
 						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 						dyn.Set(&GSn[i].y);
@@ -7277,13 +7311,6 @@ void *thread_process_bsgs_dance(void *vargp)	{
 						pn.x.ModNeg();
 						pn.x.ModAdd(&_p);
 						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-  pn.y.ModSub(&GSn[i].x,&pn.x);
-  pn.y.ModMulK1(&_s);
-  pn.y.ModAdd(&GSn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
-
 
 						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -7302,12 +7329,6 @@ void *thread_process_bsgs_dance(void *vargp)	{
 					pn.x.ModNeg();
 					pn.x.ModAdd(&_p);
 					pn.x.ModSub(&GSn[i].x);
-
-#if 0
-pn.y.ModSub(&GSn[i].x,&pn.x);
-pn.y.ModMulK1(&_s);
-pn.y.ModAdd(&GSn[i].y);
-#endif
 
 					pts[0] = pn;
 
@@ -7515,12 +7536,6 @@ void *thread_process_bsgs_backward(void *vargp)	{
 						pp.x.ModNeg();
 						pp.x.ModAdd(&_p);
 						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-						
-#if 0
-  pp.y.ModSub(&GSn[i].x,&pp.x);
-  pp.y.ModMulK1(&_s);
-  pp.y.ModSub(&GSn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
 
 						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 						dyn.Set(&GSn[i].y);
@@ -7533,13 +7548,6 @@ void *thread_process_bsgs_backward(void *vargp)	{
 						pn.x.ModNeg();
 						pn.x.ModAdd(&_p);
 						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-  pn.y.ModSub(&GSn[i].x,&pn.x);
-  pn.y.ModMulK1(&_s);
-  pn.y.ModAdd(&GSn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
-
 
 						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -7558,12 +7566,6 @@ void *thread_process_bsgs_backward(void *vargp)	{
 					pn.x.ModNeg();
 					pn.x.ModAdd(&_p);
 					pn.x.ModSub(&GSn[i].x);
-
-#if 0
-pn.y.ModSub(&GSn[i].x,&pn.x);
-pn.y.ModMulK1(&_s);
-pn.y.ModAdd(&GSn[i].y);
-#endif
 
 					pts[0] = pn;
 
@@ -7797,12 +7799,6 @@ void *thread_process_bsgs_both(void *vargp)	{
 							pp.x.ModNeg();
 							pp.x.ModAdd(&_p);
 							pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-							
-#if 0
-	  pp.y.ModSub(&GSn[i].x,&pp.x);
-	  pp.y.ModMulK1(&_s);
-	  pp.y.ModSub(&GSn[i].y);           // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
 
 							// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
 							dyn.Set(&GSn[i].y);
@@ -7815,13 +7811,6 @@ void *thread_process_bsgs_both(void *vargp)	{
 							pn.x.ModNeg();
 							pn.x.ModAdd(&_p);
 							pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-#if 0
-	  pn.y.ModSub(&GSn[i].x,&pn.x);
-	  pn.y.ModMulK1(&_s);
-	  pn.y.ModAdd(&GSn[i].y);          // ry = - p2.y - s*(ret.x-p2.x);  
-#endif
-
 
 							pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
 							pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
@@ -7840,12 +7829,6 @@ void *thread_process_bsgs_both(void *vargp)	{
 						pn.x.ModNeg();
 						pn.x.ModAdd(&_p);
 						pn.x.ModSub(&GSn[i].x);
-
-#if 0
-	pn.y.ModSub(&GSn[i].x,&pn.x);
-	pn.y.ModMulK1(&_s);
-	pn.y.ModAdd(&GSn[i].y);
-#endif
 
 						pts[0] = pn;
 
@@ -8640,7 +8623,7 @@ bool processOneVanity()	{
 bool readFileVanity(char *fileName)	{
 	FILE *fileDescriptor;
 	int i,k,len;
-	char aux[100],*hextemp;
+	char aux[100];
 
 	fileDescriptor = fopen(fileName,"r");
 	if(fileDescriptor == NULL)	{
@@ -8650,18 +8633,15 @@ bool readFileVanity(char *fileName)	{
 		}
 	}
 	else	{
-		while(!feof(fileDescriptor))	{
-			hextemp = fgets(aux,100,fileDescriptor);
-			if(hextemp == aux)	{
-				trim(aux," \t\n\r");
-				len = strlen(aux);
-				if(len > 0 && len < 36){
-					if(isValidBase58String(aux))	{
-						addvanity(aux);
-					}
-					else	{
-						fprintf(stderr,"[E] the string \"%s\" is not valid Base58, omiting it\n",aux);
-					}
+		while(fgets(aux,100,fileDescriptor) != NULL)	{
+			trim(aux," \t\n\r");
+			len = strlen(aux);
+			if(len > 0 && len < 36){
+				if(isValidBase58String(aux))	{
+					addvanity(aux);
+				}
+				else	{
+					fprintf(stderr,"[E] the string \"%s\" is not valid Base58, omiting it\n",aux);
 				}
 			}
 		}
@@ -8886,8 +8866,8 @@ bool forceReadFileAddress(char *fileName)	{
 	uint64_t numberItems,i;
 	size_t r,raw_value_length;
 	uint8_t rawvalue[50];
-	char aux[100],*hextemp;
-	fileDescriptor = fopen(fileName,"r");	
+	char aux[100];
+	fileDescriptor = fopen(fileName,"r");
 	if(fileDescriptor == NULL)	{
 		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
 		return false;
@@ -8895,23 +8875,20 @@ bool forceReadFileAddress(char *fileName)	{
 
 	/*Count lines in the file*/
 	numberItems = 0;
-	while(!feof(fileDescriptor))	{
-		hextemp = fgets(aux,100,fileDescriptor);
+	while(fgets(aux,100,fileDescriptor) != NULL)	{
 		trim(aux," \t\n\r");
-		if(hextemp == aux)	{			
-			r = strlen(aux);
-			if(r > 20)	{ 
-				numberItems++;
-			}
+		r = strlen(aux);
+		if(r > 20)	{
+			numberItems++;
 		}
 	}
 	fseek(fileDescriptor,0,SEEK_SET);
 	MAXLENGTHADDRESS = 20;		/*20 bytes beacuase we only need the data in binary*/
-	
+
 	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ -1 );
-		
+
 	if(!initBloomFilterExt(&bloom,numberItems))
 		return false;
 
@@ -8920,7 +8897,7 @@ bool forceReadFileAddress(char *fileName)	{
 		validAddress = false;
 		memset(aux,0,100);
 		memset(addressTable[i].value,0,sizeof(struct address_value));
-		hextemp = fgets(aux,100,fileDescriptor);
+		if(fgets(aux,100,fileDescriptor) == NULL) break;
 		trim(aux," \t\n\r");			
 		r = strlen(aux);
 		if(r > 0 && r <= 40)	{
@@ -8959,33 +8936,29 @@ bool forceReadFileAddressEth(char *fileName)	{
 	uint64_t numberItems,i;
 	size_t r;
 	uint8_t rawvalue[50];
-	char aux[100],*hextemp;
-	fileDescriptor = fopen(fileName,"r");	
+	char aux[100];
+	fileDescriptor = fopen(fileName,"r");
 	if(fileDescriptor == NULL)	{
 		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
 		return false;
 	}
 	/*Count lines in the file*/
 	numberItems = 0;
-	while(!feof(fileDescriptor))	{
-		hextemp = fgets(aux,100,fileDescriptor);
+	while(fgets(aux,100,fileDescriptor) != NULL)	{
 		trim(aux," \t\n\r");
-		if(hextemp == aux)	{			
-			r = strlen(aux);
-			if(r >= 40)	{ 
-				numberItems++;
-			}
+		r = strlen(aux);
+		if(r >= 40)	{
+			numberItems++;
 		}
 	}
 	fseek(fileDescriptor,0,SEEK_SET);
 
 	MAXLENGTHADDRESS = 20;		/*20 bytes beacuase we only need the data in binary*/
 	N = numberItems;
-	
+
 	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ -1 );
-
 
 	if(!initBloomFilterExt(&bloom,N))
 		return false;
@@ -8995,7 +8968,7 @@ bool forceReadFileAddressEth(char *fileName)	{
 		validAddress = false;
 		memset(aux,0,100);
 		memset(addressTable[i].value,0,sizeof(struct address_value));
-		hextemp = fgets(aux,100,fileDescriptor);
+		if(fgets(aux,100,fileDescriptor) == NULL) break;
 		trim(aux," \t\n\r");			
 		r = strlen(aux);
 		if(r >= 40 && r <= 42){
@@ -9047,20 +9020,17 @@ bool forceReadFileXPoint(char *fileName)	{
 	}
 	/*Count lines in the file*/
 	numberItems = 0;
-	while(!feof(fileDescriptor))	{
-		hextemp = fgets(aux,1000,fileDescriptor);
+	while(fgets(aux,1000,fileDescriptor) != NULL)	{
 		trim(aux," \t\n\r");
-		if(hextemp == aux)	{			
-			r = strlen(aux);
-			if(r >= 40)	{ 
-				numberItems++;
-			}
+		r = strlen(aux);
+		if(r >= 40)	{
+			numberItems++;
 		}
 	}
 	fseek(fileDescriptor,0,SEEK_SET);
 
 	MAXLENGTHADDRESS = 20;		/*20 bytes beacuase we only need the data in binary*/
-	
+
 	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ - 1);
@@ -9073,12 +9043,12 @@ bool forceReadFileXPoint(char *fileName)	{
 	i= 0;
 	while(i < N)	{
 		memset(aux,0,1000);
-		hextemp = fgets(aux,1000,fileDescriptor);
+		if(fgets(aux,1000,fileDescriptor) == NULL) break;
 		memset((void *)&addressTable[i],0,sizeof(struct address_value));
-		if(hextemp == aux)	{
-			trim(aux," \t\n\r");
-			stringtokenizer(aux,&tokenizer_xpoint);
-			hextemp = nextToken(&tokenizer_xpoint);
+		trim(aux," \t\n\r");
+		stringtokenizer(aux,&tokenizer_xpoint);
+		hextemp = nextToken(&tokenizer_xpoint);
+		if(hextemp != NULL)	{
 			lenaux = strlen(hextemp);
 			if(isValidHex(hextemp)) {
 				switch(lenaux)	{

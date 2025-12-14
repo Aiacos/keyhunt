@@ -19,15 +19,6 @@
 // Use optimized hash functions
 #define USE_OPTIMIZED_HASH 1
 
-static inline int env_truthy(const char *name) {
-    const char *v = getenv(name);
-    if (!v || !*v) return 0;
-    if (v[0] == '0' && v[1] == '\0') return 0;
-    if ((v[0] == 'f' || v[0] == 'F') && (v[1] == 'a' || v[1] == 'A')) return 0;
-    if ((v[0] == 'n' || v[0] == 'N') && (v[1] == 'o' || v[1] == 'O')) return 0;
-    return 1;
-}
-
 // ============================================================================
 // Global state (C-style, no thread_local)
 // ============================================================================
@@ -169,11 +160,6 @@ static arch_params_t get_optimal_params(int compute_capability, int multiprocess
 
     return params;
 }
-
-// Legacy compatibility: pointers to first GPU's data
-static uint8_t *d_GTable = NULL;
-static uint8_t *d_targets = NULL;
-static uint8_t *d_bloom = NULL;
 
 // Fast path for very small target sets: store in constant memory.
 #define MAX_SMALL_TARGETS 32
@@ -1803,19 +1789,6 @@ __global__ void kernel_hash160_fromX(const uint8_t *x32_be, size_t count,
 // Multi-stream infrastructure functions
 // ============================================================================
 
-static void init_search_streams(void) {
-    if (g_search_streams_initialized) return;
-
-    for (int i = 0; i < NUM_SEARCH_STREAMS; i++) {
-        cudaStreamCreate(&g_search_streams[i].stream);
-        cudaEventCreate(&g_search_streams[i].start_event);
-        cudaEventCreate(&g_search_streams[i].end_event);
-        cudaMalloc(&g_search_streams[i].d_should_stop, sizeof(int));
-        g_search_streams[i].in_use = 0;
-    }
-    g_search_streams_initialized = 1;
-}
-
 static void cleanup_search_streams(void) {
     if (!g_search_streams_initialized) return;
 
@@ -1837,123 +1810,6 @@ static void cleanup_search_streams(void) {
 // ============================================================================
 
 extern "C" {
-
-static int gpu_autotune_launch_params(int threads_per_block,
-                                     int *io_blocks_per_sm,
-                                     uint64_t *io_keys_per_thread,
-                                     const uint256_d *start_key,
-                                     int search_compressed,
-                                     int search_uncompressed) {
-    if (!io_blocks_per_sm || !io_keys_per_thread || !start_key) return 0;
-    if (!g_available) return 0;
-
-    double best_kps = 0.0;
-    int best_blocks_per_sm = *io_blocks_per_sm;
-    uint64_t best_kpt = *io_keys_per_thread;
-
-    // If user explicitly set either value, respect it and skip autotune.
-    if ((getenv("KEYHUNT_GPU_BLOCKS_PER_SM") && getenv("KEYHUNT_GPU_BLOCKS_PER_SM")[0]) ||
-        (getenv("KEYHUNT_GPU_KEYS_PER_THREAD") && getenv("KEYHUNT_GPU_KEYS_PER_THREAD")[0])) {
-        return 0;
-    }
-    if (!env_truthy("KEYHUNT_GPU_AUTOTUNE")) return 0;
-
-    // Candidate sets (small, safe, and fast to test).
-    const int blocks_per_sm_candidates[] = {16, 24, 32};
-    const uint64_t keys_per_thread_candidates[] = {512ULL, 1024ULL, 2048ULL};
-
-    cudaStream_t stream = NULL;
-    cudaEvent_t ev_start = NULL;
-    cudaEvent_t ev_end = NULL;
-    int *d_should_stop = NULL;
-
-    cudaError_t err = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
-    if (err != cudaSuccess) goto cleanup;
-    err = cudaEventCreate(&ev_start);
-    if (err != cudaSuccess) goto cleanup;
-    err = cudaEventCreate(&ev_end);
-    if (err != cudaSuccess) goto cleanup;
-    err = cudaMalloc(&d_should_stop, sizeof(int));
-    if (err != cudaSuccess) goto cleanup;
-
-    {
-        int zero = 0;
-        cudaMemcpyAsync(d_should_stop, &zero, sizeof(int), cudaMemcpyHostToDevice, stream);
-        cudaStreamSynchronize(stream);
-    }
-
-    // Warm up once to reduce first-launch noise.
-    {
-        const int blocks = g_info.multiprocessors * best_blocks_per_sm;
-        const uint64_t keys_limit = (uint64_t)blocks * (uint64_t)threads_per_block * best_kpt;
-        if (search_uncompressed) {
-            kernel_full_search_xy<<<blocks, threads_per_block, 0, stream>>>(
-                *start_key, 0, best_kpt, keys_limit,
-                search_compressed, search_uncompressed,
-                d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
-        } else {
-            kernel_full_search_compressed<<<blocks, threads_per_block, 0, stream>>>(
-                *start_key, 0, best_kpt, keys_limit,
-                d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
-        }
-        cudaStreamSynchronize(stream);
-    }
-
-    printf("[I] GPU autotune: testing launch params (set KEYHUNT_GPU_BLOCKS_PER_SM / KEYHUNT_GPU_KEYS_PER_THREAD to override)\n");
-    fflush(stdout);
-
-    for (size_t i = 0; i < sizeof(blocks_per_sm_candidates) / sizeof(blocks_per_sm_candidates[0]); i++) {
-        for (size_t j = 0; j < sizeof(keys_per_thread_candidates) / sizeof(keys_per_thread_candidates[0]); j++) {
-            const int blocks_per_sm = blocks_per_sm_candidates[i];
-            const uint64_t kpt = keys_per_thread_candidates[j];
-            const int blocks = g_info.multiprocessors * blocks_per_sm;
-            const uint64_t keys_limit = (uint64_t)blocks * (uint64_t)threads_per_block * kpt;
-
-            cudaEventRecord(ev_start, stream);
-            if (search_uncompressed) {
-                kernel_full_search_xy<<<blocks, threads_per_block, 0, stream>>>(
-                    *start_key, 0, kpt, keys_limit,
-                    search_compressed, search_uncompressed,
-                    d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
-            } else {
-                kernel_full_search_compressed<<<blocks, threads_per_block, 0, stream>>>(
-                    *start_key, 0, kpt, keys_limit,
-                    d_GTable, d_targets, 0, NULL, 0, 0, 0, d_should_stop);
-            }
-            cudaEventRecord(ev_end, stream);
-            err = cudaEventSynchronize(ev_end);
-            if (err != cudaSuccess) {
-                continue;
-            }
-
-            float ms = 0.0f;
-            cudaEventElapsedTime(&ms, ev_start, ev_end);
-            if (ms <= 0.0f) continue;
-
-            const double kps = ((double)keys_limit) / ((double)ms / 1000.0);
-            if (kps > best_kps) {
-                best_kps = kps;
-                best_blocks_per_sm = blocks_per_sm;
-                best_kpt = kpt;
-            }
-        }
-    }
-
-    if (best_kps > 0.0) {
-        *io_blocks_per_sm = best_blocks_per_sm;
-        *io_keys_per_thread = best_kpt;
-        printf("[I] GPU autotune: selected blocks_per_sm=%d keys_per_thread=%lu\n",
-               best_blocks_per_sm, (unsigned long)best_kpt);
-        fflush(stdout);
-    }
-
-cleanup:
-    if (d_should_stop) cudaFree(d_should_stop);
-    if (ev_end) cudaEventDestroy(ev_end);
-    if (ev_start) cudaEventDestroy(ev_start);
-    if (stream) cudaStreamDestroy(stream);
-    return (best_kps > 0.0) ? 1 : 0;
-}
 
 int gpu_backend_init(gpu_backend_info_t *info) {
     int deviceCount = 0;
@@ -2079,11 +1935,6 @@ void gpu_backend_shutdown(void) {
     if (h_targets_copy) { free(h_targets_copy); h_targets_copy = NULL; }
     if (h_bloom_copy) { free(h_bloom_copy); h_bloom_copy = NULL; }
 
-    // Reset legacy pointers
-    d_GTable = NULL;
-    d_targets = NULL;
-    d_bloom = NULL;
-
     // Clean up legacy single-stream context
     if (d_x32) { cudaFree(d_x32); d_x32 = NULL; }
     if (d_out02) { cudaFree(d_out02); d_out02 = NULL; }
@@ -2206,11 +2057,6 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
         success++;
     }
 
-    // Set legacy pointer for single-GPU compat
-    if (g_gpu_count > 0 && g_gpus[0].d_GTable) {
-        d_GTable = g_gpus[0].d_GTable;
-    }
-
     g_GTable_count = point_count;
     return (success > 0) ? 0 : 1;
 }
@@ -2263,11 +2109,6 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
         success++;
     }
 
-    // Set legacy pointer for single-GPU compat
-    if (g_gpu_count > 0 && g_gpus[0].d_targets) {
-        d_targets = g_gpus[0].d_targets;
-    }
-
     g_target_count = count;
     return (success > 0) ? 0 : 1;
 }
@@ -2306,11 +2147,6 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
         }
 
         success++;
-    }
-
-    // Set legacy pointer for single-GPU compat
-    if (g_gpu_count > 0 && g_gpus[0].d_bloom) {
-        d_bloom = g_gpus[0].d_bloom;
     }
 
     g_bloom_size = bloom_size;

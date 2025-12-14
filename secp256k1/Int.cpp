@@ -395,6 +395,11 @@ void Int::ShiftL32BitAndSub(Int *a,int n) {
 // ------------------------------------------------
 
 void Int::ShiftL(uint32_t n) {
+  // Bounds check: max shift is NB64BLOCK * 64 bits
+  if (n >= NB64BLOCK * 64) {
+    SetInt32(0);  // Shift >= total bits results in zero
+    return;
+  }
 
   if( n<64 ) {
 	shiftL((unsigned char)n, bits64);
@@ -438,6 +443,16 @@ void Int::ShiftR64Bit() {
 // ---------------------------------D---------------
 
 void Int::ShiftR(uint32_t n) {
+  // Bounds check: max shift is NB64BLOCK * 64 bits
+  if (n >= NB64BLOCK * 64) {
+    // For signed shift, fill with sign bit; for unsigned, set to zero
+    if (IsNegative()) {
+      for (int i = 0; i < NB64BLOCK; i++) bits64[i] = 0xFFFFFFFFFFFFFFFFULL;
+    } else {
+      SetInt32(0);
+    }
+    return;
+  }
 
   if( n<64 ) {
     shiftR((unsigned char)n, bits64);
