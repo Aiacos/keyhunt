@@ -77,11 +77,6 @@ void wizard_print_step(int current, int total, const char *title) {
     wizard_print_separator();
 }
 
-static void clear_input_line(void) {
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF);
-}
-
 int wizard_ask_choice(const char *prompt, const char **options, int count, int default_choice) {
     printf(YELLOW "%s" RESET "\n\n", prompt);
 
