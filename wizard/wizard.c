@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define PUZZLES_CACHE_FILE "puzzles_cache.txt"
 #define CONFIG_FILE "keyhunt_wizard.json"
@@ -93,23 +94,28 @@ static int wizard_select_puzzle(wizard_config_t *cfg) {
  * ============================================================================ */
 
 static int wizard_configure_server(wizard_config_t *cfg) {
-    cfg->server_port = wizard_ask_int("Server port", 1024, 65535, 7777);
+    /* Auto-apply optimal server configuration */
+    printf("\n\033[1;36m[AUTO-CONFIG] Server Settings\033[0m\n");
 
-    const char *unit_options[] = {
-        "4 billion keys/unit (~80s CPU, ~8s GPU) - Recommended",
-        "1 billion keys/unit (faster progress updates)",
-        "16 billion keys/unit (less network overhead)"
-    };
-    uint64_t unit_sizes[] = {0x100000000ULL, 0x40000000ULL, 0x400000000ULL};
+    /* Server port - use default */
+    cfg->server_port = 7777;
+    printf("  ✓ Server port: %d\n", cfg->server_port);
 
-    int choice = wizard_ask_choice("Work unit size:", unit_options, 3, 0);
-    cfg->work_unit_size = unit_sizes[choice];
+    /* Work unit size - will be set by search configuration based on puzzle analysis */
+    /* (keeping default here, wizard_configure_search will override with optimal) */
+    cfg->work_unit_size = 0x100000000ULL;  /* 4 billion - will be overridden */
 
-    cfg->server_also_worker = wizard_ask_yesno(
-        "Also run worker on this machine (server+worker)?", true);
+    /* Server also acts as worker - always enabled for efficiency */
+    cfg->server_also_worker = true;
+    printf("  ✓ Server also worker: enabled (maximum efficiency)\n");
 
-    cfg->checkpoint_interval_sec = wizard_ask_int(
-        "Checkpoint interval (seconds)", 60, 3600, 300);
+    /* Checkpoint interval - reasonable default */
+    cfg->checkpoint_interval_sec = 300;
+    printf("  ✓ Checkpoint interval: %d seconds\n", cfg->checkpoint_interval_sec);
+
+    /* Bind to all interfaces */
+    strncpy(cfg->server_host, "0.0.0.0", sizeof(cfg->server_host) - 1);
+    printf("  ✓ Bind address: %s (all interfaces)\n", cfg->server_host);
 
     return 0;
 }
@@ -284,71 +290,63 @@ static int wizard_configure_search(wizard_config_t *cfg) {
     printf("    Performance Score: CPU=%.1f GPU=%.1f\n",
            sysinfo.cpu_score, sysinfo.gpu_score);
 
-    /* Calculate and show puzzle-specific recommendations */
+    /* Calculate puzzle-specific optimal configuration */
     bool has_pubkey = (strcmp(cfg->mode, "bsgs") == 0);
     puzzle_recommendation_t rec;
     calculate_puzzle_recommendation(cfg->bits, has_pubkey,
                                      sysinfo.ram_available, &rec);
     print_puzzle_recommendation(&rec, cfg->bits, has_pubkey);
 
-    /* Apply recommended work unit size */
+    /* ==========================================================================
+     * AUTO-APPLY ALL OPTIMAL VALUES (no user prompts)
+     * ========================================================================== */
+    printf("\n\033[1;36m[AUTO-CONFIG] Applying optimal configuration...\033[0m\n");
+
+    /* 1. Mode - auto-select based on public key availability */
+    strncpy(cfg->mode, rec.recommended_mode, sizeof(cfg->mode) - 1);
+    printf("  ✓ Mode: %s\n", cfg->mode);
+
+    /* 2. Work unit size */
     cfg->work_unit_size = rec.recommended_work_unit;
+    printf("  ✓ Work unit: 0x%llx (%llu keys)\n",
+           (unsigned long long)cfg->work_unit_size,
+           (unsigned long long)cfg->work_unit_size);
 
-    /* Mode selection - offer choice but highlight recommendation */
-    if (has_pubkey) {
-        printf("\n[!] \033[1;32mBSGS mode auto-selected\033[0m (puzzle has public key)\n");
-        /* Mode already set to bsgs in wizard_select_puzzle */
+    /* 3. Threads - use all logical cores */
+    cfg->threads = sysinfo.cpu_logical_cores;
+    printf("  ✓ Threads: %d (all logical cores)\n", cfg->threads);
+
+    /* 4. GPU usage - depends on mode and availability */
+    if (strcmp(cfg->mode, "bsgs") == 0) {
+        cfg->gpu_percent = 0;  /* BSGS is CPU-optimized */
+        printf("  ✓ GPU: disabled (BSGS is CPU-optimized)\n");
+    } else if (sysinfo.has_cuda) {
+        cfg->gpu_percent = sysinfo_get_hybrid_gpu_percent(&sysinfo);
+        printf("  ✓ GPU: %d%% (%s)\n", cfg->gpu_percent, sysinfo.gpu_name);
     } else {
-        const char *mode_options[] = {
-            "address - Standard address search (Recommended)",
-            "rmd160 - Search by RIPEMD160 hash",
-            "xpoint - Search by X coordinate (needs pubkey file)"
-        };
-        const char *mode_values[] = {"address", "rmd160", "xpoint"};
-
-        int choice = wizard_ask_choice("Search mode:", mode_options, 3, 0);
-        strncpy(cfg->mode, mode_values[choice], sizeof(cfg->mode) - 1);
-    }
-
-    /* Thread count */
-    int default_threads = sysinfo.cpu_logical_cores;
-    cfg->threads = wizard_ask_int("Number of CPU threads",
-                                   1, sysinfo.cpu_logical_cores * 2,
-                                   default_threads);
-
-    /* GPU usage - only for address/rmd160 modes */
-    if (strcmp(cfg->mode, "bsgs") != 0 && sysinfo.has_cuda) {
-        int suggested_gpu = sysinfo_get_hybrid_gpu_percent(&sysinfo);
-        cfg->gpu_percent = wizard_ask_int("GPU usage percent (0=disabled)",
-                                           0, 100, suggested_gpu);
-    } else if (strcmp(cfg->mode, "bsgs") == 0) {
-        printf("[i] GPU not used in BSGS mode (CPU-optimized)\n");
         cfg->gpu_percent = 0;
-    } else {
-        printf("[i] No CUDA GPU detected, using CPU only\n");
-        cfg->gpu_percent = 0;
+        printf("  ✓ GPU: disabled (no CUDA GPU detected)\n");
     }
 
-    /* Key type - default based on recommendation */
-    const char *key_options[] = {
-        "compressed only (2x faster, most puzzles use this)",
-        "uncompressed only",
-        "both (slower but complete)"
-    };
-    const char *key_values[] = {"compress", "uncompress", "both"};
+    /* 5. Key type - always compressed (2x faster, standard for puzzles) */
+    strncpy(cfg->key_type, rec.recommended_key_type, sizeof(cfg->key_type) - 1);
+    printf("  ✓ Key type: %s\n", cfg->key_type);
 
-    int key_default = 0;  /* compressed */
-    int choice = wizard_ask_choice("Key type to search:", key_options, 3, key_default);
-    strncpy(cfg->key_type, key_values[choice], sizeof(cfg->key_type) - 1);
+    /* 6. Random mode - based on puzzle analysis */
+    cfg->random_mode = rec.recommended_random;
+    printf("  ✓ Search mode: %s\n", cfg->random_mode ? "random" : "sequential");
 
-    /* Random mode - default based on puzzle analysis */
-    const char *random_prompt;
-    if (rec.recommended_random) {
-        random_prompt = "Use random mode? (Recommended for this puzzle)";
-    } else {
-        random_prompt = "Use random mode? (Sequential recommended for this puzzle)";
+    /* 7. BSGS-specific parameters */
+    if (strcmp(cfg->mode, "bsgs") == 0) {
+        cfg->bsgs_n = rec.bsgs_n;
+        cfg->bsgs_k = rec.bsgs_k;
+        printf("  ✓ BSGS N: 0x%llx (%.1f GB table)\n",
+               (unsigned long long)cfg->bsgs_n,
+               (double)(cfg->bsgs_n * 20) / (1024.0 * 1024.0 * 1024.0));
+        printf("  ✓ BSGS K: %d\n", cfg->bsgs_k);
     }
-    cfg->random_mode = wizard_ask_yesno(random_prompt, rec.recommended_random);
+
+    printf("\n\033[1;32m[OK] Configuration optimized for your hardware\033[0m\n");
 
     return 0;
 }
@@ -358,12 +356,13 @@ static int wizard_configure_search(wizard_config_t *cfg) {
  * ============================================================================ */
 
 static int wizard_configure_community(wizard_config_t *cfg) {
-    cfg->community_enabled = wizard_ask_yesno(
-        "Fetch community progress from BTCPuzzle.info?", true);
+    /* Auto-enable community sync for distributed coordination */
+    cfg->community_enabled = true;
+    cfg->community_sync_interval_sec = 3600;  /* 1 hour default */
 
-    if (!cfg->community_enabled) {
-        return 0;
-    }
+    printf("\n\033[1;36m[AUTO-CONFIG] Community Progress Integration\033[0m\n");
+    printf("  ✓ Community sync: enabled (BTCPuzzle.info)\n");
+    printf("  ✓ Sync interval: %d seconds\n", cfg->community_sync_interval_sec);
 
     printf("\n[+] Fetching community data for puzzle #%d...\n", cfg->puzzle_number);
 
@@ -375,22 +374,18 @@ static int wizard_configure_community(wizard_config_t *cfg) {
         cfg->community_last_sync = time(NULL);
 
         if (count > 0) {
-            printf("[+] Found %d ranges already scanned by community\n", count);
-
-            if (wizard_ask_yesno("Add these to exclusion list?", true)) {
-                wizard_community_merge_exclusions(cfg->exclusion_file, ranges, count);
-            }
-
+            printf("  ✓ Found %d ranges already scanned by community\n", count);
+            /* Auto-add to exclusion list (no asking) */
+            wizard_community_merge_exclusions(cfg->exclusion_file, ranges, count);
+            printf("  ✓ Added to exclusion list (avoiding duplicate work)\n");
             wizard_community_free(ranges, count);
         } else {
-            printf("[i] No community progress data found\n");
+            printf("  ✓ No community progress data yet (fresh puzzle)\n");
         }
     } else {
-        printf("[-] Could not fetch community data (network error?)\n");
+        printf("  ! Could not fetch community data (network error?)\n");
+        printf("    Will retry during search\n");
     }
-
-    cfg->community_sync_interval_sec = wizard_ask_int(
-        "Re-sync interval (seconds, 0=never)", 0, 86400, 3600);
 
     return 0;
 }
@@ -472,17 +467,19 @@ int wizard_run(void) {
     }
 
     /* === Summary === */
+    printf("\n\033[1;33m═══════════════════════════════════════════════════════════════\033[0m\n");
+    printf("\033[1;33m                    FINAL CONFIGURATION\033[0m\n");
+    printf("\033[1;33m═══════════════════════════════════════════════════════════════\033[0m\n");
     wizard_print_config_summary(&cfg);
 
-    if (!wizard_ask_yesno("\nSave and start?", true)) {
-        printf("\n[!] Cancelled by user\n");
-        return 1;
+    /* Auto-save configuration (no prompt needed - all settings are optimal) */
+    if (wizard_config_save(&cfg, CONFIG_FILE) == 0) {
+        printf("\n\033[1;32m[✓] Configuration auto-saved to %s\033[0m\n", CONFIG_FILE);
     }
 
-    /* Save configuration */
-    if (wizard_config_save(&cfg, CONFIG_FILE) == 0) {
-        printf("\n[+] Configuration saved to %s\n", CONFIG_FILE);
-    }
+    /* Give user option to abort before starting */
+    printf("\n[i] Press Ctrl+C now to abort, or wait 3 seconds to start...\n");
+    sleep(3);
 
 start_mode:
     /* Start in selected mode */

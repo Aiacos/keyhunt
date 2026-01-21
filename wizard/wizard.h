@@ -65,6 +65,10 @@ typedef struct {
     int threads;
     int gpu_percent;
 
+    /* BSGS-specific parameters (auto-calculated based on RAM) */
+    uint64_t bsgs_n;         /* N parameter for BSGS */
+    int bsgs_k;              /* K factor for BSGS */
+
     /* Community sync */
     bool community_enabled;
     char community_source[64];

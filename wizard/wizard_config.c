@@ -140,7 +140,9 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     fprintf(f, "    \"key_type\": \"%s\",\n", cfg->key_type);
     fprintf(f, "    \"random_mode\": %s,\n", cfg->random_mode ? "true" : "false");
     fprintf(f, "    \"threads\": %d,\n", cfg->threads);
-    fprintf(f, "    \"gpu_percent\": %d\n", cfg->gpu_percent);
+    fprintf(f, "    \"gpu_percent\": %d,\n", cfg->gpu_percent);
+    fprintf(f, "    \"bsgs_n\": \"%llx\",\n", (unsigned long long)cfg->bsgs_n);
+    fprintf(f, "    \"bsgs_k\": %d\n", cfg->bsgs_k);
     fprintf(f, "  },\n");
 
     fprintf(f, "  \"community\": {\n");
@@ -268,6 +270,8 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     cfg->random_mode = json_get_bool(json, "random_mode", true);
     cfg->threads = json_get_int(json, "threads", -1);
     cfg->gpu_percent = json_get_int(json, "gpu_percent", 0);
+    cfg->bsgs_n = json_get_hex(json, "bsgs_n", 0x10000000ULL);
+    cfg->bsgs_k = json_get_int(json, "bsgs_k", 1);
 
     cfg->community_enabled = json_get_bool(json, "enabled", true);
     json_get_string(json, "source", cfg->community_source, sizeof(cfg->community_source), "btcpuzzle.info");
