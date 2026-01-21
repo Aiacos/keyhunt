@@ -125,40 +125,94 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     return 0;
 }
 
+/* Helper: Parse hex string to 128-bit integer (supports up to 128-bit ranges) */
+static __uint128_t parse_hex128(const char *hex) {
+    __uint128_t result = 0;
+    while (*hex) {
+        char c = *hex++;
+        int digit;
+        if (c >= '0' && c <= '9') digit = c - '0';
+        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+        else continue;  /* Skip invalid chars */
+        result = (result << 4) | digit;
+    }
+    return result;
+}
+
+/* Helper: Convert 128-bit integer to hex string */
+static void uint128_to_hex(char *buf, size_t sz, __uint128_t val) {
+    if (val == 0) {
+        snprintf(buf, sz, "0");
+        return;
+    }
+    char tmp[33];
+    int i = 32;
+    tmp[i--] = '\0';
+    while (val > 0 && i >= 0) {
+        int digit = val & 0xF;
+        tmp[i--] = digit < 10 ? '0' + digit : 'a' + digit - 10;
+        val >>= 4;
+    }
+    strncpy(buf, &tmp[i + 1], sz - 1);
+    buf[sz - 1] = '\0';
+}
+
 int dist_coordinator_set_range(dist_coordinator_t *coord,
                                const char *range_start, const char *range_end,
                                uint64_t work_unit_size) {
     if (!coord || !range_start || !range_end) return -1;
 
-    /* Parse range as hex - simplified for 64-bit portion */
-    uint64_t start = strtoull(range_start, NULL, 16);
-    uint64_t end = strtoull(range_end, NULL, 16);
+    /* Parse range as hex - using 128-bit integers for puzzles up to 128 bits */
+    __uint128_t start = parse_hex128(range_start);
+    __uint128_t end = parse_hex128(range_end);
 
-    if (end <= start) return -1;
+    if (end <= start) {
+        printf("[Coordinator] Error: end <= start (start=0x%s, end=0x%s)\n",
+               range_start, range_end);
+        return -1;
+    }
 
-    uint64_t total = end - start;
-    coord->total_keys = total;
+    __uint128_t total = end - start;
+
+    /* Store as 64-bit for stats (may overflow for very large ranges) */
+    if (total > ((__uint128_t)1 << 64)) {
+        coord->total_keys = UINT64_MAX;  /* Capped for display */
+    } else {
+        coord->total_keys = (uint64_t)total;
+    }
 
     /* Calculate number of work units */
-    int num_units = (int)((total + work_unit_size - 1) / work_unit_size);
-    if (num_units > 100000) num_units = 100000;  /* Limit */
+    __uint128_t work_size = (__uint128_t)work_unit_size;
+    __uint128_t num_units_128 = (total + work_size - 1) / work_size;
+
+    int num_units;
+    if (num_units_128 > 100000) {
+        num_units = 100000;  /* Limit to prevent excessive memory */
+        printf("[Coordinator] Warning: Range too large, limiting to %d work units\n", num_units);
+    } else {
+        num_units = (int)num_units_128;
+    }
 
     coord->work_units = calloc(num_units, sizeof(dist_work_unit_t));
     if (!coord->work_units) return -1;
 
     /* Create work units */
-    uint64_t pos = start;
+    __uint128_t pos = start;
     for (int i = 0; i < num_units && pos < end; i++) {
-        uint64_t unit_end = pos + work_unit_size;
+        __uint128_t unit_end = pos + work_size;
         if (unit_end > end) unit_end = end;
 
         dist_work_unit_t *unit = &coord->work_units[i];
         unit->id = i;
-        snprintf(unit->range_start, sizeof(unit->range_start), "%llx", (unsigned long long)pos);
-        snprintf(unit->range_end, sizeof(unit->range_end), "%llx", (unsigned long long)unit_end);
+        uint128_to_hex(unit->range_start, sizeof(unit->range_start), pos);
+        uint128_to_hex(unit->range_end, sizeof(unit->range_end), unit_end);
         unit->status = WORK_STATUS_PENDING;
         unit->assigned_worker = -1;
-        unit->keys_in_unit = unit_end - pos;
+
+        /* Keys in unit (capped to 64-bit for stats) */
+        __uint128_t keys = unit_end - pos;
+        unit->keys_in_unit = keys > UINT64_MAX ? UINT64_MAX : (uint64_t)keys;
 
         coord->work_unit_count++;
         coord->work_units_pending++;
