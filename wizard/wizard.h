@@ -213,6 +213,65 @@ int wizard_community_merge_exclusions(const char *exclusion_file,
 bool wizard_is_range_excluded(const char *exclusion_file, const char *range_start);
 
 /* ============================================================================
+ * Privatekeys.pw Cloud Search Integration
+ * ============================================================================ */
+
+/**
+ * Fetch progress from privatekeys.pw (scrapes HTML)
+ * @param puzzle_number Puzzle to check (currently only 71 supported)
+ * @param progress Output progress data
+ * @return 0 on success, -1 on error
+ */
+int wizard_privatekeys_fetch_progress(int puzzle_number, privatekeys_progress_t *progress);
+
+/**
+ * Get progress with 24h caching
+ * @param puzzle_number Puzzle to check
+ * @param progress Output progress data
+ * @return 0 on success (fresh or cached), -1 on error (no data available)
+ */
+int wizard_privatekeys_get_progress(int puzzle_number, privatekeys_progress_t *progress);
+
+/**
+ * Calculate search offset based on community progress (sequential mode)
+ * @param puzzle Puzzle definition with range bounds
+ * @param percent_scanned Community progress percentage
+ * @param adjusted_start Output: hex string of adjusted start position
+ */
+void wizard_calculate_search_offset(const puzzle_def_t *puzzle,
+                                    double percent_scanned,
+                                    char *adjusted_start);
+
+/**
+ * Check if a range falls within community-scanned region (random mode)
+ * @param puzzle Puzzle definition
+ * @param range_start Hex string of range start
+ * @param percent_scanned Community progress percentage
+ * @return true if range is in scanned region, false otherwise
+ */
+bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
+                                 const char *range_start,
+                                 double percent_scanned);
+
+/**
+ * Save locally completed range to progress file
+ * @param puzzle_number Puzzle number (used for filename)
+ * @param range_start Hex string start
+ * @param range_end Hex string end
+ * @return 0 on success, -1 on error
+ */
+int wizard_save_local_progress(int puzzle_number,
+                               const char *range_start,
+                               const char *range_end);
+
+/**
+ * Load local progress ranges count
+ * @param puzzle_number Puzzle number
+ * @return Number of locally completed ranges, 0 if none
+ */
+int wizard_load_local_progress_count(int puzzle_number);
+
+/* ============================================================================
  * Server Mode (Coordinator + Local Worker)
  * ============================================================================ */
 
