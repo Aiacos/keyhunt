@@ -11,6 +11,7 @@
 
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
+#define PRIVATEKEYS_CLOUD_URL "https://privatekeys.pw/cloud-search"
 #define FETCH_TIMEOUT 30
 #define MAX_RESPONSE_SIZE (10 * 1024 * 1024)  /* 10 MB */
 
@@ -459,5 +460,110 @@ int wizard_load_puzzles_from_txt(const char *filepath, puzzle_def_t **puzzles, i
 
     *count = idx;
     fclose(f);
+    return 0;
+}
+
+/* ============================================================================
+ * Privatekeys.pw Cloud Search Integration
+ * ============================================================================ */
+
+int wizard_privatekeys_fetch_progress(int puzzle_number, privatekeys_progress_t *progress) {
+    if (!progress) return -1;
+
+    memset(progress, 0, sizeof(*progress));
+    progress->puzzle_number = puzzle_number;
+
+    printf("[+] Fetching privatekeys.pw cloud search progress...\n");
+
+    char *html = NULL;
+    size_t html_len = 0;
+
+    if (fetch_url(PRIVATEKEYS_CLOUD_URL, &html, &html_len) != 0) {
+        printf("[-] Failed to fetch privatekeys.pw\n");
+        return -1;
+    }
+
+    if (html_len < 1000) {
+        printf("[-] Invalid response from privatekeys.pw\n");
+        free(html);
+        return -1;
+    }
+
+    double percent = 0.0;
+    uint64_t keys_scanned = 0;
+
+    /* Method 1: Look for completion percentage pattern */
+    char *pct_ptr = strstr(html, "completion");
+    if (!pct_ptr) pct_ptr = strstr(html, "Completion");
+    if (!pct_ptr) pct_ptr = strstr(html, "progress");
+
+    if (pct_ptr) {
+        char *scan = pct_ptr;
+        char *end = pct_ptr + 500;
+        if (end > html + html_len) end = html + html_len;
+
+        while (scan < end) {
+            if ((*scan >= '0' && *scan <= '9') || *scan == '.') {
+                double val = 0.0;
+                int consumed = 0;
+                if (sscanf(scan, "%lf%n", &val, &consumed) == 1) {
+                    if (scan[consumed] == '%' && val < 100.0 && val >= 0.0) {
+                        percent = val;
+                        break;
+                    }
+                }
+            }
+            scan++;
+        }
+    }
+
+    /* Method 2: Look for keys scanned count */
+    char *keys_ptr = strstr(html, "keys scanned");
+    if (!keys_ptr) keys_ptr = strstr(html, "Keys scanned");
+    if (!keys_ptr) keys_ptr = strstr(html, "total keys");
+
+    if (keys_ptr) {
+        char *scan = keys_ptr;
+        char *end = keys_ptr + 200;
+        if (end > html + html_len) end = html + html_len;
+
+        while (scan < end) {
+            if (*scan >= '0' && *scan <= '9') {
+                uint64_t val = 0;
+                while (scan < end && (*scan >= '0' && *scan <= '9')) {
+                    val = val * 10 + (*scan - '0');
+                    scan++;
+                    if (*scan == ',' || *scan == ' ' || *scan == '.') {
+                        if (scan[1] >= '0' && scan[1] <= '9') {
+                            scan++;
+                        }
+                    }
+                }
+                if (val > 1000000) {
+                    keys_scanned = val;
+                    break;
+                }
+            }
+            scan++;
+        }
+    }
+
+    free(html);
+
+    if (percent <= 0.0 && keys_scanned == 0) {
+        printf("[-] Could not parse progress data from privatekeys.pw\n");
+        return -1;
+    }
+
+    progress->percent_scanned = percent;
+    progress->keys_scanned = keys_scanned;
+    progress->fetch_time = time(NULL);
+
+    printf("[+] Parsed: %.6f%% scanned", percent);
+    if (keys_scanned > 0) {
+        printf(" (%llu keys)", (unsigned long long)keys_scanned);
+    }
+    printf("\n");
+
     return 0;
 }
