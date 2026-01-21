@@ -46,15 +46,20 @@ static int search_range_subprocess(const char *start, const char *end,
         return -1;
     }
 
-    /* Build command based on mode */
+    /* Build command based on mode, with optional GPU */
+    char gpu_arg[32] = "";
+    if (cfg->gpu_percent > 0) {
+        snprintf(gpu_arg, sizeof(gpu_arg), "-G auto ");
+    }
+
     if (strcmp(cfg->mode, "bsgs") == 0) {
         snprintf(cmd, sizeof(cmd),
-            "./keyhunt -m bsgs -f %s -r %s:%s -t %d -q -s 1 2>&1",
-            target_file, start, end, cfg->threads);
+            "./keyhunt -m bsgs -f %s -r %s:%s -t %d %s-q -s 1 2>&1",
+            target_file, start, end, cfg->threads, gpu_arg);
     } else {
         snprintf(cmd, sizeof(cmd),
-            "./keyhunt -m %s -f %s -r %s:%s -t %d -l %s -q -s 1 2>&1",
-            cfg->mode, target_file, start, end, cfg->threads, cfg->key_type);
+            "./keyhunt -m %s -f %s -r %s:%s -t %d %s-l %s -q -s 1 2>&1",
+            cfg->mode, target_file, start, end, cfg->threads, gpu_arg, cfg->key_type);
     }
 
     /* Run keyhunt and parse output */
@@ -68,11 +73,15 @@ static int search_range_subprocess(const char *start, const char *end,
     int found = 0;
 
     while (fgets(line, sizeof(line), fp) && *stop_flag) {
-        /* Parse total keys from status line */
+        /* Parse total keys - CPU format: "[+] Total X keys" */
         char *total_ptr = strstr(line, "Total ");
         if (total_ptr) {
             uint64_t total = 0;
-            if (sscanf(total_ptr, "Total %llu", (unsigned long long*)&total) == 1) {
+            if (sscanf(total_ptr, "Total %llu keys", (unsigned long long*)&total) == 1) {
+                *keys_checked = total;
+            }
+            /* GPU format: "[+] Total keys checked: X" */
+            else if (sscanf(total_ptr, "Total keys checked: %llu", (unsigned long long*)&total) == 1) {
                 *keys_checked = total;
             }
         }
