@@ -225,7 +225,12 @@ static bool token_present(const char *line, const char *token) {
 static void detect_cpu_features(system_info_t *info) {
     info->has_avx2 = false;
     info->has_avx512 = false;
+    info->has_avx512f = false;
+    info->has_avx512dq = false;
+    info->has_avx512bw = false;
+    info->has_avx512vl = false;
     info->has_sha_ni = false;
+    info->numa_nodes = 1;
 
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
     /* Prefer compiler-provided runtime detection on x86: it accounts for OS
@@ -233,8 +238,9 @@ static void detect_cpu_features(system_info_t *info) {
      * executing AVX/AVX-512 instructions. */
     __builtin_cpu_init();
     info->has_avx2 = __builtin_cpu_supports("avx2");
-    info->has_avx512 = __builtin_cpu_supports("avx512f");
-    /* SHA-NI doesn't require OS extended state; detect via /proc/cpuinfo below
+    info->has_avx512f = __builtin_cpu_supports("avx512f");
+    info->has_avx512 = info->has_avx512f;
+    /* SHA-NI and AVX-512 variants: detect via /proc/cpuinfo below
      * for maximum compatibility across compiler versions. */
     bool used_builtin = true;
 #else
@@ -242,6 +248,22 @@ static void detect_cpu_features(system_info_t *info) {
 #endif
 
 #ifdef __linux__
+    // Detect NUMA nodes
+    DIR *numa_dir = opendir("/sys/devices/system/node");
+    if (numa_dir) {
+        struct dirent *entry;
+        int numa_count = 0;
+        while ((entry = readdir(numa_dir)) != NULL) {
+            if (strncmp(entry->d_name, "node", 4) == 0 && isdigit(entry->d_name[4])) {
+                numa_count++;
+            }
+        }
+        closedir(numa_dir);
+        if (numa_count > 0) {
+            info->numa_nodes = numa_count;
+        }
+    }
+
     FILE *f = fopen("/proc/cpuinfo", "r");
     if (!f) return;
 
@@ -251,8 +273,15 @@ static void detect_cpu_features(system_info_t *info) {
         if (strncmp(line, "flags", 5) == 0 || strncmp(line, "Features", 8) == 0) {
             if (!used_builtin) {
                 if (token_present(line, "avx2")) info->has_avx2 = true;
-                if (token_present(line, "avx512f")) info->has_avx512 = true;
+                if (token_present(line, "avx512f")) {
+                    info->has_avx512 = true;
+                    info->has_avx512f = true;
+                }
             }
+            // Detect AVX-512 variants (always from cpuinfo for accuracy)
+            if (token_present(line, "avx512dq")) info->has_avx512dq = true;
+            if (token_present(line, "avx512bw")) info->has_avx512bw = true;
+            if (token_present(line, "avx512vl")) info->has_avx512vl = true;
             // Intel uses "sha_ni", some platforms report "sha".
             if (token_present(line, "sha_ni") || token_present(line, "sha")) info->has_sha_ni = true;
         }
@@ -550,22 +579,33 @@ void sysinfo_init(system_info_t *info) {
 
     // Calculate optimal parameters
     calculate_optimal_params(info);
+
+    // Calculate performance scores
+    sysinfo_compute_scores(info);
 }
 
 void sysinfo_print(const system_info_t *info) {
     printf("\n[+] System Configuration Detected:\n");
-    printf("    ├─ CPU: %d physical cores, %d logical cores\n",
+    printf("    ├─ CPU: %d physical cores, %d logical cores",
            info->cpu_physical_cores, info->cpu_logical_cores);
+    if (info->numa_nodes > 1) {
+        printf(" (%d NUMA nodes)", info->numa_nodes);
+    }
+    printf("\n");
     printf("    ├─ Cache: L1=%lu KB, L2=%lu KB, L3=%lu KB\n",
            info->cache_l1_size, info->cache_l2_size, info->cache_l3_size);
     printf("    ├─ RAM: %lu MB total, %lu MB available\n",
            info->ram_total, info->ram_available);
     if (info->gpu_count > 0) {
         if (info->gpu_vram_mb > 0) {
-            printf("    ├─ GPU: %s x%d (%llu MB VRAM)\n",
+            printf("    ├─ GPU: %s x%d (%llu MB VRAM",
                    info->gpu_name[0] ? info->gpu_name : "NVIDIA GPU",
                    info->gpu_count,
                    (unsigned long long)info->gpu_vram_mb);
+            if (info->gpu_compute_capability > 0) {
+                printf(", sm_%d", info->gpu_compute_capability);
+            }
+            printf(")\n");
         } else {
             printf("    ├─ GPU: %s x%d\n",
                    info->gpu_name[0] ? info->gpu_name : "NVIDIA GPU",
@@ -574,10 +614,27 @@ void sysinfo_print(const system_info_t *info) {
     } else {
         printf("    ├─ GPU: none detected\n");
     }
-    printf("    └─ Features: AVX2=%s, AVX-512=%s, SHA-NI=%s\n",
+
+    // Extended CPU features
+    printf("    ├─ Features: AVX2=%s, AVX-512=%s",
            info->has_avx2 ? "yes" : "no",
-           info->has_avx512 ? "yes" : "no",
-           info->has_sha_ni ? "yes" : "no");
+           info->has_avx512 ? "yes" : "no");
+    if (info->has_avx512) {
+        printf(" (F");
+        if (info->has_avx512dq) printf("+DQ");
+        if (info->has_avx512bw) printf("+BW");
+        if (info->has_avx512vl) printf("+VL");
+        printf(")");
+    }
+    printf(", SHA-NI=%s\n", info->has_sha_ni ? "yes" : "no");
+
+    // Performance scores
+    printf("    └─ Scores: CPU=%.1f, GPU=%.1f",
+           info->cpu_score, info->gpu_score);
+    if (info->hybrid_ratio > 0.0f) {
+        printf(" (hybrid: %d%% GPU)", (int)(info->hybrid_ratio * 100.0f));
+    }
+    printf("\n");
 
     printf("\n[+] Auto-Tuned Parameters:\n");
     printf("    ├─ Threads: %d (optimal for CPU)\n", info->recommended_threads);
@@ -604,4 +661,74 @@ void sysinfo_get_optimal_params(
     if (workload_per_thread) *workload_per_thread = info->recommended_workload;
     if (n_value) *n_value = info->recommended_n;
     if (kfactor) *kfactor = info->recommended_kfactor;
+}
+
+void sysinfo_compute_scores(system_info_t *info) {
+    // CPU Score formula:
+    // Base score = physical cores (not logical, to avoid HT double-counting)
+    // Multipliers: +50% for AVX2, +100% for AVX-512
+    float cpu_base = (float)info->cpu_physical_cores;
+    float cpu_multiplier = 1.0f;
+
+    if (info->has_avx512 && info->has_avx512dq) {
+        // Full AVX-512 with DQ (needed for ripemd160_avx512)
+        cpu_multiplier += 1.0f;
+    } else if (info->has_avx2) {
+        cpu_multiplier += 0.5f;
+    }
+
+    if (info->has_sha_ni) {
+        // SHA-NI provides ~10-15% boost for SHA256
+        cpu_multiplier += 0.1f;
+    }
+
+    info->cpu_score = cpu_base * cpu_multiplier;
+
+    // GPU Score formula:
+    // Based on SM count and compute capability
+    // RTX 2080 Super: 48 SMs, CC 7.5 → score ~360
+    // RTX 3080: 68 SMs, CC 8.6 → score ~585
+    // RTX 4090: 128 SMs, CC 8.9 → score ~1139
+    if (info->has_cuda && info->gpu_sm_count > 0) {
+        float sm_count = (float)info->gpu_sm_count;
+        float cc_factor = 1.0f;
+
+        // Compute capability multiplier
+        int cc = info->gpu_compute_capability;
+        if (cc >= 90) {
+            cc_factor = 1.2f;  // Hopper (H100)
+        } else if (cc >= 89) {
+            cc_factor = 1.1f;  // Ada Lovelace (RTX 40xx)
+        } else if (cc >= 86) {
+            cc_factor = 1.0f;  // Ampere (RTX 30xx)
+        } else if (cc >= 75) {
+            cc_factor = 0.9f;  // Turing (RTX 20xx)
+        } else {
+            cc_factor = 0.7f;  // Older
+        }
+
+        info->gpu_score = sm_count * cc_factor * 7.5f;  // Scale factor
+    } else if (info->has_cuda) {
+        // Estimate based on VRAM (rough approximation)
+        // 8GB VRAM ≈ RTX 2070 ≈ 36 SMs
+        // 11GB VRAM ≈ RTX 2080 Ti ≈ 68 SMs
+        float estimated_sms = (float)info->gpu_vram_mb / 200.0f;  // Very rough
+        info->gpu_score = estimated_sms * 6.0f;
+    } else {
+        info->gpu_score = 0.0f;
+    }
+
+    // Hybrid ratio: percentage of work that should go to GPU
+    float total = info->cpu_score + info->gpu_score;
+    if (total > 0.0f && info->gpu_score > 0.0f) {
+        info->hybrid_ratio = info->gpu_score / total;
+        // Clamp to reasonable range (at least 5% to CPU)
+        if (info->hybrid_ratio > 0.95f) info->hybrid_ratio = 0.95f;
+    } else {
+        info->hybrid_ratio = 0.0f;
+    }
+}
+
+int sysinfo_get_hybrid_gpu_percent(const system_info_t *info) {
+    return (int)(info->hybrid_ratio * 100.0f);
 }
