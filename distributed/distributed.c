@@ -146,16 +146,24 @@ static void uint128_to_hex(char *buf, size_t sz, __uint128_t val) {
         snprintf(buf, sz, "0");
         return;
     }
-    char tmp[33];
+    /* 128-bit = 32 hex digits max + null terminator */
+    char tmp[34];
     int i = 32;
-    tmp[i--] = '\0';
-    while (val > 0 && i >= 0) {
+    tmp[33] = '\0';
+    tmp[i] = '\0';
+
+    while (val > 0 && i > 0) {
+        i--;
         int digit = val & 0xF;
-        tmp[i--] = digit < 10 ? '0' + digit : 'a' + digit - 10;
+        tmp[i] = digit < 10 ? '0' + digit : 'a' + digit - 10;
         val >>= 4;
     }
-    strncpy(buf, &tmp[i + 1], sz - 1);
-    buf[sz - 1] = '\0';
+
+    /* Copy result to output buffer */
+    size_t len = 32 - i;
+    if (len >= sz) len = sz - 1;
+    memcpy(buf, &tmp[i], len);
+    buf[len] = '\0';
 }
 
 int dist_coordinator_set_range(dist_coordinator_t *coord,
