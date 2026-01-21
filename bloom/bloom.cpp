@@ -25,6 +25,32 @@
 #include "bloom.h"
 #include "../xxhash/xxhash.h"
 
+/* Cache line size for optimal memory alignment */
+#define CACHE_LINE 64
+
+/* Aligned memory allocation */
+static inline void* bloom_aligned_alloc(size_t size) {
+    /* Round up to cache line boundary */
+    size = (size + CACHE_LINE - 1) & ~(size_t)(CACHE_LINE - 1);
+#if defined(_WIN32) || defined(_WIN64)
+    return _aligned_malloc(size, CACHE_LINE);
+#else
+    void *ptr = NULL;
+    if (posix_memalign(&ptr, CACHE_LINE, size) != 0) {
+        return NULL;
+    }
+    return ptr;
+#endif
+}
+
+static inline void bloom_aligned_free(void *ptr) {
+#if defined(_WIN32) || defined(_WIN64)
+    _aligned_free(ptr);
+#else
+    free(ptr);
+#endif
+}
+
 #define MAKESTRING(n) STRING(n)
 #define STRING(n) #n
 #define BLOOM_MAGIC "libbloom2"
@@ -123,10 +149,12 @@ int bloom_init2(struct bloom * bloom, uint64_t entries, long double error)
     bloom->hashes = (uint8_t)hashes_ld;
   }
   
-  bloom->bf = (uint8_t *)calloc(bloom->bytes, sizeof(uint8_t));
+  /* Use cache-aligned allocation for better memory access patterns */
+  bloom->bf = (uint8_t *)bloom_aligned_alloc(bloom->bytes);
   if (bloom->bf == NULL) {                                   // LCOV_EXCL_START
     return 1;
   }                                                          // LCOV_EXCL_STOP
+  memset(bloom->bf, 0, bloom->bytes);  /* Zero-initialize */
 
   bloom->ready = 1;
   bloom->major = BLOOM_VERSION_MAJOR;
@@ -184,7 +212,7 @@ void bloom_print(struct bloom * bloom)
 void bloom_free(struct bloom * bloom)
 {
   if (bloom->ready) {
-    free(bloom->bf);
+    bloom_aligned_free(bloom->bf);
   }
   bloom->ready = 0;
 }

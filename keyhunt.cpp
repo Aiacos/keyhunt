@@ -29,6 +29,7 @@ email: albertobsd@gmail.com
 #include "parameter_validator.h"
 #include "gpu/gpu_backend.h"
 #include "config.h"
+#include "hybrid/adaptive_scheduler.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -213,6 +214,42 @@ static void append_profile_info(char *buffer, size_t bufferSize) {
 	snprintf(addition, sizeof(addition),
 	         " | prof %luns/key EC%u Hash%u Bloom%u Bin%u Write%u",
 	         (unsigned long)ns_per_key, ec_pct, hash_pct, bloom_pct, bin_pct, write_pct);
+
+	size_t len = strlen(buffer);
+	char tail = 0;
+	if (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
+		tail = buffer[len - 1];
+		buffer[len - 1] = '\0';
+		len--;
+	}
+	size_t remaining = (len < bufferSize) ? bufferSize - len : 0;
+	if (remaining > 1) {
+		strncat(buffer, addition, remaining - 1);
+		len = strlen(buffer);
+	}
+	if (tail != 0 && len + 1 < bufferSize) {
+		buffer[len] = tail;
+		buffer[len + 1] = '\0';
+	}
+}
+
+// Append adaptive scheduler stats to status output (hybrid mode only)
+static void append_adaptive_info(char *buffer, size_t bufferSize) {
+	// Only show stats if adaptive scheduler is initialized (implies hybrid mode)
+	if (bufferSize < 4) return;
+	if (!g_adaptive_scheduler.initialized) return;
+
+	double cpu_mkeys = 0.0, gpu_mkeys = 0.0;
+	int cpu_pct = 0, gpu_pct = 0;
+	adaptive_get_stats(&cpu_mkeys, &gpu_mkeys, &cpu_pct, &gpu_pct);
+
+	// Only show if we have meaningful data
+	if (cpu_mkeys < 0.1 && gpu_mkeys < 0.1) return;
+
+	char addition[128];
+	snprintf(addition, sizeof(addition),
+	         " | adapt CPU=%.1fMk/s(%d%%) GPU=%.1fMk/s(%d%%)",
+	         cpu_mkeys, cpu_pct, gpu_mkeys, gpu_pct);
 
 	size_t len = strlen(buffer);
 	char tail = 0;
@@ -1331,6 +1368,7 @@ static void *gpu_full_stats_thread(void *arg) {
 		         str_total ? str_total : "?", seconds_buf, period, gpu_rate_str, gpu_rate_str);
 		append_progress_info(buffer, sizeof(buffer));
 		append_profile_info(buffer, sizeof(buffer));
+		append_adaptive_info(buffer, sizeof(buffer));
 		printf("%s", buffer);
 		fflush(stdout);
 
@@ -4180,6 +4218,13 @@ int main(int argc, char **argv)	{
 					fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
 					FLAGGPU_HYBRID = 0;
 					} else {
+						// Initialize adaptive scheduler for throughput tracking
+						// Use sysinfo hybrid ratio for initial CPU/GPU split
+						float initial_cpu_ratio = 1.0f - (g_gpu_range_percent / 100.0f);
+						adaptive_init(initial_cpu_ratio, 0, 0);  // Range tracking done separately
+						printf("[I] Adaptive scheduler initialized (CPU=%.0f%%, GPU=%.0f%%)\n",
+						       initial_cpu_ratio * 100.0f, (1.0f - initial_cpu_ratio) * 100.0f);
+
 						const char *ws = getenv("KEYHUNT_HYBRID_WORK_STEAL");
 						const bool want_work_steal = (ws && *ws && atoi(ws) != 0);
 						const bool can_work_steal = want_work_steal && !FLAGRANDOM && stride.IsOne();
@@ -4444,6 +4489,21 @@ int main(int argc, char **argv)	{
 						overall_total.Set(&cpu_total);
 						overall_total.Add(&gpu_total);
 
+						// Report to adaptive scheduler for throughput tracking
+						{
+							// Convert Int deltas to uint64_t for adaptive scheduler
+							// (Safe truncation - deltas per period are typically < 2^64)
+							uint64_t cpu_delta_u64 = cpu_delta.IsPositive() ?
+								strtoull(cpu_delta.GetBase10(), NULL, 10) : 0;
+							uint64_t period_ms = period.IsPositive() ?
+								strtoull(period.GetBase10(), NULL, 10) * 1000 : 1000;
+
+							if (cpu_delta_u64 > 0) {
+								adaptive_report_work(WORKER_CPU, cpu_delta_u64, period_ms);
+							}
+							// Note: GPU reporting is handled in gpu_hybrid_thread
+						}
+
 						Int cpu_rate;
 						cpu_rate.Set(&cpu_delta);
 						cpu_rate.Div(&period);
@@ -4483,6 +4543,7 @@ int main(int argc, char **argv)	{
 
 						append_progress_info(buffer, sizeof(buffer));
 						append_profile_info(buffer, sizeof(buffer));
+						append_adaptive_info(buffer, sizeof(buffer));
 						printf("%s", buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
@@ -4556,6 +4617,7 @@ int main(int argc, char **argv)	{
 						}
 						append_progress_info(buffer, sizeof(buffer));
 						append_profile_info(buffer, sizeof(buffer));
+						append_adaptive_info(buffer, sizeof(buffer));
 						printf("%s",buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
@@ -4580,6 +4642,19 @@ int main(int argc, char **argv)	{
 
 			printf("[+] GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
 			printf("[+] GPU keys checked: %" PRIu64 "\n", gpu_keys_checked_total_u64());
+
+			// Print final adaptive scheduler stats
+			if (g_adaptive_scheduler.initialized) {
+				double cpu_mkeys = 0.0, gpu_mkeys = 0.0;
+				int cpu_pct = 0, gpu_pct = 0;
+				adaptive_get_stats(&cpu_mkeys, &gpu_mkeys, &cpu_pct, &gpu_pct);
+				printf("[+] Final adaptive stats: CPU=%.1f Mkeys/s (%d%%), GPU=%.1f Mkeys/s (%d%%)\n",
+				       cpu_mkeys, cpu_pct, gpu_mkeys, gpu_pct);
+				printf("[+] Optimal ratio for next run: CPU=%d%%, GPU=%d%%\n", cpu_pct, gpu_pct);
+			}
+
+			// Cleanup adaptive scheduler
+			adaptive_cleanup();
 
 			// Cleanup GPU
 			gpu_backend_shutdown();
@@ -8522,14 +8597,20 @@ static void *gpu_hybrid_thread(void *arg) {
 	gpu_hybrid_args_t *args = (gpu_hybrid_args_t *)arg;
 	int total_found = 0;
 	uint64_t blocks_processed = 0;
+	uint64_t last_report_time = adaptive_time_ms();
+	uint64_t keys_since_last_report = 0;
 
 	// Two modes:
 	// 1) Work-stealing: GPU pulls blocks from shared pool (g_work_pool.enabled=true)
 	// 2) Static split: GPU scans the fixed [start_key, end_key] range once
 	if (!g_work_pool.enabled) {
 		printf("[GPU] Static-range thread started\n");
+		uint64_t start_time = adaptive_time_ms();
 		int found = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
 		if (found > 0) total_found = found;
+		uint64_t elapsed = adaptive_time_ms() - start_time;
+		uint64_t keys = __atomic_load_n(&g_gpu_keys_checked, __ATOMIC_ACQUIRE);
+		adaptive_report_work(WORKER_GPU, keys, elapsed);
 		args->result = total_found;
 		args->completed = 1;
 		printf("[GPU] Static-range thread completed: %d keys found\n", total_found);
@@ -8548,12 +8629,29 @@ static void *gpu_hybrid_thread(void *arg) {
 			break;
 		}
 
+		(void)adaptive_time_ms();  // Could track block timing in future
+
 		// Run GPU search on this block
 		int found = gpu_run_full_search(&block_start, &block_end, &args->stride, args->target_count);
 		if (found > 0) {
 			total_found += found;
 		}
 		blocks_processed++;
+
+		// Track keys for adaptive scheduler
+		uint64_t block_keys = g_work_pool.block_size;
+		keys_since_last_report += block_keys;
+
+		// Report to adaptive scheduler periodically (every ~500ms or 5 blocks)
+		uint64_t now = adaptive_time_ms();
+		if ((now - last_report_time >= 500) || (blocks_processed % 5 == 0)) {
+			uint64_t elapsed = now - last_report_time;
+			if (elapsed > 0 && keys_since_last_report > 0) {
+				adaptive_report_work(WORKER_GPU, keys_since_last_report, elapsed);
+				keys_since_last_report = 0;
+				last_report_time = now;
+			}
+		}
 
 		// Brief status every 10 blocks
 		if (blocks_processed % 10 == 0) {
