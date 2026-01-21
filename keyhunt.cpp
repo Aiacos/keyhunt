@@ -28,6 +28,7 @@ email: albertobsd@gmail.com
 #include "sysinfo.h"
 #include "parameter_validator.h"
 #include "gpu/gpu_backend.h"
+#include "config.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -80,6 +81,11 @@ uint32_t  THREADBPWORKLOAD = 1048576;
 
 // AVX2 support detection
 static bool g_avx2_available = false;
+
+// Global configuration (loaded from keyhunt.conf or CLI)
+static keyhunt_config_t g_config;
+static bool g_config_loaded = false;
+static const char *g_save_config_path = NULL;
 
 #ifndef _WIN64
 static WorkQueue<Int> g_workQueue;
@@ -1914,6 +1920,91 @@ int main(int argc, char **argv)	{
 	CPU_GRP_SIZE = 1024;
 	fprintf(stderr,"[I] Using CPU_GRP_SIZE: %u (proven optimal)\n", CPU_GRP_SIZE);
 
+	// -------------------------------------------------------------------------
+	// Configuration file handling (before getopt so CLI can override)
+	// -------------------------------------------------------------------------
+	config_init(&g_config);
+
+	// Pre-parse for --config and --save-config (long options)
+	// Also remove them from argv so getopt doesn't choke on them
+	const char *config_file_arg = NULL;
+	int new_argc = 1;  // Keep argv[0]
+	for (int ai = 1; ai < argc; ai++) {
+		if (strcmp(argv[ai], "--config") == 0 && ai + 1 < argc) {
+			config_file_arg = argv[ai + 1];
+			ai++;  // Skip next arg too
+			continue;
+		} else if (strncmp(argv[ai], "--config=", 9) == 0) {
+			config_file_arg = argv[ai] + 9;
+			continue;
+		} else if (strcmp(argv[ai], "--save-config") == 0) {
+			g_save_config_path = "keyhunt.conf";  // Default
+			continue;
+		} else if (strncmp(argv[ai], "--save-config=", 14) == 0) {
+			g_save_config_path = argv[ai] + 14;
+			continue;
+		}
+		// Keep this argument
+		argv[new_argc++] = argv[ai];
+	}
+	argc = new_argc;
+	argv[argc] = NULL;  // Null-terminate
+
+	// Load config file (explicit or default)
+	if (config_file_arg) {
+		if (config_load(&g_config, config_file_arg) == 0) {
+			fprintf(stderr, "[+] Loaded configuration from '%s'\n", config_file_arg);
+			g_config_loaded = true;
+		} else {
+			fprintf(stderr, "[E] Failed to load config file: %s\n", config_file_arg);
+			exit(EXIT_FAILURE);
+		}
+	} else {
+		// Try default config file (silently)
+		if (config_load_default(&g_config) == 0) {
+			fprintf(stderr, "[+] Loaded configuration from 'keyhunt.conf'\n");
+			g_config_loaded = true;
+		}
+	}
+
+	// Apply config values as defaults (will be overridden by CLI args)
+	if (g_config_loaded) {
+		// Threads
+		if (g_config.threads_set && g_config.threads > 0) {
+			NTHREADS = g_config.threads;
+			FLAGTHREADS = 1;  // Mark as user-specified
+		}
+		// GPU mode
+		if (g_config.gpu_set) {
+			if (g_config.gpu_enabled == 0) {
+				FLAGGPU = 0;
+				FLAGGPU_FULL = 0;
+			} else if (g_config.gpu_enabled > 0) {
+				FLAGGPU = 1;
+				FLAGGPU_FULL = 1;
+			}
+		}
+		// Mode
+		if (g_config.mode_set) {
+			if (strcasecmp(g_config.mode, "hybrid") == 0) {
+				FLAGGPU = 1;
+				FLAGGPU_FULL = 1;
+				FLAGGPU_HYBRID = 1;
+			} else if (strcasecmp(g_config.mode, "gpu") == 0) {
+				FLAGGPU = 1;
+				FLAGGPU_FULL = 1;
+			} else if (strcasecmp(g_config.mode, "cpu") == 0) {
+				FLAGGPU = 0;
+				FLAGGPU_FULL = 0;
+			}
+		}
+		// Memory limit
+		if (g_config.memory_limit_set) {
+			// Store for later use in BSGS memory checks
+			// (Memory limit is used in validate_bsgs_params)
+		}
+	}
+
 	// Only show recommendations if user wants
 	if (argc == 1 || (argc == 2 && strcmp(argv[1], "-h") == 0)) {
 		sysinfo_print(&g_sysinfo);
@@ -2298,6 +2389,37 @@ int main(int argc, char **argv)	{
 		}
 	}
 	// ========== End Parameter Validation ==========
+
+	// ========== Save Configuration (if requested) ==========
+	if (g_save_config_path) {
+		// Update config with current (validated) values
+		if (NTHREADS > 0) {
+			g_config.threads = NTHREADS;
+			g_config.threads_set = true;
+		}
+
+		// GPU mode
+		if (FLAGGPU_HYBRID) {
+			strncpy(g_config.mode, "hybrid", sizeof(g_config.mode) - 1);
+		} else if (FLAGGPU && FLAGGPU_FULL) {
+			strncpy(g_config.mode, "gpu", sizeof(g_config.mode) - 1);
+		} else {
+			strncpy(g_config.mode, "cpu", sizeof(g_config.mode) - 1);
+		}
+		g_config.mode_set = true;
+
+		g_config.gpu_enabled = FLAGGPU ? 1 : 0;
+		g_config.gpu_set = true;
+
+		g_config.batch_size = CPU_GRP_SIZE;
+		g_config.batch_size_set = true;
+
+		// Save
+		if (config_save(&g_config, g_save_config_path) == 0) {
+			fprintf(stderr, "[+] Configuration saved. You can now use it with: --config %s\n", g_save_config_path);
+		}
+	}
+	// ========== End Save Configuration ==========
 
 	if(  FLAGBSGSMODE == MODE_BSGS && FLAGENDOMORPHISM)	{
 		fprintf(stderr,"[E] Endomorphism doesn't work with BSGS\n");
