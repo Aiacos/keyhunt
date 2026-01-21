@@ -25,29 +25,82 @@ static void client_signal_handler(int sig) {
     printf("\n\n[!] Shutdown signal received...\n");
 }
 
-/* Stub search function - will be replaced by real implementation */
-static int search_range_stub(const char *start, const char *end,
-                              const wizard_config_t *cfg,
-                              uint64_t *keys_checked, volatile int *stop_flag,
-                              char *found_key, char *found_addr) {
-    (void)found_key;
-    (void)found_addr;
+/* Real keyhunt search via subprocess */
+static int search_range_subprocess(const char *start, const char *end,
+                                    const wizard_config_t *cfg,
+                                    uint64_t *keys_checked, volatile int *stop_flag,
+                                    char *found_key, char *found_addr) {
+    char cmd[2048];
+    *keys_checked = 0;
+    found_key[0] = '\0';
+    found_addr[0] = '\0';
 
-    /* Simulate search */
-    uint64_t range_size = cfg->work_unit_size;
-    uint64_t keys_per_sec = 50000000ULL;
-
-    uint64_t total = 0;
-    while (*stop_flag && total < range_size) {
-        usleep(100000);
-        uint64_t chunk = keys_per_sec / 10;
-        total += chunk;
-        if (!*stop_flag) break;
+    /* Create a temp file for the target address */
+    char target_file[256];
+    snprintf(target_file, sizeof(target_file), "/tmp/wizard_target_%d.txt", getpid());
+    FILE *tf = fopen(target_file, "w");
+    if (tf) {
+        fprintf(tf, "%s\n", cfg->target_address);
+        fclose(tf);
+    } else {
+        return -1;
     }
 
-    *keys_checked = total;
-    (void)start; (void)end;
-    return 0;
+    /* Build command based on mode */
+    if (strcmp(cfg->mode, "bsgs") == 0) {
+        snprintf(cmd, sizeof(cmd),
+            "./keyhunt -m bsgs -f %s -r %s:%s -t %d -q -s 1 2>&1",
+            target_file, start, end, cfg->threads);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+            "./keyhunt -m %s -f %s -r %s:%s -t %d -l %s -q -s 1 2>&1",
+            cfg->mode, target_file, start, end, cfg->threads, cfg->key_type);
+    }
+
+    /* Run keyhunt and parse output */
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        unlink(target_file);
+        return -1;
+    }
+
+    char line[1024];
+    int found = 0;
+
+    while (fgets(line, sizeof(line), fp) && *stop_flag) {
+        /* Parse total keys from status line */
+        char *total_ptr = strstr(line, "Total ");
+        if (total_ptr) {
+            uint64_t total = 0;
+            if (sscanf(total_ptr, "Total %llu", (unsigned long long*)&total) == 1) {
+                *keys_checked = total;
+            }
+        }
+
+        /* Parse found key */
+        char *hit_ptr = strstr(line, "Hit! Private Key:");
+        if (hit_ptr) {
+            char key_hex[65] = {0};
+            if (sscanf(hit_ptr, "Hit! Private Key: %64s", key_hex) == 1) {
+                strncpy(found_key, key_hex, 64);
+                found = 1;
+            }
+        }
+
+        /* Parse address */
+        char *addr_ptr = strstr(line, "Address ");
+        if (addr_ptr && found) {
+            char addr[36] = {0};
+            if (sscanf(addr_ptr, "Address %35s", addr) == 1) {
+                strncpy(found_addr, addr, 35);
+            }
+        }
+    }
+
+    pclose(fp);
+    unlink(target_file);
+
+    return found ? 1 : 0;
 }
 
 int wizard_client_run(wizard_config_t *cfg) {
@@ -163,23 +216,12 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         time_t unit_start = time(NULL);
 
-        /* Search */
-        int search_result;
-        #ifdef KEYHUNT_SEARCH_IMPL
-        search_result = keyhunt_search_range(
-            range_start, range_end,
-            cfg->target_address, cfg->mode, cfg->key_type,
-            cfg->threads, cfg->gpu_percent,
-            &keys_checked, &g_client_running,
-            found_key, found_addr
-        );
-        #else
-        search_result = search_range_stub(
+        /* Call keyhunt via subprocess */
+        int search_result = search_range_subprocess(
             range_start, range_end,
             cfg, &keys_checked, &g_client_running,
             found_key, found_addr
         );
-        #endif
 
         time_t unit_elapsed = time(NULL) - unit_start;
         if (unit_elapsed == 0) unit_elapsed = 1;
