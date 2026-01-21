@@ -465,6 +465,55 @@ int wizard_load_puzzles_from_txt(const char *filepath, puzzle_def_t **puzzles, i
 }
 
 /* ============================================================================
+ * 128-bit Integer Helpers for Range Calculations
+ * ============================================================================ */
+
+/* Parse hex string to 128-bit integer */
+static __uint128_t parse_hex_128(const char *hex) {
+    __uint128_t result = 0;
+    const char *p = hex;
+
+    /* Skip 0x prefix if present */
+    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+        p += 2;
+    }
+
+    while (*p) {
+        char c = *p++;
+        int digit;
+
+        if (c >= '0' && c <= '9') digit = c - '0';
+        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+        else break;
+
+        result = (result << 4) | digit;
+    }
+
+    return result;
+}
+
+/* Convert 128-bit integer to hex string */
+static void uint128_to_hex_local(__uint128_t value, char *out) {
+    if (value == 0) {
+        strcpy(out, "0");
+        return;
+    }
+
+    char buf[33];
+    int i = 32;
+    buf[i] = '\0';
+
+    while (value > 0 && i > 0) {
+        int digit = value & 0xF;
+        buf[--i] = (digit < 10) ? ('0' + digit) : ('a' + digit - 10);
+        value >>= 4;
+    }
+
+    strcpy(out, &buf[i]);
+}
+
+/* ============================================================================
  * Privatekeys.pw Cache Functions
  * ============================================================================ */
 
@@ -700,4 +749,58 @@ int wizard_privatekeys_get_progress(int puzzle_number, privatekeys_progress_t *p
     printf("[!] No community progress data available\n");
     memset(progress, 0, sizeof(*progress));
     return -1;
+}
+
+/* ============================================================================
+ * Search Offset Calculation for Sequential Mode
+ * ============================================================================ */
+
+void wizard_calculate_search_offset(const puzzle_def_t *puzzle,
+                                    double percent_scanned,
+                                    char *adjusted_start) {
+    if (!puzzle || !adjusted_start || percent_scanned <= 0.0) {
+        if (puzzle && adjusted_start) {
+            strcpy(adjusted_start, puzzle->range_start);
+        }
+        return;
+    }
+
+    __uint128_t range_start = parse_hex_128(puzzle->range_start);
+    __uint128_t range_end = parse_hex_128(puzzle->range_end);
+    __uint128_t range_size = range_end - range_start + 1;
+
+    /* Calculate offset: range_size * (percent / 100) */
+    double offset_d = (double)range_size * (percent_scanned / 100.0);
+    __uint128_t offset = (__uint128_t)offset_d;
+
+    /* Calculate adjusted start */
+    __uint128_t adjusted = range_start + offset;
+
+    /* Ensure we don't exceed range_end */
+    if (adjusted > range_end) {
+        adjusted = range_end;
+    }
+
+    uint128_to_hex_local(adjusted, adjusted_start);
+}
+
+bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
+                                 const char *range_start,
+                                 double percent_scanned) {
+    if (!puzzle || !range_start || percent_scanned <= 0.0) {
+        return false;
+    }
+
+    __uint128_t puzzle_start = parse_hex_128(puzzle->range_start);
+    __uint128_t puzzle_end = parse_hex_128(puzzle->range_end);
+    __uint128_t range_size = puzzle_end - puzzle_start + 1;
+
+    /* Calculate scanned boundary */
+    double boundary_d = (double)puzzle_start + (double)range_size * (percent_scanned / 100.0);
+    __uint128_t scanned_boundary = (__uint128_t)boundary_d;
+
+    /* Check if range_start is below the scanned boundary */
+    __uint128_t check_pos = parse_hex_128(range_start);
+
+    return (check_pos < scanned_boundary);
 }
