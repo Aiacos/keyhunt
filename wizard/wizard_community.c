@@ -654,3 +654,50 @@ int wizard_privatekeys_fetch_progress(int puzzle_number, privatekeys_progress_t 
 
     return 0;
 }
+
+/* ============================================================================
+ * Privatekeys.pw Caching Logic (24-hour refresh)
+ * ============================================================================ */
+
+int wizard_privatekeys_get_progress(int puzzle_number, privatekeys_progress_t *progress) {
+    if (!progress) return -1;
+
+    /* Try to load from cache first */
+    int cache_result = load_privatekeys_cache(progress);
+    bool have_cache = (cache_result == 0 && progress->puzzle_number == puzzle_number);
+
+    /* Check if cache is still fresh (< 24 hours) */
+    time_t now = time(NULL);
+    bool needs_refresh = !have_cache ||
+                         (now - progress->fetch_time >= PRIVATEKEYS_REFRESH_INTERVAL);
+
+    if (!needs_refresh) {
+        /* Cache is fresh, use it */
+        double age_hours = (now - progress->fetch_time) / 3600.0;
+        printf("[+] Using cached privatekeys.pw data (%.1f hours old)\n", age_hours);
+        return 0;
+    }
+
+    /* Need to fetch fresh data */
+    printf("[+] Refreshing privatekeys.pw progress (daily update)...\n");
+
+    privatekeys_progress_t fresh;
+    if (wizard_privatekeys_fetch_progress(puzzle_number, &fresh) == 0) {
+        /* Save to cache */
+        save_privatekeys_cache(&fresh);
+        *progress = fresh;
+        return 0;
+    }
+
+    /* Fetch failed - try to use stale cache */
+    if (have_cache) {
+        double age_hours = (now - progress->fetch_time) / 3600.0;
+        printf("[!] Fetch failed, using stale cache (%.1f hours old)\n", age_hours);
+        return 0;
+    }
+
+    /* No cache available */
+    printf("[!] No community progress data available\n");
+    memset(progress, 0, sizeof(*progress));
+    return -1;
+}
