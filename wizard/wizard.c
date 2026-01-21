@@ -181,13 +181,13 @@ static void calculate_puzzle_recommendation(int bits, bool has_pubkey,
         rec->recommended_random = (bits >= 66);
 
         /* Work unit size: balance between progress frequency and subprocess overhead */
-        /* Target: ~10-30 seconds per work unit at ~50 Mkeys/s */
+        /* Target: ~2-5 seconds per work unit at ~50 Mkeys/s for quick feedback */
         if (bits <= 50) {
+            rec->recommended_work_unit = 0x4000000ULL;    /* 64M - ~1.3 seconds */
+        } else if (bits <= 75) {
             rec->recommended_work_unit = 0x8000000ULL;    /* 128M - ~2.5 seconds */
-        } else if (bits <= 70) {
-            rec->recommended_work_unit = 0x20000000ULL;   /* 512M - ~10 seconds */
         } else {
-            rec->recommended_work_unit = 0x40000000ULL;   /* 1B - ~20 seconds */
+            rec->recommended_work_unit = 0x10000000ULL;   /* 256M - ~5 seconds */
         }
     }
 
