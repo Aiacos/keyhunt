@@ -26,6 +26,12 @@ extern "C" {
 #define WIZARD_MAX_PUZZLES 256
 #define WIZARD_MAX_EXCLUSIONS 1000000
 
+/* Privatekeys.pw cloud search integration */
+#define PRIVATEKEYS_CLOUD_URL "https://privatekeys.pw/cloud-search"
+#define PRIVATEKEYS_CACHE_DIR ".keyhunt"
+#define PRIVATEKEYS_CACHE_FILE "privatekeys_progress.json"
+#define PRIVATEKEYS_REFRESH_INTERVAL (24 * 60 * 60)  /* 24 hours */
+
 /* Puzzle definition (can be loaded from file or web) */
 typedef struct {
     int number;
@@ -79,6 +85,7 @@ typedef struct {
     uint64_t total_ranges;
     uint64_t local_completed;
     uint64_t community_excluded;
+    double privatekeys_percent;      /* Progress from privatekeys.pw */
     char progress_file[256];
     char exclusion_file[256];
 
@@ -95,6 +102,14 @@ typedef struct {
     time_t scanned_time;
     char worker[64];
 } community_range_t;
+
+/* Privatekeys.pw progress data */
+typedef struct {
+    int puzzle_number;
+    double percent_scanned;      /* e.g., 0.022477 */
+    uint64_t keys_scanned;       /* Absolute count if available */
+    time_t fetch_time;           /* When data was fetched */
+} privatekeys_progress_t;
 
 /* ============================================================================
  * Wizard Entry Point
