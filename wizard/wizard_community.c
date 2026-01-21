@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
@@ -460,6 +461,92 @@ int wizard_load_puzzles_from_txt(const char *filepath, puzzle_def_t **puzzles, i
 
     *count = idx;
     fclose(f);
+    return 0;
+}
+
+/* ============================================================================
+ * Privatekeys.pw Cache Functions
+ * ============================================================================ */
+
+/* Get cache directory path (creates if needed) */
+static int get_cache_dir(char *path, size_t size) {
+    const char *home = getenv("HOME");
+    if (!home) home = ".";
+
+    snprintf(path, size, "%s/.keyhunt", home);
+
+    /* Create directory if it doesn't exist */
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        if (mkdir(path, 0755) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Get cache file path */
+static void get_cache_filepath(char *path, size_t size) {
+    char dir[512];
+    if (get_cache_dir(dir, sizeof(dir)) != 0) {
+        snprintf(path, size, ".keyhunt_privatekeys_cache.json");
+        return;
+    }
+    snprintf(path, size, "%s/privatekeys_progress.json", dir);
+}
+
+/* Save progress to cache file */
+static int save_privatekeys_cache(const privatekeys_progress_t *progress) {
+    char filepath[512];
+    get_cache_filepath(filepath, sizeof(filepath));
+
+    FILE *f = fopen(filepath, "w");
+    if (!f) return -1;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"puzzle_number\": %d,\n", progress->puzzle_number);
+    fprintf(f, "  \"percent_scanned\": %.8f,\n", progress->percent_scanned);
+    fprintf(f, "  \"keys_scanned\": %llu,\n", (unsigned long long)progress->keys_scanned);
+    fprintf(f, "  \"fetch_time\": %lld\n", (long long)progress->fetch_time);
+    fprintf(f, "}\n");
+
+    fclose(f);
+    return 0;
+}
+
+/* Load progress from cache file */
+static int load_privatekeys_cache(privatekeys_progress_t *progress) {
+    char filepath[512];
+    get_cache_filepath(filepath, sizeof(filepath));
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) return -1;
+
+    char buf[1024];
+    size_t len = fread(buf, 1, sizeof(buf) - 1, f);
+    buf[len] = '\0';
+    fclose(f);
+
+    /* Simple JSON parsing */
+    memset(progress, 0, sizeof(*progress));
+
+    char *ptr;
+
+    ptr = strstr(buf, "\"puzzle_number\":");
+    if (ptr) progress->puzzle_number = atoi(ptr + 16);
+
+    ptr = strstr(buf, "\"percent_scanned\":");
+    if (ptr) progress->percent_scanned = atof(ptr + 18);
+
+    ptr = strstr(buf, "\"keys_scanned\":");
+    if (ptr) progress->keys_scanned = strtoull(ptr + 15, NULL, 10);
+
+    ptr = strstr(buf, "\"fetch_time\":");
+    if (ptr) progress->fetch_time = (time_t)strtoll(ptr + 13, NULL, 10);
+
+    /* Validate */
+    if (progress->fetch_time == 0) return -1;
+
     return 0;
 }
 
