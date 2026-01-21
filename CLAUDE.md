@@ -249,10 +249,70 @@ This tool is designed for **educational purposes and authorized security testing
 - Private key space: 2^256 (practically: 2^160 for RIPEMD160 collision)
 - Puzzle solving: Bitcoin puzzles have known public keys in specific bit ranges
 
+## Interactive Wizard (NEW)
+
+### Usage
+```bash
+./keyhunt --wizard    # or ./keyhunt -W
+```
+
+### Features
+The wizard provides an interactive 5-step setup for distributed puzzle solving:
+
+1. **Puzzle Selection**: Downloads puzzle database from BTCPuzzle.info (with built-in fallback)
+2. **Mode Selection**: Server (coordinator + local worker) or Client (worker only)
+3. **Server Configuration**: Port, work unit size, checkpoint interval
+4. **Search Configuration**: Auto-detects hardware and recommends optimal parameters
+5. **Community Integration**: Fetches already-scanned ranges to avoid duplicate work
+
+### Intelligent Configuration
+The wizard calculates optimal parameters based on puzzle characteristics:
+
+| Puzzle Type | Recommended Mode | Strategy | GPU | Random |
+|-------------|------------------|----------|-----|--------|
+| Has public key | BSGS | O(√N) complexity | Disabled | No |
+| No public key | Address | Brute-force | Enabled | Yes (>66 bits) |
+
+For BSGS mode, it automatically calculates optimal N and K values based on available RAM:
+- Uses 60% of available RAM for safety
+- Calculates max entries: `safe_ram / 20 bytes per entry`
+- Selects N as largest power of 2 that fits
+
+### Configuration Persistence
+- Saves to `keyhunt_wizard.json` (human-readable JSON)
+- Auto-resumes if previous configuration exists
+- Puzzle cache stored in `puzzles_cache.txt`
+
+### Architecture
+```
+wizard/
+├── wizard.h              # Main header with data structures
+├── wizard.c              # Entry point (5-step flow)
+├── wizard_config.c       # JSON config + puzzle database
+├── wizard_ui.c           # Interactive terminal UI
+├── wizard_community.c    # BTCPuzzle.info integration
+├── wizard_server.c       # Server mode (coordinator + worker)
+└── wizard_client.c       # Client mode (auto-config worker)
+```
+
+### Server Mode
+The server runs as both **coordinator** (distributing work) and **local worker** (processing ranges):
+- Starts coordinator on specified port
+- Spawns local worker thread if `server_also_worker` is enabled
+- Tracks progress and saves checkpoints
+- Handles community exclusions
+
+### Client Mode
+- Auto-detects local hardware (CPU, RAM, GPU, SIMD features)
+- Connects to coordinator and requests work units
+- Reports progress via heartbeat messages
+- Saves found keys locally and reports to server
+
 ## Documentation Files
 
 - **README.md**: User documentation, examples, FAQ
-- **PARAMETER_VALIDATION.md**: **NEW** - Intelligent parameter validation and auto-tuning
+- **WIZARD.md**: **NEW** - Interactive wizard for distributed mode
+- **PARAMETER_VALIDATION.md**: Intelligent parameter validation and auto-tuning
 - **OPTIMIZATIONS.md**: AVX2/SIMD optimization details
 - **AUTO-TUNING.md**: Hardware detection and auto-configuration
 - **BSGS_MEMORY_CHECK.md**: Memory validation system

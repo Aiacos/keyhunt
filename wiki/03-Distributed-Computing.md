@@ -1,5 +1,11 @@
 # Distributed Computing Guide
 
+> **Recommended**: Use the [Interactive Wizard](04-Interactive-Wizard.md) for easy distributed setup!
+>
+> ```bash
+> ./keyhunt --wizard    # Guides you through setup automatically
+> ```
+
 ## Overview
 
 Keyhunt supports distributed computing to parallelize search across multiple machines. This is essential for large puzzles where single-machine search is impractical. The distributed mode uses a coordinator/worker architecture with TCP communication and a simple JSON-based protocol.

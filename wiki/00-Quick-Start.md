@@ -39,6 +39,28 @@ Expected output: The program should quickly find all 32 private keys in the test
 
 If all 32 keys are found, your installation is working correctly.
 
+## Easy Setup: Interactive Wizard (NEW)
+
+The easiest way to configure keyhunt is using the interactive wizard:
+
+```bash
+./keyhunt --wizard    # or ./keyhunt -W
+```
+
+The wizard will:
+1. Download the latest puzzle database
+2. Auto-detect your hardware (CPU, RAM, GPU)
+3. Calculate optimal parameters for your chosen puzzle
+4. Set up distributed mode (server/client)
+5. Integrate community progress data
+
+**Recommended for:**
+- New users
+- Distributed multi-PC setups
+- Puzzles with public keys (auto-selects BSGS)
+
+See [Interactive Wizard Guide](04-Interactive-Wizard.md) for details.
+
 ## Basic Usage Patterns
 
 ### 1. ADDRESS Mode (Brute Force)

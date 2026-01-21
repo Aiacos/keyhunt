@@ -30,6 +30,7 @@ email: albertobsd@gmail.com
 #include "gpu/gpu_backend.h"
 #include "config.h"
 #include "hybrid/adaptive_scheduler.h"
+#include "wizard/wizard.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -1957,6 +1958,16 @@ int main(int argc, char **argv)	{
 	// due to increased ModInv overhead and worse cache behavior
 	CPU_GRP_SIZE = 1024;
 	fprintf(stderr,"[I] Using CPU_GRP_SIZE: %u (proven optimal)\n", CPU_GRP_SIZE);
+
+	// -------------------------------------------------------------------------
+	// Wizard mode check (before anything else)
+	// -------------------------------------------------------------------------
+	for (int ai = 1; ai < argc; ai++) {
+		if (strcmp(argv[ai], "--wizard") == 0 || strcmp(argv[ai], "-W") == 0) {
+			int result = wizard_run();
+			exit(result < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
+		}
+	}
 
 	// -------------------------------------------------------------------------
 	// Configuration file handling (before getopt so CLI can override)
@@ -8233,6 +8244,7 @@ void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, ui
 void menu() {
 	printf("\nUsage:\n");
 	printf("-h          show this help\n");
+	printf("-W, --wizard  Interactive setup wizard for distributed mode\n");
 	printf("-B Mode     BSGS now have some modes <sequential, backward, both, random, dance>\n");
 	printf("-b bits     For some puzzles you only need some numbers of bits in the test keys.\n");
 	printf("-c crypto   Search for specific crypto. <btc, eth> valid only w/ -m address\n");

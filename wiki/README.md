@@ -10,6 +10,7 @@ Welcome to the keyhunt documentation wiki. This wiki contains comprehensive guid
 | [01-Strategy-Guide.md](01-Strategy-Guide.md) | Complete strategy guide for Bitcoin puzzles |
 | [02-Algorithm-Reference.md](02-Algorithm-Reference.md) | Technical reference for all algorithms |
 | [03-Distributed-Computing.md](03-Distributed-Computing.md) | Multi-PC distributed search setup |
+| [04-Interactive-Wizard.md](04-Interactive-Wizard.md) | **NEW** - Interactive wizard for easy setup |
 
 ## Quick Navigation
 
@@ -18,6 +19,7 @@ Welcome to the keyhunt documentation wiki. This wiki contains comprehensive guid
 | Goal | Go to |
 |------|-------|
 | Build and test keyhunt | [Quick Start](00-Quick-Start.md#build) |
+| **Easy setup with wizard** | [Interactive Wizard](04-Interactive-Wizard.md) |
 | Choose the right search strategy | [Strategy Guide - Selection Matrix](01-Strategy-Guide.md#7-strategy-selection-matrix) |
 | Understand BSGS algorithm | [Algorithm Reference - BSGS](02-Algorithm-Reference.md#4-bsgs-algorithm-details) |
 | Set up distributed search | [Distributed Computing - Setup](03-Distributed-Computing.md#setup-instructions) |

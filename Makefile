@@ -60,10 +60,11 @@ BSGS_OBJS := bsgs/bsgs_ops.o bsgs/bsgs_fast.o
 HYBRID_OBJS := hybrid/adaptive_scheduler.o
 UTIL_OBJS := util/mempool.o
 DIST_OBJS := distributed/distributed.o
+WIZARD_OBJS := wizard/wizard.o wizard/wizard_config.o wizard/wizard_ui.o wizard/wizard_community.o wizard/wizard_server.o wizard/wizard_client.o
 
 COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o config.o $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS)
 
-KEYHUNT_OBJS := keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS)
+KEYHUNT_OBJS := keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OBJS)
 BSGSD_OBJS := bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 LEGACY_OBJS := keyhunt_legacy.o hashing.o $(COMMON_OBJS) $(GMP256K1_OBJS)
 
