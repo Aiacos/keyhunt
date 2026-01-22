@@ -10,8 +10,8 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "../src/secp256k1/Int.h"
-#include "../src/secp256k1/IntMod_asm.h"
+#include "../secp256k1/Int.h"
+#include "../secp256k1/IntMod_asm.h"
 
 #define ITERATIONS 10000000
 #define WARMUP_ITERATIONS 100000
