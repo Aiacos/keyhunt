@@ -211,6 +211,10 @@ void wizard_print_config_summary(const wizard_config_t *cfg) {
         printf("  │ " YELLOW "Excluded:" RESET " %llu ranges                           │\n",
                (unsigned long long)cfg->community_excluded);
     }
+    if (cfg->privatekeys_percent > 0.0) {
+        printf("  │ " CYAN "Progress:" RESET " %.4f%% (privatekeys.pw)                 │\n",
+               cfg->privatekeys_percent);
+    }
     printf("  └─────────────────────────────────────────────────────────┘\n");
 }
 
