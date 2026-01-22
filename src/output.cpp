@@ -161,6 +161,7 @@ void output_key_found(const char *private_key, const char *address,
         printf(CLR_GREEN "║" CLR_RESET " Public Key:  %-50.50s" CLR_GREEN "║" CLR_RESET "\n", public_key);
     }
     printf(CLR_GREEN "╚════════════════════════════════════════════════════════════════╝" CLR_RESET "\n\n");
+    fflush(stdout);  // Ensure key found message is immediately visible
 }
 
 void output_final_stats(uint64_t total_keys, double total_time_sec,

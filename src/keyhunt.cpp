@@ -2517,6 +2517,8 @@ int main(int argc, char **argv)	{
 		// Save
 		if (config_save(&g_config, g_save_config_path) == 0) {
 			fprintf(stderr, "[+] Configuration saved. You can now use it with: --config %s\n", g_save_config_path);
+		} else {
+			output_error("Failed to save configuration to %s. Check disk space and permissions.\n", g_save_config_path);
 		}
 	}
 	// ========== End Save Configuration ==========
@@ -2910,14 +2912,19 @@ int main(int argc, char **argv)	{
 	// =========================================================================
 	// Initialize progress tracking system
 	// =========================================================================
-	if (progress_init() == 0) {
+	if (progress_init() != 0) {
+		output_warning("Failed to initialize progress system (~/.keyhunt/progress). Progress will NOT be saved.\n");
+	} else {
 		char *range_start_hex = n_range_start.GetBase16();
 		char *range_end_hex = n_range_end.GetBase16();
 
-		if (progress_create(&g_progress_state, get_mode_name(FLAGMODE),
+		int create_result = progress_create(&g_progress_state, get_mode_name(FLAGMODE),
 		                    fileName, bitrange,
 		                    range_start_hex ? range_start_hex : "0",
-		                    range_end_hex ? range_end_hex : "0") == 0) {
+		                    range_end_hex ? range_end_hex : "0");
+		if (create_result != 0) {
+			output_warning("Failed to create progress file. Progress will NOT be saved.\n");
+		} else {
 			g_progress_enabled = true;
 			g_progress_state.is_random_mode = (FLAGRANDOM != 0);
 			g_progress_state.thread_count = NTHREADS;
@@ -4654,8 +4661,13 @@ int main(int argc, char **argv)	{
 
 						// Update progress tracking for GPU hybrid mode
 						if (g_progress_enabled) {
+							static bool progress_save_warned = false;
 							char *current_hex = n_range_start.GetBase16();
-							progress_update(&g_progress_state, current_hex, strtoull(str_total ? str_total : "0", NULL, 10));
+							int update_result = progress_update(&g_progress_state, current_hex, strtoull(str_total ? str_total : "0", NULL, 10));
+							if (update_result != 0 && !progress_save_warned) {
+								output_warning("Failed to save progress. Check disk space and permissions.\n");
+								progress_save_warned = true;
+							}
 							if (current_hex) free(current_hex);
 						}
 
@@ -4754,8 +4766,13 @@ int main(int argc, char **argv)	{
 
 						// Update progress tracking (auto-saves every 60s)
 						if (g_progress_enabled) {
+							static bool progress_save_warned_cpu = false;
 							char *current_hex = n_range_start.GetBase16();
-							progress_update(&g_progress_state, current_hex, strtoull(str_total ? str_total : "0", NULL, 10));
+							int update_result = progress_update(&g_progress_state, current_hex, strtoull(str_total ? str_total : "0", NULL, 10));
+							if (update_result != 0 && !progress_save_warned_cpu) {
+								output_warning("Failed to save progress. Check disk space and permissions.\n");
+								progress_save_warned_cpu = true;
+							}
 							if (current_hex) free(current_hex);
 						}
 
@@ -8943,9 +8960,16 @@ void writekey(bool compressed,Int *key)	{
 	pthread_mutex_lock(&write_keys);
 #endif
 	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
-	if(keys != NULL)	{
-		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
-		fclose(keys);
+	if(keys == NULL) {
+		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
+		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
+	} else {
+		int written = fprintf(keys,"Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
+		int closed = fclose(keys);
+		if (written < 0 || closed != 0) {
+			output_error("CRITICAL: Failed to write key to file! Key: %s\n", hextemp);
+			output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
+		}
 	}
 	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 
@@ -8983,9 +9007,16 @@ void writekeyeth(Int *key)	{
 	pthread_mutex_lock(&write_keys);
 #endif
 	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
-	if(keys != NULL)	{
-		fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address);
-		fclose(keys);
+	if(keys == NULL) {
+		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
+		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
+	} else {
+		int written = fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address);
+		int closed = fclose(keys);
+		if (written < 0 || closed != 0) {
+			output_error("CRITICAL: Failed to write key to file! Key: %s\n", hextemp);
+			output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
+		}
 	}
 	printf("\n Hit!!!! Private Key: %s\naddress: %s\n",hextemp,address);
 
