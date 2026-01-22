@@ -32,6 +32,8 @@ email: albertobsd@gmail.com
 #include "hybrid/adaptive_scheduler.h"
 #include "wizard/wizard.h"
 #include "src/benchmark.h"
+#include "src/output.h"
+#include "src/cli.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -427,6 +429,20 @@ Point _2GSn;
 
 void menu();
 void init_generator();
+
+// Helper function to get mode name string for output module
+static const char *get_mode_name(int mode) {
+	switch (mode) {
+		case MODE_XPOINT:   return "xpoint";
+		case MODE_ADDRESS:  return "address";
+		case MODE_BSGS:     return "bsgs";
+		case MODE_RMD160:   return "rmd160";
+		case MODE_PUB2RMD:  return "pub2rmd";
+		case MODE_MINIKEYS: return "minikeys";
+		case MODE_VANITY:   return "vanity";
+		default:            return "unknown";
+	}
+}
 
 #ifndef _WIN64
 static void configure_work_queue(size_t threadCount);
@@ -2400,6 +2416,9 @@ int main(int argc, char **argv)	{
 		}
 
 		}
+
+	// Initialize output system based on quiet mode setting
+	output_init(FLAGQUIET ? OUTPUT_MINIMAL : OUTPUT_NORMAL);
 
 	// ========== Parameter Validation and Auto-Tuning ==========
 	// Validate user parameters against hardware capabilities
