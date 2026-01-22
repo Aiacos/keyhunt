@@ -11,20 +11,20 @@ email: albertobsd@gmail.com
 #include <time.h>
 #include <vector>
 #include <inttypes.h>
-#include "src/base58/libbase58.h"
-#include "src/oldbloom/oldbloom.h"
-#include "src/bloom/bloom.h"
-#include "src/sha3/sha3.h"
-#include "src/core/util.h"
+#include "base58/libbase58.h"
+#include "oldbloom/oldbloom.h"
+#include "bloom/bloom.h"
+#include "sha3/sha3.h"
+#include "core/util.h"
 
-#include "src/secp256k1/SECP256k1.h"
-#include "src/secp256k1/Point.h"
-#include "src/secp256k1/Int.h"
-#include "src/secp256k1/IntGroup.h"
-#include "src/secp256k1/Random.h"
+#include "secp256k1/SECP256k1.h"
+#include "secp256k1/Point.h"
+#include "secp256k1/Int.h"
+#include "secp256k1/IntGroup.h"
+#include "secp256k1/Random.h"
 
-#include "src/hash/sha256.h"
-#include "src/hash/ripemd160.h"
+#include "hash/sha256.h"
+#include "hash/ripemd160.h"
 
 #include <unistd.h>
 #include <pthread.h>

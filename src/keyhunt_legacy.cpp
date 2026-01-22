@@ -12,18 +12,18 @@ email: albertobsd@gmail.com
 #include <vector>
 #include <algorithm>
 #include <inttypes.h>
-#include "src/base58/libbase58.h"
-#include "src/oldbloom/oldbloom.h"
-#include "src/bloom/bloom.h"
-#include "src/core/util.h"
-#include "src/core/hashing.h"
-#include "src/core/workqueue.h"
+#include "base58/libbase58.h"
+#include "oldbloom/oldbloom.h"
+#include "bloom/bloom.h"
+#include "core/util.h"
+#include "core/hashing.h"
+#include "core/workqueue.h"
 
-#include "src/gmp256k1/GMP256K1.h"
-#include "src/gmp256k1/Point.h"
-#include "src/gmp256k1/Int.h"
-#include "src/gmp256k1/IntGroup.h"
-#include "src/gmp256k1/Random.h"
+#include "gmp256k1/GMP256K1.h"
+#include "gmp256k1/Point.h"
+#include "gmp256k1/Int.h"
+#include "gmp256k1/IntGroup.h"
+#include "gmp256k1/Random.h"
 
 
 #if defined(_WIN64) && !defined(__CYGWIN__)

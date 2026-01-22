@@ -33,6 +33,9 @@ analysis.txt
 # Prerequisites
 *.d
 
+# Build output directory
+obj/
+
 # Object files
 *.o
 *.ko
