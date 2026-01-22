@@ -557,6 +557,41 @@ static void calculate_optimal_params(system_info_t *info) {
     }
 }
 
+// Detect CPU model name from /proc/cpuinfo
+static void detect_cpu_model(system_info_t *info) {
+    info->cpu_model[0] = '\0';
+
+#ifdef __linux__
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (!f) return;
+
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "model name", 10) == 0) {
+            char *colon = strchr(line, ':');
+            if (colon) {
+                colon++;
+                while (*colon && isspace((unsigned char)*colon)) colon++;
+                strncpy(info->cpu_model, colon, sizeof(info->cpu_model) - 1);
+                info->cpu_model[sizeof(info->cpu_model) - 1] = '\0';
+                // Remove trailing newline
+                size_t len = strlen(info->cpu_model);
+                while (len > 0 && isspace((unsigned char)info->cpu_model[len - 1])) {
+                    info->cpu_model[--len] = '\0';
+                }
+            }
+            break;
+        }
+    }
+    fclose(f);
+#endif
+
+    // Fallback
+    if (info->cpu_model[0] == '\0') {
+        strncpy(info->cpu_model, "Unknown CPU", sizeof(info->cpu_model) - 1);
+    }
+}
+
 void sysinfo_init(system_info_t *info) {
     memset(info, 0, sizeof(system_info_t));
 
@@ -564,6 +599,7 @@ void sysinfo_init(system_info_t *info) {
     info->cpu_physical_cores = detect_physical_cores();
     info->cpu_logical_cores = detect_logical_cores();
     info->cpu_threads_optimal = info->cpu_physical_cores;
+    detect_cpu_model(info);
 
     // Detect cache
     detect_cache_sizes(info);

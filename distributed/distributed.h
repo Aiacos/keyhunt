@@ -49,6 +49,16 @@ typedef struct {
     int id;
     char hostname[64];
     double perf_score;          /* Performance score from sysinfo */
+
+    /* Detailed hardware info */
+    int cpu_cores;              /* Physical CPU cores */
+    int cpu_threads;            /* Logical threads */
+    char cpu_name[64];          /* CPU model name */
+    char gpu_name[64];          /* GPU model name (empty if none) */
+    int gpu_memory_mb;          /* GPU VRAM in MB */
+    double cpu_speed_mkeys;     /* CPU-only speed Mkeys/s */
+    double gpu_speed_mkeys;     /* GPU-only speed Mkeys/s */
+
     uint64_t keys_processed;
     double throughput;          /* Mkeys/s */
     int socket_fd;
@@ -102,6 +112,14 @@ typedef struct {
     bool all_work_done;
 
     char output_file[256];
+
+    /* Job configuration (sent to workers) */
+    char job_target_address[64];    /* Target address/hash */
+    char job_mode[32];              /* "address", "bsgs", "xpoint" */
+    char job_key_type[16];          /* "compress", "uncompress", "both" */
+    int job_puzzle_number;          /* Puzzle number (informational) */
+    int job_bits;                   /* Bit range (informational) */
+    int heartbeat_interval_sec;     /* How often workers should heartbeat */
 } dist_coordinator_t;
 
 /* Worker client state */
@@ -112,6 +130,15 @@ typedef struct {
     char worker_id[64];
     double perf_score;
 
+    /* Detailed hardware info to report */
+    int cpu_cores;
+    int cpu_threads;
+    char cpu_name[64];
+    char gpu_name[64];
+    int gpu_memory_mb;
+    double cpu_speed_mkeys;
+    double gpu_speed_mkeys;
+
     bool connected;
     bool has_work;
     char current_range_start[65];
@@ -119,6 +146,16 @@ typedef struct {
     int current_work_id;
 
     uint64_t keys_processed;
+
+    /* Server-configured settings */
+    int heartbeat_interval_sec;
+
+    /* Received job config from server */
+    char received_target_address[64];
+    char received_mode[32];
+    char received_key_type[16];
+    int received_puzzle_number;
+    int received_bits;
 } dist_worker_client_t;
 
 /* ============================================================================
@@ -144,6 +181,30 @@ int dist_coordinator_init(dist_coordinator_t *coordinator, int port);
 int dist_coordinator_set_range(dist_coordinator_t *coordinator,
                                const char *range_start, const char *range_end,
                                uint64_t work_unit_size);
+
+/**
+ * Set job configuration for distribution to workers
+ * @param coordinator Coordinator state
+ * @param target_address Target address/hash to search for
+ * @param mode Search mode ("address", "bsgs", "xpoint")
+ * @param key_type Key type ("compress", "uncompress", "both")
+ * @param puzzle_number Puzzle number (informational)
+ * @param bits Bit range (informational)
+ */
+void dist_coordinator_set_job_config(dist_coordinator_t *coordinator,
+                                     const char *target_address,
+                                     const char *mode,
+                                     const char *key_type,
+                                     int puzzle_number,
+                                     int bits);
+
+/**
+ * Set heartbeat interval for workers
+ * @param coordinator Coordinator state
+ * @param interval_sec Seconds between heartbeats (0 = use default 30)
+ */
+void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
+                                             int interval_sec);
 
 /**
  * Start coordinator (begins accepting workers)
@@ -245,6 +306,40 @@ int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last
  * @param client Client state
  */
 void dist_worker_disconnect(dist_worker_client_t *client);
+
+/**
+ * Set detailed hardware info before connecting
+ * @param client Client state
+ * @param cpu_cores Physical CPU cores
+ * @param cpu_threads Logical CPU threads
+ * @param cpu_name CPU model name
+ * @param gpu_name GPU model name (NULL if no GPU)
+ * @param gpu_memory_mb GPU VRAM in MB (0 if no GPU)
+ */
+void dist_worker_set_hardware_info(dist_worker_client_t *client,
+                                   int cpu_cores, int cpu_threads,
+                                   const char *cpu_name,
+                                   const char *gpu_name, int gpu_memory_mb);
+
+/**
+ * Get job configuration received from coordinator
+ * @param client Client state
+ * @param target_address Output: target address (64 bytes min)
+ * @param mode Output: search mode (32 bytes min)
+ * @param key_type Output: key type (16 bytes min)
+ * @return 0 on success, -1 if not connected or no config received
+ */
+int dist_worker_get_job_config(const dist_worker_client_t *client,
+                               char *target_address,
+                               char *mode,
+                               char *key_type);
+
+/**
+ * Get heartbeat interval configured by server
+ * @param client Client state
+ * @return Interval in seconds, or 30 as default
+ */
+int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client);
 
 #ifdef __cplusplus
 }

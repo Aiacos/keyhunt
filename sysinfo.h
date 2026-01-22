@@ -14,6 +14,7 @@ typedef struct {
     int cpu_physical_cores;    // Physical CPU cores (without HT)
     int cpu_logical_cores;     // Logical CPU cores (with HT)
     int cpu_threads_optimal;   // Optimal thread count
+    char cpu_model[128];       // CPU model name
 
     // Cache information (in KB)
     uint64_t cache_l1_size;    // L1 cache per core

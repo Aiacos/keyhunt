@@ -412,17 +412,43 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     worker->perf_score = json_get_double(msg, "perf_score");
                     json_get_string(msg, "hostname", worker->hostname, sizeof(worker->hostname));
 
+                    /* Parse detailed hardware info */
+                    worker->cpu_cores = (int)json_get_int(msg, "cpu_cores");
+                    worker->cpu_threads = (int)json_get_int(msg, "cpu_threads");
+                    json_get_string(msg, "cpu_name", worker->cpu_name, sizeof(worker->cpu_name));
+                    json_get_string(msg, "gpu_name", worker->gpu_name, sizeof(worker->gpu_name));
+                    worker->gpu_memory_mb = (int)json_get_int(msg, "gpu_memory_mb");
+                    worker->cpu_speed_mkeys = json_get_double(msg, "cpu_speed_mkeys");
+                    worker->gpu_speed_mkeys = json_get_double(msg, "gpu_speed_mkeys");
+
                     coord->worker_count++;
 
-                    /* Send welcome */
-                    char welcome[256];
+                    /* Send welcome with job config */
+                    char welcome[DIST_MAX_MSG_SIZE];
                     snprintf(welcome, sizeof(welcome),
-                             "{\"type\":\"welcome\",\"worker_id\":%d,\"work_units\":%d}",
-                             worker->id, coord->work_unit_count);
+                             "{\"type\":\"welcome\",\"worker_id\":%d,\"work_units\":%d,"
+                             "\"target_address\":\"%s\",\"mode\":\"%s\",\"key_type\":\"%s\","
+                             "\"puzzle_number\":%d,\"bits\":%d,\"heartbeat_interval\":%d}",
+                             worker->id, coord->work_unit_count,
+                             coord->job_target_address,
+                             coord->job_mode,
+                             coord->job_key_type,
+                             coord->job_puzzle_number,
+                             coord->job_bits,
+                             coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30);
                     send_msg(client_fd, welcome);
 
                     printf("[Coordinator] Worker %d connected from %s (score=%.1f)\n",
                            worker->id, worker->hostname, worker->perf_score);
+                    if (worker->cpu_name[0] || worker->gpu_name[0]) {
+                        printf("[Coordinator]   Hardware: %s (%d threads)",
+                               worker->cpu_name[0] ? worker->cpu_name : "unknown CPU",
+                               worker->cpu_threads);
+                        if (worker->gpu_name[0]) {
+                            printf(", GPU: %s (%d MB)", worker->gpu_name, worker->gpu_memory_mb);
+                        }
+                        printf("\n");
+                    }
                 }
             } else {
                 close(client_fd);
@@ -566,16 +592,23 @@ int dist_worker_connect(dist_worker_client_t *client) {
     int opt = 1;
     setsockopt(client->socket_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
-    /* Send registration */
+    /* Send registration with hardware info */
     char hostname[64] = {0};
     gethostname(hostname, sizeof(hostname)-1);
 
-    char msg[512];
+    char msg[DIST_MAX_MSG_SIZE];
     snprintf(msg, sizeof(msg), "{");
     json_add_string(msg, sizeof(msg), "type", "register");
     json_add_string(msg, sizeof(msg), "id", client->worker_id);
     json_add_string(msg, sizeof(msg), "hostname", hostname);
     json_add_double(msg, sizeof(msg), "perf_score", client->perf_score);
+    json_add_int(msg, sizeof(msg), "cpu_cores", client->cpu_cores);
+    json_add_int(msg, sizeof(msg), "cpu_threads", client->cpu_threads);
+    json_add_string(msg, sizeof(msg), "cpu_name", client->cpu_name);
+    json_add_string(msg, sizeof(msg), "gpu_name", client->gpu_name);
+    json_add_int(msg, sizeof(msg), "gpu_memory_mb", client->gpu_memory_mb);
+    json_add_double(msg, sizeof(msg), "cpu_speed_mkeys", client->cpu_speed_mkeys);
+    json_add_double(msg, sizeof(msg), "gpu_speed_mkeys", client->gpu_speed_mkeys);
     size_t len = strlen(msg);
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
     strcat(msg, "}");
@@ -586,7 +619,7 @@ int dist_worker_connect(dist_worker_client_t *client) {
         return -1;
     }
 
-    /* Wait for welcome */
+    /* Wait for welcome with job config */
     char response[DIST_MAX_MSG_SIZE];
     if (recv_msg(client->socket_fd, response, sizeof(response)) <= 0) {
         close(client->socket_fd);
@@ -594,9 +627,28 @@ int dist_worker_connect(dist_worker_client_t *client) {
         return -1;
     }
 
+    /* Parse job config from welcome message */
+    json_get_string(response, "target_address", client->received_target_address,
+                    sizeof(client->received_target_address));
+    json_get_string(response, "mode", client->received_mode, sizeof(client->received_mode));
+    json_get_string(response, "key_type", client->received_key_type, sizeof(client->received_key_type));
+    client->received_puzzle_number = (int)json_get_int(response, "puzzle_number");
+    client->received_bits = (int)json_get_int(response, "bits");
+    client->heartbeat_interval_sec = (int)json_get_int(response, "heartbeat_interval");
+    if (client->heartbeat_interval_sec <= 0) client->heartbeat_interval_sec = 30;
+
     client->connected = true;
     printf("[Worker] Connected to coordinator at %s:%d\n",
            client->coordinator_host, client->coordinator_port);
+
+    if (client->received_target_address[0]) {
+        printf("[Worker] Received job config: puzzle #%d (%d bits), mode=%s\n",
+               client->received_puzzle_number, client->received_bits, client->received_mode);
+        printf("[Worker] Target: %.40s%s\n", client->received_target_address,
+               strlen(client->received_target_address) > 40 ? "..." : "");
+        printf("[Worker] Heartbeat interval: %d seconds\n", client->heartbeat_interval_sec);
+    }
+
     return 0;
 }
 
@@ -695,4 +747,87 @@ void dist_worker_disconnect(dist_worker_client_t *client) {
     }
     client->connected = false;
     printf("[Worker] Disconnected from coordinator\n");
+}
+
+/* ============================================================================
+ * New API Functions for Protocol Enhancements
+ * ============================================================================ */
+
+void dist_coordinator_set_job_config(dist_coordinator_t *coordinator,
+                                     const char *target_address,
+                                     const char *mode,
+                                     const char *key_type,
+                                     int puzzle_number,
+                                     int bits) {
+    if (!coordinator) return;
+
+    if (target_address) {
+        strncpy(coordinator->job_target_address, target_address,
+                sizeof(coordinator->job_target_address) - 1);
+    }
+    if (mode) {
+        strncpy(coordinator->job_mode, mode, sizeof(coordinator->job_mode) - 1);
+    }
+    if (key_type) {
+        strncpy(coordinator->job_key_type, key_type, sizeof(coordinator->job_key_type) - 1);
+    }
+    coordinator->job_puzzle_number = puzzle_number;
+    coordinator->job_bits = bits;
+
+    printf("[Coordinator] Job config: puzzle #%d (%d bits), mode=%s, key_type=%s\n",
+           puzzle_number, bits, mode ? mode : "?", key_type ? key_type : "?");
+    printf("[Coordinator] Target: %.40s%s\n", target_address ? target_address : "?",
+           target_address && strlen(target_address) > 40 ? "..." : "");
+}
+
+void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
+                                             int interval_sec) {
+    if (!coordinator) return;
+    coordinator->heartbeat_interval_sec = interval_sec > 0 ? interval_sec : 30;
+    printf("[Coordinator] Heartbeat interval: %d seconds\n",
+           coordinator->heartbeat_interval_sec);
+}
+
+void dist_worker_set_hardware_info(dist_worker_client_t *client,
+                                   int cpu_cores, int cpu_threads,
+                                   const char *cpu_name,
+                                   const char *gpu_name, int gpu_memory_mb) {
+    if (!client) return;
+
+    client->cpu_cores = cpu_cores;
+    client->cpu_threads = cpu_threads;
+    if (cpu_name) {
+        strncpy(client->cpu_name, cpu_name, sizeof(client->cpu_name) - 1);
+    }
+    if (gpu_name) {
+        strncpy(client->gpu_name, gpu_name, sizeof(client->gpu_name) - 1);
+    }
+    client->gpu_memory_mb = gpu_memory_mb;
+}
+
+int dist_worker_get_job_config(const dist_worker_client_t *client,
+                               char *target_address,
+                               char *mode,
+                               char *key_type) {
+    if (!client || !client->connected) return -1;
+    if (!client->received_target_address[0]) return -1;  /* No config received */
+
+    if (target_address) {
+        strncpy(target_address, client->received_target_address, 63);
+        target_address[63] = '\0';
+    }
+    if (mode) {
+        strncpy(mode, client->received_mode, 31);
+        mode[31] = '\0';
+    }
+    if (key_type) {
+        strncpy(key_type, client->received_key_type, 15);
+        key_type[15] = '\0';
+    }
+    return 0;
+}
+
+int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client) {
+    if (!client) return 30;
+    return client->heartbeat_interval_sec > 0 ? client->heartbeat_interval_sec : 30;
 }
