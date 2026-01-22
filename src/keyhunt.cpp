@@ -2480,6 +2480,16 @@ int main(int argc, char **argv)	{
 	}
 	// ========== End Parameter Validation ==========
 
+	// ========== Display Configuration Summary ==========
+	{
+		const char *mode_name = (FLAGMODE >= 0 && FLAGMODE < 7) ? modes[FLAGMODE] : "unknown";
+		const char *gpu_name = NULL;
+		if (FLAGGPU || FLAGGPU_HYBRID) {
+			gpu_name = g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "GPU";
+		}
+		output_banner(version, mode_name, NTHREADS, gpu_name, bitrange);
+	}
+
 	// ========== Save Configuration (if requested) ==========
 	if (g_save_config_path) {
 		// Update config with current (validated) values
@@ -4621,6 +4631,27 @@ int main(int argc, char **argv)	{
 						fflush(stdout);
 						THREADOUTPUT = 0;
 
+						// Show visual progress bar if range progress is enabled
+						if (g_rangeProgressEnabled) {
+							int permille = 0;
+							char pos[48];
+							if (capture_progress_metrics(permille, pos, sizeof(pos))) {
+								double percent = permille / 10.0;
+								// Convert Int overall_rate to double for Mkeys/s
+								char *rate_str = overall_rate.GetBase10();
+								double speed_mkeys = strtod(rate_str ? rate_str : "0", NULL) / 1000000.0;
+								if (rate_str) free(rate_str);
+								uint64_t keys_checked = strtoull(str_total ? str_total : "0", NULL, 10);
+								// Calculate ETA: remaining keys / speed
+								int secs = atoi(str_seconds ? str_seconds : "0");
+								double remaining_ratio = (1000.0 - permille) / 1000.0;
+								double total_estimate = (permille > 0) ? (secs / (permille / 1000.0)) : 0;
+								int eta_seconds = (int)(total_estimate * remaining_ratio);
+								output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
+								printf("\n");
+							}
+						}
+
 						// Update progress tracking for GPU hybrid mode
 						if (g_progress_enabled) {
 							char *current_hex = n_range_start.GetBase16();
@@ -4701,6 +4732,25 @@ int main(int argc, char **argv)	{
 						printf("%s",buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
+
+						// Show visual progress bar if range progress is enabled
+						if (g_rangeProgressEnabled) {
+							int permille = 0;
+							char pos[48];
+							if (capture_progress_metrics(permille, pos, sizeof(pos))) {
+								double percent = permille / 10.0;
+								// Use str_pretotal (keys/s) to calculate Mkeys/s
+								double speed_mkeys = strtod(str_pretotal ? str_pretotal : "0", NULL) / 1000000.0;
+								uint64_t keys_checked = strtoull(str_total ? str_total : "0", NULL, 10);
+								// Calculate ETA: remaining keys / speed
+								int secs = atoi(str_seconds ? str_seconds : "0");
+								double remaining_ratio = (1000.0 - permille) / 1000.0;
+								double total_estimate = (permille > 0) ? (secs / (permille / 1000.0)) : 0;
+								int eta_seconds = (int)(total_estimate * remaining_ratio);
+								output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
+								printf("\n");
+							}
+						}
 
 						// Update progress tracking (auto-saves every 60s)
 						if (g_progress_enabled) {
@@ -8898,7 +8948,10 @@ void writekey(bool compressed,Int *key)	{
 		fclose(keys);
 	}
 	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
-	
+
+	// Show celebratory key found display
+	output_key_found(hextemp, address, public_key_hex);
+
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	ReleaseMutex(write_keys);
 #else
@@ -8935,6 +8988,10 @@ void writekeyeth(Int *key)	{
 		fclose(keys);
 	}
 	printf("\n Hit!!!! Private Key: %s\naddress: %s\n",hextemp,address);
+
+	// Show celebratory key found display
+	output_key_found(hextemp, address, NULL);
+
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	ReleaseMutex(write_keys);
 #else

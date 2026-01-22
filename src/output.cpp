@@ -58,6 +58,7 @@ void output_banner(const char *version, const char *mode, int threads,
         }
         printf(CLR_CYAN "╚════════════════════════════════════════════════════════════╝" CLR_RESET "\n\n");
     }
+    fflush(stdout);
 }
 
 void output_progress(double percent, double speed_mkeys,
