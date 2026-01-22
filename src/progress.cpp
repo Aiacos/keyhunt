@@ -425,9 +425,9 @@ int progress_update(progress_state_t *state, const char *current_pos,
     // Update keys checked
     state->keys_checked = keys_checked;
 
-    // Update elapsed time
+    // Update elapsed time (total time since start)
     time_t now = time(NULL);
-    state->elapsed_seconds += difftime(now, state->last_save_time);
+    state->elapsed_seconds = difftime(now, state->start_time);
 
     // Check if auto-save is needed
     if (difftime(now, state->last_save_time) >= PROGRESS_AUTOSAVE_INTERVAL) {
