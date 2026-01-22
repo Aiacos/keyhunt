@@ -198,6 +198,9 @@ static void* local_worker_thread(void *arg) {
         unit->status = WORK_STATUS_COMPLETED;
         unit->completed_time = time(NULL);
         coord->work_units_completed++;
+
+        /* Save local progress */
+        wizard_save_local_progress(cfg->puzzle_number, unit->range_start, unit->range_end);
         coord->keys_processed += keys_checked;
 
         /* Check if found */
@@ -263,6 +266,15 @@ int wizard_server_run(wizard_config_t *cfg) {
     }
 
     g_server_coord = &coord;
+
+    /* Set job configuration for distribution to workers */
+    dist_coordinator_set_job_config(&coord,
+        cfg->target_address,
+        cfg->mode,
+        cfg->key_type,
+        cfg->puzzle_number,
+        cfg->bits);
+    dist_coordinator_set_heartbeat_interval(&coord, 30);  /* 30 second heartbeats */
 
     /* Configure work range */
     printf("[+] Setting up puzzle #%d...\n", cfg->puzzle_number);

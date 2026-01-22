@@ -150,6 +150,14 @@ int wizard_client_run(wizard_config_t *cfg) {
         return -1;
     }
 
+    /* Set detailed hardware info before connecting */
+    dist_worker_set_hardware_info(&client,
+        sysinfo.cpu_physical_cores,
+        sysinfo.cpu_logical_cores,
+        sysinfo.cpu_model,
+        sysinfo.gpu_name[0] ? sysinfo.gpu_name : NULL,
+        (int)sysinfo.gpu_vram_mb);
+
     /* Connect to coordinator */
     int retry = 0;
     while (g_client_running && retry < 5) {
@@ -167,14 +175,29 @@ int wizard_client_run(wizard_config_t *cfg) {
         return -1;
     }
 
-    /* TODO: Receive configuration from server */
-    /* For now, client must have config already */
-    printf("[+] Using local configuration:\n");
+    /* Receive configuration from server */
+    char server_target[64], server_mode[32], server_key_type[16];
+    if (dist_worker_get_job_config(&client, server_target, server_mode, server_key_type) == 0) {
+        /* Use server-provided configuration */
+        strncpy(cfg->target_address, server_target, sizeof(cfg->target_address) - 1);
+        strncpy(cfg->mode, server_mode, sizeof(cfg->mode) - 1);
+        strncpy(cfg->key_type, server_key_type, sizeof(cfg->key_type) - 1);
+        cfg->puzzle_number = client.received_puzzle_number;
+        cfg->bits = client.received_bits;
+        printf("[+] Received configuration from server:\n");
+    } else {
+        /* Fallback to local configuration */
+        printf("[+] Using local configuration (server did not provide config):\n");
+    }
     printf("    Puzzle: #%d (%d bits)\n", cfg->puzzle_number, cfg->bits);
     printf("    Target: %s\n", cfg->target_address);
     printf("    Mode: %s (%s)\n", cfg->mode, cfg->key_type);
     printf("    Threads: %d\n", cfg->threads);
     printf("    GPU: %d%%\n", cfg->gpu_percent);
+
+    /* Get server-configured heartbeat interval */
+    int heartbeat_interval = dist_worker_get_heartbeat_interval(&client);
+    printf("    Heartbeat: every %d seconds\n", heartbeat_interval);
 
     printf("\n[+] Starting worker loop...\n");
     printf("[+] Press Ctrl+C to stop.\n");
@@ -243,6 +266,9 @@ int wizard_client_run(wizard_config_t *cfg) {
             printf("\n[-] Failed to report completion\n");
         }
 
+        /* Save local progress */
+        wizard_save_local_progress(cfg->puzzle_number, range_start, range_end);
+
         /* Check if found */
         if (search_result == 1 && found_key[0]) {
             printf("\n\n");
@@ -273,9 +299,9 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("| %.2f Mkeys/s | Total: %.2e keys", speed, (double)total_keys);
         fflush(stdout);
 
-        /* Periodic heartbeat */
+        /* Periodic heartbeat using server-configured interval */
         time_t now = time(NULL);
-        if (now - last_heartbeat >= 30) {
+        if (now - last_heartbeat >= heartbeat_interval) {
             dist_worker_heartbeat(&client, keys_checked);
             last_heartbeat = now;
         }
