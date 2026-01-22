@@ -23,7 +23,9 @@
 static int fetch_url(const char *url, char **response, size_t *response_len) {
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-             "curl -sL --max-time %d --compressed '%s' 2>/dev/null",
+             "curl -sL --max-time %d --compressed "
+             "-A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' "
+             "'%s' 2>/dev/null",
              FETCH_TIMEOUT, url);
 
     FILE *fp = popen(cmd, "r");
@@ -628,28 +630,57 @@ int wizard_privatekeys_fetch_progress(int puzzle_number, privatekeys_progress_t 
     double percent = 0.0;
     uint64_t keys_scanned = 0;
 
-    /* Method 1: Look for completion percentage pattern */
-    char *pct_ptr = strstr(html, "completion");
-    if (!pct_ptr) pct_ptr = strstr(html, "Completion");
-    if (!pct_ptr) pct_ptr = strstr(html, "progress");
-
+    /* Method 1: Look for "Keys Scanned (Total)" row which has percentage in next <td> */
+    char *pct_ptr = strstr(html, "Keys Scanned (Total)");
     if (pct_ptr) {
-        char *scan = pct_ptr;
-        char *end = pct_ptr + 500;
-        if (end > html + html_len) end = html + html_len;
+        /* Find the next <td> tag which contains the percentage */
+        char *td = strstr(pct_ptr, "<td>");
+        if (td) {
+            td += 4;  /* Skip past "<td>" */
+            double val = 0.0;
+            if (sscanf(td, "%lf%%", &val) == 1 && val > 0.0 && val < 100.0) {
+                percent = val;
+            }
+        }
+    }
 
-        while (scan < end) {
-            if ((*scan >= '0' && *scan <= '9') || *scan == '.') {
-                double val = 0.0;
-                int consumed = 0;
-                if (sscanf(scan, "%lf%n", &val, &consumed) == 1) {
-                    if (scan[consumed] == '%' && val < 100.0 && val >= 0.0) {
-                        percent = val;
-                        break;
-                    }
+    /* Method 2: Fallback - look for any small percentage pattern (0.0xxxxx%) */
+    if (percent <= 0.0) {
+        char *scan = strstr(html, "0.0");
+        while (scan && scan < html + html_len) {
+            double val = 0.0;
+            int consumed = 0;
+            if (sscanf(scan, "%lf%n", &val, &consumed) == 1) {
+                if (scan[consumed] == '%' && val < 1.0 && val > 0.0) {
+                    percent = val;
+                    break;
                 }
             }
-            scan++;
+            scan = strstr(scan + 1, "0.0");
+        }
+    }
+
+    /* Method 3: Look for "completion" keyword */
+    if (percent <= 0.0) {
+        pct_ptr = strstr(html, "completion");
+        if (!pct_ptr) pct_ptr = strstr(html, "Completion");
+        if (pct_ptr) {
+            char *scan = pct_ptr;
+            char *end = pct_ptr + 500;
+            if (end > html + html_len) end = html + html_len;
+            while (scan < end) {
+                if ((*scan >= '0' && *scan <= '9') || *scan == '.') {
+                    double val = 0.0;
+                    int consumed = 0;
+                    if (sscanf(scan, "%lf%n", &val, &consumed) == 1) {
+                        if (scan[consumed] == '%' && val < 100.0 && val >= 0.0) {
+                            percent = val;
+                            break;
+                        }
+                    }
+                }
+                scan++;
+            }
         }
     }
 
