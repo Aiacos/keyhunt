@@ -46,10 +46,11 @@ static int search_range_subprocess(const char *start, const char *end,
         return -1;
     }
 
-    /* Build command based on mode, with optional GPU */
-    char gpu_arg[32] = "";
+    /* Build command based on mode, with GPU hybrid for maximum throughput */
+    char gpu_arg[64] = "";
     if (cfg->gpu_percent > 0) {
-        snprintf(gpu_arg, sizeof(gpu_arg), "-G auto ");
+        /* Use hybrid mode: CPU + GPU in parallel for maximum resource utilization */
+        snprintf(gpu_arg, sizeof(gpu_arg), "-G hybrid ");
     }
 
     if (strcmp(cfg->mode, "bsgs") == 0) {

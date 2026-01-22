@@ -195,6 +195,8 @@ int wizard_server_run(wizard_config_t *cfg) {
     time_t start_time = time(NULL);
     time_t last_checkpoint = start_time;
     time_t last_print = 0;
+    time_t last_worker_stats = start_time;
+    int last_worker_count = 0;
 
     while (g_server_running) {
         /* Process coordinator events */
@@ -243,6 +245,30 @@ int wizard_server_run(wizard_config_t *cfg) {
                    throughput,
                    eta_days, eta_hours);
             fflush(stdout);
+
+            /* Print per-worker stats every 30 seconds or when worker count changes */
+            if ((now - last_worker_stats >= 30) || (workers != last_worker_count)) {
+                if (workers != last_worker_count || (now - last_worker_stats >= 60)) {
+                    last_worker_stats = now;
+                    last_worker_count = workers;
+                    if (workers > 0) {
+                        printf("\n\n  \033[36m%-4s %-18s %12s %10s\033[0m\n",
+                               "ID", "Host", "Speed", "Keys Done");
+                        printf("  \033[36m%.4s %.18s %.12s %.10s\033[0m\n",
+                               "----", "------------------", "------------", "----------");
+                        for (int i = 0; i < coord.worker_count; i++) {
+                            dist_worker_t *w = &coord.workers[i];
+                            if (!w->connected) continue;
+                            printf("  %-4d %-18.18s %9.1f M/s %10.2e\n",
+                                   w->id,
+                                   w->hostname[0] ? w->hostname : "localhost",
+                                   w->throughput,
+                                   (double)w->keys_processed);
+                        }
+                        printf("\n");
+                    }
+                }
+            }
         }
 
         /* Checkpoint */

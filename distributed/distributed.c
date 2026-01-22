@@ -42,45 +42,6 @@
 #define LOG_ERR     CLR_RED   "  ✗ " CLR_RESET
 #define LOG_FOUND   CLR_MAGENTA CLR_BOLD "  ★ " CLR_RESET
 
-/* Verbosity control (can be set externally) */
-static int g_dist_verbose = 1;
-
-static void dist_log_worker_table(const dist_coordinator_t *coord) {
-    if (!g_dist_verbose) return;
-
-    printf("\n" CLR_CYAN "┌─────┬────────────────┬─────────────────────────┬──────────────┬────────────┐" CLR_RESET "\n");
-    printf(CLR_CYAN "│" CLR_BOLD " ID  " CLR_RESET CLR_CYAN "│" CLR_BOLD " Host           " CLR_RESET CLR_CYAN "│" CLR_BOLD " CPU                     " CLR_RESET CLR_CYAN "│" CLR_BOLD " GPU          " CLR_RESET CLR_CYAN "│" CLR_BOLD " Speed      " CLR_RESET CLR_CYAN "│" CLR_RESET "\n");
-    printf(CLR_CYAN "├─────┼────────────────┼─────────────────────────┼──────────────┼────────────┤" CLR_RESET "\n");
-
-    for (int i = 0; i < coord->worker_count; i++) {
-        const dist_worker_t *w = &coord->workers[i];
-        if (!w->connected) continue;
-
-        char cpu_short[22];
-        if (w->cpu_name[0]) {
-            snprintf(cpu_short, sizeof(cpu_short), "%.18s", w->cpu_name);
-            if (strlen(w->cpu_name) > 18) strcat(cpu_short, "..");
-        } else {
-            snprintf(cpu_short, sizeof(cpu_short), "%d cores", w->cpu_threads);
-        }
-
-        char gpu_short[13] = "-";
-        if (w->gpu_name[0]) {
-            snprintf(gpu_short, sizeof(gpu_short), "%.10s", w->gpu_name);
-        }
-
-        printf(CLR_CYAN "│" CLR_RESET " %s%-3d" CLR_RESET " " CLR_CYAN "│" CLR_RESET " %-14.14s " CLR_CYAN "│" CLR_RESET " %-23s " CLR_CYAN "│" CLR_RESET " %-12s " CLR_CYAN "│" CLR_RESET " %7.1f M/s " CLR_CYAN "│" CLR_RESET "\n",
-               w->connected ? CLR_GREEN : CLR_DIM,
-               w->id,
-               w->hostname[0] ? w->hostname : "localhost",
-               cpu_short,
-               gpu_short,
-               w->throughput);
-    }
-
-    printf(CLR_CYAN "└─────┴────────────────┴─────────────────────────┴──────────────┴────────────┘" CLR_RESET "\n\n");
-}
-
 /* Simple JSON helpers (minimal, no external deps) */
 static void json_add_string(char *buf, size_t sz, const char *key, const char *val) {
     char tmp[512];
@@ -502,11 +463,17 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                              coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30);
                     send_msg(client_fd, welcome);
 
-                    printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
+                    /* Print connection info with hardware details */
+                    printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET,
                            worker->id, worker->hostname[0] ? worker->hostname : "localhost");
-
-                    /* Print worker table after new connection */
-                    dist_log_worker_table(coord);
+                    if (worker->cpu_name[0]) {
+                        printf(" (%s", worker->cpu_name);
+                        if (worker->gpu_name[0]) {
+                            printf(" + %s", worker->gpu_name);
+                        }
+                        printf(")");
+                    }
+                    printf("\n");
                 }
             } else {
                 close(client_fd);
