@@ -165,7 +165,7 @@ static inline void profile_init_threads(int nthreads) {
 	if (!g_profile_enabled || nthreads <= 0 || g_profile_counters) return;
 	g_profile_counters = (profile_counters_t *)calloc((size_t)nthreads, sizeof(profile_counters_t));
 	if (!g_profile_counters) {
-		fprintf(stderr, "[W] Profiling requested but allocation failed\n");
+		output_warning("Profiling requested but allocation failed\n");
 		g_profile_enabled = false;
 		return;
 	}
@@ -2104,7 +2104,7 @@ int main(int argc, char **argv)	{
 			break;
 			case '6':
 				FLAGSKIPCHECKSUM = 1;
-				fprintf(stderr,"[W] Skipping checksums on files\n");
+				output_warning("Skipping checksums on files\n");
 			break;
 			case 'B':
 				index_value = indexOf(optarg,bsgs_modes,5);
@@ -2113,7 +2113,7 @@ int main(int argc, char **argv)	{
 					//printf("[+] BSGS mode %s\n",optarg);
 				}
 				else	{
-					fprintf(stderr,"[W] Ignoring unknow bsgs mode %s\n",optarg);
+					output_warning("Ignoring unknow bsgs mode %s\n",optarg);
 				}
 			break;
 			case 'b':
@@ -2223,7 +2223,7 @@ int main(int argc, char **argv)	{
 						FLAGGPU_HYBRID = 1;  // Hybrid mode: GPU + CPU in parallel
 						printf("[+] GPU hybrid mode (GPU + CPU in parallel for maximum throughput)\n");
 					} else {
-						fprintf(stderr,"[W] Invalid -G value '%s', use: off|auto|hash|full|hybrid\n", optarg);
+						output_warning("Invalid -G value '%s', use: off|auto|hash|full|hybrid\n", optarg);
 					}
 				}
 			break;
@@ -2577,10 +2577,10 @@ int main(int argc, char **argv)	{
 					(unsigned long)g_gpu_backend_info.vram_mb);
 			} else {
 #ifdef HAVE_CUDA_BACKEND
-				fprintf(stderr, "[W] CUDA backend compiled but no GPU detected\n");
+				output_warning("CUDA backend compiled but no GPU detected\n");
 #else
-				fprintf(stderr, "[W] CUDA backend not compiled (nvcc not found at build time)\n");
-				fprintf(stderr, "[I] To enable GPU: install CUDA toolkit, ensure 'nvcc' is in PATH, rebuild\n");
+				output_warning("CUDA backend not compiled (nvcc not found at build time)\n");
+				output_info("To enable GPU: install CUDA toolkit, ensure 'nvcc' is in PATH, rebuild\n");
 #endif
 			}
 		}
@@ -2596,16 +2596,16 @@ int main(int argc, char **argv)	{
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
 					if (!gpu_available) {
-						fprintf(stderr, "[I] GPU auto: falling back to CPU (no GPU available)\n");
+						output_info("GPU auto: falling back to CPU (no GPU available)\n");
 					} else if (!mode_supports_gpu_full) {
-						fprintf(stderr, "[I] GPU auto: falling back to CPU (mode not supported)\n");
+						output_info("GPU auto: falling back to CPU (mode not supported)\n");
 					}
 				}
 			}
 
 				// Validate explicit GPU requests
 				if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
-				fprintf(stderr, "[W] GPU requested but not available, falling back to CPU\n");
+				output_warning("GPU requested but not available, falling back to CPU\n");
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
 			}
@@ -2613,7 +2613,7 @@ int main(int argc, char **argv)	{
 			// GPU backends currently assume stride == 1 for correctness/performance.
 			// If the user specified a different stride, fall back to CPU.
 			if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !stride.IsOne()) {
-				fprintf(stderr, "[W] GPU mode requires stride=1 (-I 1). Falling back to CPU.\n");
+				output_warning("GPU mode requires stride=1 (-I 1). Falling back to CPU.\n");
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
 				FLAGGPU_HYBRID = 0;
@@ -2621,17 +2621,17 @@ int main(int argc, char **argv)	{
 
 				// Validate mode support
 				if (FLAGGPU_FULL == 1 && !mode_supports_gpu_full) {
-					fprintf(stderr, "[W] GPU FULL not supported for this mode/options, using CPU\n");
+					output_warning("GPU FULL not supported for this mode/options, using CPU\n");
 					FLAGGPU = 0;
 					FLAGGPU_FULL = 0;
 				}
 				if (FLAGGPU == 1 && FLAGGPU_FULL == 0 && !mode_supports_gpu_hash) {
 					// If the user asked for HASH mode but also requested uncompressed, upgrade to FULL when possible.
 					if (wantUncompressed && gpu_available && mode_supports_gpu_full) {
-						fprintf(stderr, "[I] GPU HASH mode does not support uncompressed; upgrading to GPU FULL\n");
+						output_info("GPU HASH mode does not support uncompressed; upgrading to GPU FULL\n");
 						FLAGGPU_FULL = 1;
 					} else {
-						fprintf(stderr, "[W] GPU HASH not supported for this mode/options, using CPU\n");
+						output_warning("GPU HASH not supported for this mode/options, using CPU\n");
 						FLAGGPU = 0;
 						FLAGGPU_FULL = 0;
 					}
@@ -2647,7 +2647,7 @@ int main(int argc, char **argv)	{
 		// GPU self-test if requested
 		if (FLAGGPU == 1 && getenv("KEYHUNT_GPU_SELFTEST")) {
 			if (!gpu_selftest_hash160_fromX()) {
-				fprintf(stderr, "[W] Disabling GPU due to failed self-test\n");
+				output_warning("Disabling GPU due to failed self-test\n");
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
 			} else {
@@ -4620,6 +4620,13 @@ int main(int argc, char **argv)	{
 						printf("%s", buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
+
+						// Update progress tracking for GPU hybrid mode
+						if (g_progress_enabled) {
+							char *current_hex = n_range_start.GetBase16();
+							progress_update(&g_progress_state, current_hex, strtoull(str_total ? str_total : "0", NULL, 10));
+							if (current_hex) free(current_hex);
+						}
 
 						prev_cpu_total.Set(&cpu_total);
 						prev_gpu_total_u64 = gpu_total_u64;
