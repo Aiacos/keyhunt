@@ -1913,13 +1913,13 @@ int main(int argc, char **argv)	{
 		 * Fallback: Use time-based seed if getrandom() fails
 		 * This can happen in containers, restricted environments, or systems with low entropy
 		 */
-		fprintf(stderr,"[W] Warning: getrandom() failed (bytes_read=%d), using fallback RNG\n", bytes_read);
+		output_warning("getrandom() failed (bytes_read=%d), using fallback RNG\n", bytes_read);
 		rseed(clock() + time(NULL) + rand()*rand());
 	}
 #endif
-	
-	
-	
+	// Initialize output module early (will re-init after parsing -q flag)
+	output_init(OUTPUT_NORMAL);
+
 	printf("[+] Version %s, developed by AlbertoBSD\n",version);
 
 	g_profile_enabled = env_truthy_kh("KEYHUNT_PROFILE");
@@ -1932,8 +1932,8 @@ int main(int argc, char **argv)	{
 
 	// Check if user wants to skip system detection (useful for problematic systems)
 	if (getenv("KEYHUNT_SKIP_SYSINFO")) {
-		fprintf(stderr,"[W] Skipping system detection (KEYHUNT_SKIP_SYSINFO set)\n");
-		fprintf(stderr,"[I] Using safe default parameters\n");
+		output_warning("Skipping system detection (KEYHUNT_SKIP_SYSINFO set)\n");
+		output_info("Using safe default parameters\n");
 		memset(&g_sysinfo, 0, sizeof(g_sysinfo));
 		// Safe defaults
 		g_sysinfo.cpu_physical_cores = 4;
@@ -2295,7 +2295,7 @@ int main(int argc, char **argv)	{
 						}
 					break;
 					default:
-						fprintf(stderr,"[E] Unknown mode value %s\n",optarg);
+						output_error("Unknown mode value %s\n",optarg);
 						exit(EXIT_FAILURE);
 					break;
 				}
@@ -2410,7 +2410,7 @@ int main(int argc, char **argv)	{
 				printf("[+] Bloom Size Multiplier %i\n",FLAGBLOOMMULTIPLIER);
 			break;
 			default:
-				fprintf(stderr,"[E] Unknown option -%c\n",c);
+				output_error("Unknown option -%c\n",c);
 				exit(EXIT_FAILURE);
 			break;
 		}
@@ -2507,13 +2507,13 @@ int main(int argc, char **argv)	{
 	// ========== End Save Configuration ==========
 
 	if(  FLAGBSGSMODE == MODE_BSGS && FLAGENDOMORPHISM)	{
-		fprintf(stderr,"[E] Endomorphism doesn't work with BSGS\n");
+		output_error("Endomorphism doesn't work with BSGS\n");
 		exit(EXIT_FAILURE);
 	}
-	
-	
+
+
 	if(  FLAGBSGSMODE == MODE_BSGS  && FLAGSTRIDE)	{
-		fprintf(stderr,"[E] Stride doesn't work with BSGS\n");
+		output_error("Stride doesn't work with BSGS\n");
 		exit(EXIT_FAILURE);
 	}
 	if(FLAGSTRIDE)	{
@@ -2896,7 +2896,7 @@ int main(int argc, char **argv)	{
 		printf("[+] Opening file %s\n",fileName);
 		fd = fopen(fileName,"rb");
 		if(fd == NULL)	{
-			fprintf(stderr,"[E] Can't open file %s\n",fileName);
+			output_error("Can't open file %s\n",fileName);
 			exit(EXIT_FAILURE);
 		}
 		aux = (char*) malloc(1024);
