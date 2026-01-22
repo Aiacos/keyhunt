@@ -308,6 +308,36 @@ The server runs as both **coordinator** (distributing work) and **local worker**
 - Reports progress via heartbeat messages
 - Saves found keys locally and reports to server
 
+## Modular Components (src/)
+
+### Output Module (src/output.h, src/output.cpp)
+Provides colored output with verbosity levels:
+- `OUTPUT_SILENT` - No output except errors and key found
+- `OUTPUT_MINIMAL` - Clean progress output
+- `OUTPUT_NORMAL` - Standard output (default)
+- `OUTPUT_VERBOSE` - Debug output
+
+Functions: `output_error()`, `output_warning()`, `output_info()`, `output_success()`
+
+### Progress Module (src/progress.h, src/progress.cpp)
+Persistent progress tracking with auto-save:
+- Saves progress to `~/.keyhunt/progress/` every 60 seconds
+- JSON format for human-readable inspection
+- Functions: `progress_init()`, `progress_update()`, `progress_complete()`
+
+### CLI Module (src/cli.h, src/cli.cpp)
+Command-line argument parsing with type-safe enums:
+- `search_mode_t`: MODE_ADDRESS, MODE_BSGS, MODE_XPOINT, etc.
+- `key_type_t`: KEYTYPE_COMPRESSED, KEYTYPE_UNCOMPRESSED, KEYTYPE_BOTH
+- `gpu_mode_t`: GPU_OFF, GPU_ON, GPU_AUTO, GPU_HYBRID
+- `bsgs_mode_t`: BSGS_SEQUENTIAL, BSGS_BACKWARD, BSGS_BOTH, BSGS_RANDOM, BSGS_DANCE
+
+### Benchmark Module (src/benchmark.h, src/benchmark.cpp)
+Integrated performance benchmark:
+- Usage: `./keyhunt --benchmark`
+- Tests CPU, GPU, and hybrid performance
+- Provides recommendations for optimal settings
+
 ## Documentation Files
 
 - **README.md**: User documentation, examples, FAQ

@@ -54,6 +54,16 @@ The wizard will:
 4. Set up distributed mode (server/client)
 5. Integrate community progress data
 
+### Run Benchmark First
+
+Before searching, run the benchmark to see your system's performance:
+
+```bash
+./keyhunt --benchmark
+```
+
+This will test CPU and GPU speed and recommend optimal settings.
+
 **Recommended for:**
 - New users
 - Distributed multi-PC setups
@@ -126,6 +136,8 @@ When you know the public key, searching for just the X-coordinate is faster than
 | `-k` | BSGS: K multiplier | `-k 2` |
 | `-S` | Save/load BSGS bloom tables | `-S` |
 | `-s` | Status interval (seconds) | `-s 10` |
+| `--benchmark` | Run performance benchmark | `--benchmark` |
+| `--wizard` | Interactive setup wizard | `--wizard` |
 
 ## Target File Formats
 
@@ -195,6 +207,19 @@ abcd1234567890abcdef1234567890abcdef1234
 **Program runs but finds nothing**: Verify your target file format and range are correct.
 
 **Low speed**: Check that AVX2/AVX-512 is detected at startup. Ensure you compiled with `make` not `make legacy`.
+
+## Progress Tracking
+
+Keyhunt automatically saves your search progress to `~/.keyhunt/progress/`. This means:
+
+- Progress is saved every 60 seconds automatically
+- If you stop and restart, you can resume from where you left off
+- Progress files are stored as JSON for easy inspection
+
+To view saved progress:
+```bash
+ls -la ~/.keyhunt/progress/
+```
 
 ## Next Steps
 

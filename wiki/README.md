@@ -19,6 +19,7 @@ Welcome to the keyhunt documentation wiki. This wiki contains comprehensive guid
 | Goal | Go to |
 |------|-------|
 | Build and test keyhunt | [Quick Start](00-Quick-Start.md#build) |
+| **Run performance benchmark** | `./keyhunt --benchmark` |
 | **Easy setup with wizard** | [Interactive Wizard](04-Interactive-Wizard.md) |
 | Choose the right search strategy | [Strategy Guide - Selection Matrix](01-Strategy-Guide.md#7-strategy-selection-matrix) |
 | Understand BSGS algorithm | [Algorithm Reference - BSGS](02-Algorithm-Reference.md#4-bsgs-algorithm-details) |
