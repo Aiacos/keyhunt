@@ -4,6 +4,7 @@ hexcharstoraw
 keyhunt
 keyhunt_legacy
 bsgsd
+keyhunt_wizard.json
 
 # CUDA build artifacts
 _cuda_tmp/
