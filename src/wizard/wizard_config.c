@@ -118,6 +118,7 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
 
     fprintf(f, "{\n");
     fprintf(f, "  \"version\": %d,\n", cfg->version);
+    fprintf(f, "  \"is_server\": %s,\n", cfg->is_server ? "true" : "false");
 
     fprintf(f, "  \"puzzle\": {\n");
     fprintf(f, "    \"number\": %d,\n", cfg->puzzle_number);
@@ -253,6 +254,7 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     wizard_config_init(cfg);
 
     cfg->version = json_get_int(json, "version", 1);
+    cfg->is_server = json_get_bool(json, "is_server", true);  /* Default to server mode */
     cfg->puzzle_number = json_get_int(json, "number", 71);
     json_get_string(json, "target_address", cfg->target_address, sizeof(cfg->target_address), "");
     json_get_string(json, "range_start", cfg->range_start, sizeof(cfg->range_start), "");
