@@ -1085,7 +1085,7 @@ static void maybe_adjust_cpu_sequential_max(size_t threadCount,
 		if (forced >= 1024 && (forced % 1024ULL) == 0) {
 			if (forced != N_SEQUENTIAL_MAX) {
 				N_SEQUENTIAL_MAX = forced;
-				printf("[I] %s: forced CPU N to 0x%llx via %s\n",
+				output_info("%s: forced CPU N to 0x%llx via %s\n",
 				       tag ? tag : "CPU",
 				       (unsigned long long)N_SEQUENTIAL_MAX,
 				       env_override ? env_override : "ENV");
@@ -1108,7 +1108,7 @@ static void maybe_adjust_cpu_sequential_max(size_t threadCount,
 
 	if (desired < N_SEQUENTIAL_MAX) {
 		N_SEQUENTIAL_MAX = desired;
-		printf("[I] %s: adjusted CPU N to 0x%llx for better thread utilization\n",
+		output_info("%s: adjusted CPU N to 0x%llx for better thread utilization\n",
 		       tag ? tag : "CPU",
 		       (unsigned long long)N_SEQUENTIAL_MAX);
 	}
@@ -1519,7 +1519,7 @@ static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &
 					if (gpu_hash160_fromX_batch(x32_be, CPU_GRP_SIZE,
 							(uint8_t*)hashCompressed02[0], (uint8_t*)hashCompressed03[0]) != 0) {
 						// Fallback to CPU path if GPU hashing fails for any reason.
-						fprintf(stderr, "[W] GPU hash160 failed; falling back to CPU.\n");
+						output_warning("GPU hash160 failed; falling back to CPU.\n");
 						goto cpu_compress_only_hash;
 					}
 				} else {
@@ -1828,17 +1828,17 @@ static bool gpu_selftest_hash160_fromX() {
 	alignas(32) uint8_t gpu02[kCount][20];
 	alignas(32) uint8_t gpu03[kCount][20];
 	if (gpu_hash160_fromX_batch(x32_be, kCount, gpu02[0], gpu03[0]) != 0) {
-		fprintf(stderr, "[E] GPU self-test failed: CUDA hash160 call failed\n");
+		output_error("GPU self-test failed: CUDA hash160 call failed\n");
 		return false;
 	}
 
 	for (size_t i = 0; i < kCount; ++i) {
 		if (memcmp(cpu02[i], gpu02[i], 20) != 0) {
-			fprintf(stderr, "[E] GPU self-test failed: mismatch prefix 02 at index %zu\n", i);
+			output_error("GPU self-test failed: mismatch prefix 02 at index %zu\n", i);
 			return false;
 		}
 		if (memcmp(cpu03[i], gpu03[i], 20) != 0) {
-			fprintf(stderr, "[E] GPU self-test failed: mismatch prefix 03 at index %zu\n", i);
+			output_error("GPU self-test failed: mismatch prefix 03 at index %zu\n", i);
 			return false;
 		}
 	}
@@ -1925,11 +1925,11 @@ int main(int argc, char **argv)	{
 	// Initialize output module early (will re-init after parsing -q flag)
 	output_init(OUTPUT_NORMAL);
 
-	printf("[+] Version %s, developed by AlbertoBSD\n",version);
+	output_success("Version %s, developed by AlbertoBSD\n",version);
 
 	g_profile_enabled = env_truthy_kh("KEYHUNT_PROFILE");
 	if (g_profile_enabled) {
-		fprintf(stderr, "[I] Profiling enabled (KEYHUNT_PROFILE=1)\n");
+		output_info("Profiling enabled (KEYHUNT_PROFILE=1)\n");
 	}
 
 	// Auto-detect system configuration and optimize parameters
@@ -1965,9 +1965,9 @@ int main(int argc, char **argv)	{
 		// Detect AVX2 support for enhanced performance
 		g_avx2_available = ripemd160_avx2_available();
 	if (g_avx2_available) {
-		printf("[+] AVX2 detected: Using optimized 8-way parallel RIPEMD160\n");
+		output_success("AVX2 detected: Using optimized 8-way parallel RIPEMD160\n");
 	} else {
-		printf("[I] AVX2 not available: Using SSE2 4-way parallel RIPEMD160\n");
+		output_info("AVX2 not available: Using SSE2 4-way parallel RIPEMD160\n");
 	}
 
 	// Store auto-tuned recommendations (don't apply yet - wait for user args)
@@ -1979,7 +1979,7 @@ int main(int argc, char **argv)	{
 	// Testing showed that larger values (2048, 4096) actually hurt performance
 	// due to increased ModInv overhead and worse cache behavior
 	CPU_GRP_SIZE = 1024;
-	fprintf(stderr,"[I] Using CPU_GRP_SIZE: %u (proven optimal)\n", CPU_GRP_SIZE);
+	output_info("Using CPU_GRP_SIZE: %u (proven optimal)\n", CPU_GRP_SIZE);
 
 	// -------------------------------------------------------------------------
 	// Help and wizard mode check (before anything else)
@@ -2040,16 +2040,16 @@ int main(int argc, char **argv)	{
 	// Load config file (explicit or default)
 	if (config_file_arg) {
 		if (config_load(&g_config, config_file_arg) == 0) {
-			fprintf(stderr, "[+] Loaded configuration from '%s'\n", config_file_arg);
+			output_success("Loaded configuration from '%s'\n", config_file_arg);
 			g_config_loaded = true;
 		} else {
-			fprintf(stderr, "[E] Failed to load config file: %s\n", config_file_arg);
+			output_error("Failed to load config file: %s\n", config_file_arg);
 			exit(EXIT_FAILURE);
 		}
 	} else {
 		// Try default config file (silently)
 		if (config_load_default(&g_config) == 0) {
-			fprintf(stderr, "[+] Loaded configuration from 'keyhunt.conf'\n");
+			output_success("Loaded configuration from 'keyhunt.conf'\n");
 			g_config_loaded = true;
 		}
 	}
@@ -2110,7 +2110,7 @@ int main(int argc, char **argv)	{
 				index_value = indexOf(optarg,bsgs_modes,5);
 				if(index_value >= 0 && index_value <= 4)	{
 					FLAGBSGSMODE = index_value;
-					//printf("[+] BSGS mode %s\n",optarg);
+					//output_success("BSGS mode %s\n",optarg);
 				}
 				else	{
 					output_warning("Ignoring unknow bsgs mode %s\n",optarg);
@@ -2144,7 +2144,7 @@ int main(int argc, char **argv)	{
 					break;
 					case 1: //eth
 						FLAGCRYPTO = CRYPTO_ETH;
-						printf("[+] Setting search for ETH adddress.\n");
+						output_success("Setting search for ETH adddress.\n");
 					break;
 					/*
 					case 2: //all
@@ -2187,11 +2187,11 @@ int main(int argc, char **argv)	{
 			break;
 			case 'd':
 				FLAGDEBUG = 1;
-				printf("[+] Flag DEBUG enabled\n");
+				output_success("Flag DEBUG enabled\n");
 			break;
 			case 'e':
 				FLAGENDOMORPHISM = 1;
-				printf("[+] Endomorphism enabled\n");
+				output_success("Endomorphism enabled\n");
 				lambda.SetBase16("5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72");
 				lambda2.SetBase16("ac9c52b33fa3cf1f5ad9e3fd77ed9ba4a880b9fc8ec739c2e0cfc810b51283ce");
 				beta.SetBase16("7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee");
@@ -2212,16 +2212,16 @@ int main(int argc, char **argv)	{
 					} else if (strcasecmp(optarg, "hash") == 0) {
 						FLAGGPU = 1;
 						FLAGGPU_FULL = 0;  // Hash-only mode
-						printf("[+] GPU hash-only mode (CPU generates points, GPU hashes)\n");
+						output_success("GPU hash-only mode (CPU generates points, GPU hashes)\n");
 					} else if (strcasecmp(optarg, "full") == 0 || strcasecmp(optarg, "on") == 0 || strcasecmp(optarg, "yes") == 0 || strcmp(optarg, "1") == 0) {
 						FLAGGPU = 1;
 						FLAGGPU_FULL = 1;  // Full GPU mode
-						printf("[+] GPU full mode (ECC + hash160 + matching on GPU)\n");
+						output_success("GPU full mode (ECC + hash160 + matching on GPU)\n");
 					} else if (strcasecmp(optarg, "hybrid") == 0) {
 						FLAGGPU = 1;
 						FLAGGPU_FULL = 1;
 						FLAGGPU_HYBRID = 1;  // Hybrid mode: GPU + CPU in parallel
-						printf("[+] GPU hybrid mode (GPU + CPU in parallel for maximum throughput)\n");
+						output_success("GPU hybrid mode (GPU + CPU in parallel for maximum throughput)\n");
 					} else {
 						output_warning("Invalid -G value '%s', use: off|auto|hash|full|hybrid\n", optarg);
 					}
@@ -2236,64 +2236,64 @@ int main(int argc, char **argv)	{
 				if(KFACTOR <= 0)	{
 					KFACTOR = 1;
 				}
-				printf("[+] K factor %i\n",KFACTOR);
+				output_success("K factor %i\n",KFACTOR);
 			break;
 
 			case 'l':
 				switch(indexOf(optarg,publicsearch,3)) {
 					case SEARCH_UNCOMPRESS:
 						FLAGSEARCH = SEARCH_UNCOMPRESS;
-						printf("[+] Search uncompress only\n");
+						output_success("Search uncompress only\n");
 					break;
 					case SEARCH_COMPRESS:
 						FLAGSEARCH = SEARCH_COMPRESS;
-						printf("[+] Search compress only\n");
+						output_success("Search compress only\n");
 					break;
 					case SEARCH_BOTH:
 						FLAGSEARCH = SEARCH_BOTH;
-						printf("[+] Search both compress and uncompress\n");
+						output_success("Search both compress and uncompress\n");
 					break;
 				}
 			break;
 			case 'M':
 				FLAGMATRIX = 1;
-				printf("[+] Matrix screen\n");
+				output_success("Matrix screen\n");
 			break;
 			case 'P':
 				FLAGPROGRESSBAR = 1;
-				printf("[+] Segmented progress indicator enabled\n");
+				output_success("Segmented progress indicator enabled\n");
 			break;
 			case 'm':
 				switch(indexOf(optarg,modes,7)) {
 					case MODE_XPOINT: //xpoint
 						FLAGMODE = MODE_XPOINT;
-						printf("[+] Mode xpoint\n");
+						output_success("Mode xpoint\n");
 					break;
 					case MODE_ADDRESS: //address
 						FLAGMODE = MODE_ADDRESS;
-						printf("[+] Mode address\n");
+						output_success("Mode address\n");
 					break;
 					case MODE_BSGS:
 						FLAGMODE = MODE_BSGS;
-						//printf("[+] Mode BSGS\n");
+						//output_success("Mode BSGS\n");
 					break;
 					case MODE_RMD160:
 						FLAGMODE = MODE_RMD160;
 						FLAGCRYPTO = CRYPTO_BTC;
-						printf("[+] Mode rmd160\n");
+						output_success("Mode rmd160\n");
 					break;
 					case MODE_PUB2RMD:
 						FLAGMODE = MODE_PUB2RMD;
-						printf("[+] Mode pub2rmd was removed\n");
+						output_success("Mode pub2rmd was removed\n");
 						exit(0);
 					break;
 					case MODE_MINIKEYS:
 						FLAGMODE = MODE_MINIKEYS;
-						printf("[+] Mode minikeys\n");
+						output_success("Mode minikeys\n");
 					break;
 					case MODE_VANITY:
 						FLAGMODE = MODE_VANITY;
-						printf("[+] Mode vanity\n");
+						output_success("Mode vanity\n");
 						if(vanity_bloom == NULL){
 							vanity_bloom = (struct bloom*) calloc(1,sizeof(struct bloom));
 							checkpointer((void *)vanity_bloom,__FILE__,"calloc","vanity_bloom" ,__LINE__ -1);
@@ -2311,10 +2311,10 @@ int main(int argc, char **argv)	{
 			break;
 			case 'q':
 				FLAGQUIET	= 1;
-				printf("[+] Quiet thread output\n");
+				output_success("Quiet thread output\n");
 			break;
 			case 'R':
-				printf("[+] Random mode\n");
+				output_success("Random mode\n");
 				FLAGRANDOM = 1;
 				FLAGBSGSMODE =  3;
 			break;
@@ -2359,11 +2359,11 @@ int main(int argc, char **argv)	{
 					OUTPUTSECONDS.SetInt32(30);
 				}
 				if(OUTPUTSECONDS.IsZero())	{
-					printf("[+] Turn off stats output\n");
+					output_success("Turn off stats output\n");
 				}
 				else	{
 					hextemp = OUTPUTSECONDS.GetBase10();
-					printf("[+] Stats output every %s seconds\n",hextemp);
+					output_success("Stats output every %s seconds\n",hextemp);
 					free(hextemp);
 				}
 			break;
@@ -2376,7 +2376,7 @@ int main(int argc, char **argv)	{
 					NTHREADS = 1;
 				}
 				FLAGTHREADS = 1;
-				printf((NTHREADS > 1) ? "[+] Threads : %u (user-specified)\n": "[+] Thread : %u (user-specified)\n",NTHREADS);
+				output_success((NTHREADS > 1) ? "Threads : %u (user-specified)\n": "Thread : %u (user-specified)\n",NTHREADS);
 			break;
 			case 'v':
 				FLAGVANITY = 1;
@@ -2386,21 +2386,21 @@ int main(int argc, char **argv)	{
 				}
 				if(isValidBase58String(optarg))	{
 					if(addvanity(optarg) > 0)	{
-						printf("[+] Added Vanity search : %s\n",optarg);
+						output_success("Added Vanity search : %s\n",optarg);
 					}
 					else	{
-						printf("[+] Vanity search \"%s\" was NOT Added\n",optarg);
+						output_success("Vanity search \"%s\" was NOT Added\n",optarg);
 					}
 				}
 				else {
-					fprintf(stderr,"[+] The string \"%s\" is not Valid Base58\n",optarg);
+					output_success("The string \"%s\" is not Valid Base58\n",optarg);
 				}
 				
 			break;
 			case '8':
 				if(strlen(optarg) == 58)	{
 					Ccoinbuffer = optarg; 
-					printf("[+] Base58 for Minikeys %s\n",Ccoinbuffer);
+					output_success("Base58 for Minikeys %s\n",Ccoinbuffer);
 				}
 				else	{
 					output_error("The base58 alphabet must be 58 characters long.\n");
@@ -2412,7 +2412,7 @@ int main(int argc, char **argv)	{
 				if(FLAGBLOOMMULTIPLIER <= 0)	{
 					FLAGBLOOMMULTIPLIER = 1;
 				}
-				printf("[+] Bloom Size Multiplier %i\n",FLAGBLOOMMULTIPLIER);
+				output_success("Bloom Size Multiplier %i\n",FLAGBLOOMMULTIPLIER);
 			break;
 			default:
 				output_error("Unknown option -%c\n",c);
@@ -2475,7 +2475,7 @@ int main(int argc, char **argv)	{
 		}
 
 		if (!validation_ok) {
-			fprintf(stderr, "[W] Some parameters were auto-corrected for safety\n");
+			output_warning("Some parameters were auto-corrected for safety\n");
 		}
 	}
 	// ========== End Parameter Validation ==========
@@ -2516,7 +2516,7 @@ int main(int argc, char **argv)	{
 
 		// Save
 		if (config_save(&g_config, g_save_config_path) == 0) {
-			fprintf(stderr, "[+] Configuration saved. You can now use it with: --config %s\n", g_save_config_path);
+			output_success("Configuration saved. You can now use it with: --config %s\n", g_save_config_path);
 		} else {
 			output_error("Failed to save configuration to %s. Check disk space and permissions.\n", g_save_config_path);
 		}
@@ -2540,7 +2540,7 @@ int main(int argc, char **argv)	{
 		else{
 			stride.SetBase10(str_stride);
 		}
-		printf("[+] Stride : %s\n",stride.GetBase10());
+		output_success("Stride : %s\n",stride.GetBase10());
 	}
 	else	{
 		FLAGSTRIDE = 1;
@@ -2548,7 +2548,7 @@ int main(int argc, char **argv)	{
 	}
 	init_generator();
 	if(FLAGMODE == MODE_BSGS )	{
-		printf("[+] Mode BSGS %s\n",bsgs_modes[FLAGBSGSMODE]);
+		output_success("Mode BSGS %s\n",bsgs_modes[FLAGBSGSMODE]);
 	}
 	
 	if(FLAGFILE == 0) {
@@ -2557,11 +2557,11 @@ int main(int argc, char **argv)	{
 		
 		if(FLAGMODE == MODE_ADDRESS && FLAGCRYPTO == CRYPTO_NONE) {	//When none crypto is defined the default search is for Bitcoin
 			FLAGCRYPTO = CRYPTO_BTC;
-			printf("[+] Setting search for btc adddress\n");
+			output_success("Setting search for btc adddress\n");
 		}
 		if(FLAGMODE == MODE_RMD160 && FLAGCRYPTO == CRYPTO_NONE) {	// Default rmd160 search is Bitcoin HASH160 (same pipeline as address mode)
 			FLAGCRYPTO = CRYPTO_BTC;
-			printf("[+] Setting search for btc rmd160\n");
+			output_success("Setting search for btc rmd160\n");
 		}
 
 	// ============================================================================
@@ -2583,7 +2583,7 @@ int main(int argc, char **argv)	{
 		// Show GPU backend status
 		if (FLAGGPU != 0 || FLAGGPU_FULL != 0) {
 			if (gpu_available) {
-				printf("[+] CUDA backend: %s (%d MPs, %lu MB VRAM)\n",
+				output_success("CUDA backend: %s (%d MPs, %lu MB VRAM)\n",
 					g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "NVIDIA GPU",
 					g_gpu_backend_info.multiprocessors,
 					(unsigned long)g_gpu_backend_info.vram_mb);
@@ -2603,7 +2603,7 @@ int main(int argc, char **argv)	{
 					// Auto: prefer full GPU mode if available
 					FLAGGPU = 1;
 					FLAGGPU_FULL = 1;
-					printf("[+] GPU auto: using full mode (ECC + hash160 + matching on GPU)\n");
+					output_success("GPU auto: using full mode (ECC + hash160 + matching on GPU)\n");
 				} else {
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
@@ -2651,9 +2651,9 @@ int main(int argc, char **argv)	{
 
 		// Show final GPU mode
 		if (FLAGGPU_FULL == 1) {
-			printf("[+] GPU mode: FULL (secp256k1 + SHA256 + RIPEMD160 + matching on GPU)\n");
+			output_success("GPU mode: FULL (secp256k1 + SHA256 + RIPEMD160 + matching on GPU)\n");
 		} else if (FLAGGPU == 1) {
-			printf("[+] GPU mode: HASH (CPU generates points, GPU computes hash160)\n");
+			output_success("GPU mode: HASH (CPU generates points, GPU computes hash160)\n");
 		}
 
 		// GPU self-test if requested
@@ -2679,7 +2679,7 @@ int main(int argc, char **argv)	{
 				}
 				if (gpu_threads > 0 && gpu_threads < NTHREADS) {
 					NTHREADS = gpu_threads;
-					printf("[I] GPU active: using %d CPU threads\n", NTHREADS);
+					output_info("GPU active: using %d CPU threads\n", NTHREADS);
 				}
 			}
 	}
@@ -2692,12 +2692,12 @@ int main(int argc, char **argv)	{
 			n_range_start.AddOne();
 		}
 		if(n_range_end.IsZero())	{
-			fprintf(stderr,"[E] End range can't be zero\nFallback to random mode!\n");
+			output_error("End range can't be zero\nFallback to random mode!\n");
 			FLAGRANGE = 0;
 		}
 		if(FLAGRANGE)	{
 			if( n_range_start.IsGreater(&n_range_end)) {
-				fprintf(stderr,"[W] Opps, start range can't be great than end range. Swapping them\n");
+				output_warning("Opps, start range can't be great than end range. Swapping them\n");
 				n_range_aux.Set(&n_range_start);
 				n_range_start.Set(&n_range_end);
 				n_range_end.Set(&n_range_aux);
@@ -2717,7 +2717,7 @@ int main(int argc, char **argv)	{
 				n_range_diff.Sub(&n_range_start);
 			}
 			else	{
-				fprintf(stderr,"[E] Start and End range can't be great than N\nFallback to random mode!\n");
+				output_error("Start and End range can't be great than N\nFallback to random mode!\n");
 				FLAGRANGE = 0;
 			}
 		}
@@ -2739,7 +2739,7 @@ int main(int argc, char **argv)	{
 			}
 			else	{
 				if(FLAGRANGE == 0)	{
-					fprintf(stderr,"[W] WTF!\n");
+					output_warning("WTF!\n");
 				}
 			}
 		}
@@ -2750,7 +2750,7 @@ int main(int argc, char **argv)	{
 		// Apply auto-tuned N if user didn't specify -n
 		if(!FLAG_N && OPTIMAL_N > 0) {
 			N_SEQUENTIAL_MAX = OPTIMAL_N;
-			printf("[I] Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
+			output_info("Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
 		}
 		else if(FLAG_N){
 			int base = 10;
@@ -2762,7 +2762,7 @@ int main(int argc, char **argv)	{
 			char *endp = NULL;
 			unsigned long long parsed = strtoull(num, &endp, base);
 			if (errno != 0 || endp == num || (endp && *endp != '\0')) {
-				fprintf(stderr,"[E] Invalid -n value: %s\n", str_N);
+				output_error("Invalid -n value: %s\n", str_N);
 				FLAG_N = 0;
 				N_SEQUENTIAL_MAX = 0x100000000;
 			} else {
@@ -2770,12 +2770,12 @@ int main(int argc, char **argv)	{
 			}
 			
 			if(N_SEQUENTIAL_MAX < 1024)	{
-				fprintf(stderr,"[I] n value need to be equal or great than 1024, back to defaults\n");
+				output_info("n value need to be equal or great than 1024, back to defaults\n");
 				FLAG_N = 0;
 				N_SEQUENTIAL_MAX = 0x100000000;
 			}
 			if(N_SEQUENTIAL_MAX % 1024 != 0)	{
-				fprintf(stderr,"[I] n value need to be multiplier of  1024\n");
+				output_info("n value need to be multiplier of  1024\n");
 				FLAG_N = 0;
 				N_SEQUENTIAL_MAX = 0x100000000;
 			}
@@ -2784,11 +2784,11 @@ int main(int argc, char **argv)	{
 			// No user param and no auto-tuning: use default
 			N_SEQUENTIAL_MAX = 0x100000000;
 		}
-		printf("[+] N = 0x%llx\n",(unsigned long long)N_SEQUENTIAL_MAX);
+		output_success("N = 0x%llx\n",(unsigned long long)N_SEQUENTIAL_MAX);
 		if(FLAGMODE == MODE_MINIKEYS)	{
 			BSGS_N.SetInt32(DEBUGCOUNT);
 			if(FLAGBASEMINIKEY)	{
-				printf("[+] Base Minikey : %s\n",str_baseminikey);
+				output_success("Base Minikey : %s\n",str_baseminikey);
 			}
 			minikeyN = (char*) malloc(22);
 			checkpointer((void *)minikeyN,__FILE__,"malloc","minikeyN" ,__LINE__ -1);
@@ -2818,15 +2818,15 @@ int main(int argc, char **argv)	{
 		}
 		else	{
 			if(FLAGBITRANGE)	{	// Bit Range
-				printf("[+] Bit Range %i\n",bitrange);
+				output_success("Bit Range %i\n",bitrange);
 			}
 			else	{
-				printf("[+] Range \n");
+				output_success("Range \n");
 			}
 		}
 		if(FLAGMODE != MODE_MINIKEYS)	{
 			hextemp = n_range_start.GetBase16();
-			printf("[+] -- from : 0x%s\n",hextemp);
+			output_success("-- from : 0x%s\n",hextemp);
 			free(hextemp);
 			if (FLAGRANGE) {
 				Int end_inclusive;
@@ -2836,7 +2836,7 @@ int main(int argc, char **argv)	{
 			} else {
 				hextemp = n_range_end.GetBase16();
 			}
-			printf("[+] -- to   : 0x%s\n",hextemp);
+			output_success("-- to   : 0x%s\n",hextemp);
 			free(hextemp);
 		}
 
@@ -2869,7 +2869,7 @@ int main(int argc, char **argv)	{
 		}
 		
 		if(FLAGMODE != MODE_VANITY && !FLAGREADEDFILE1)	{
-			printf("[+] Sorting data ...");
+			output_success("Sorting data ...");
 			_sort(addressTable,N);
 			printf(" done! %" PRIu64 " values were loaded and sorted\n",N);
 			writeFileIfNeeded(fileName);
@@ -2877,11 +2877,11 @@ int main(int argc, char **argv)	{
 
 			// GPU Full Search initialization (upload G table and targets)
 			if (FLAGGPU_FULL == 1) {
-				printf("[+] Initializing GPU full search...\n");
+				output_success("Initializing GPU full search...\n");
 
 				// Upload precomputed G table to GPU
 				if (gpu_upload_gtable_from_secp() == 0) {
-					printf("[+] G table uploaded to GPU (8192 points)\n");
+					output_success("G table uploaded to GPU (8192 points)\n");
 				} else {
 					output_error("Failed to upload G table to GPU\n");
 					FLAGGPU_FULL = 0;
@@ -2890,13 +2890,13 @@ int main(int argc, char **argv)	{
 
 				// Upload targets to GPU
 				if (FLAGGPU_FULL && gpu_upload_targets_from_addressTable(N) == 0) {
-					printf("[+] Targets uploaded to GPU (%" PRIu64 " hashes)\n", N);
+					output_success("Targets uploaded to GPU (%" PRIu64 " hashes)\n", N);
 					// Optional: build a GPU-specific bloom filter to reduce target searches for large N.
 					g_gpu_bloom_uploaded = 0;
 					if (N > 32) {
 						if (gpu_build_and_upload_bloom_from_addressTable(N) == 0) {
 							g_gpu_bloom_uploaded = 1;
-							printf("[+] GPU bloom uploaded (accelerates matching for large target sets)\n");
+							output_success("GPU bloom uploaded (accelerates matching for large target sets)\n");
 						} else {
 							output_warning("GPU bloom upload failed; continuing without GPU bloom\n");
 						}
@@ -2936,7 +2936,7 @@ int main(int argc, char **argv)	{
 	}
 
 	if(FLAGMODE == MODE_BSGS )	{
-		printf("[+] Opening file %s\n",fileName);
+		output_success("Opening file %s\n",fileName);
 		fd = fopen(fileName,"rb");
 		if(fd == NULL)	{
 			output_error("Can't open file %s\n",fileName);
@@ -3008,10 +3008,10 @@ int main(int argc, char **argv)	{
 		fclose(fd);
 		bsgs_point_number = N;
 		if(bsgs_point_number > 0)	{
-			printf("[+] Added %u points from file\n",bsgs_point_number);
+			output_success("Added %u points from file\n",bsgs_point_number);
 		}
 		else	{
-			fprintf(stderr,"[E] The file don't have any valid publickeys\n");
+			output_error("The file don't have any valid publickeys\n");
 			exit(EXIT_FAILURE);
 		}
 		BSGS_N.SetInt32(0);
@@ -3023,7 +3023,7 @@ int main(int argc, char **argv)	{
 		// Apply auto-tuning for BSGS mode if user didn't specify params
 		if(!FLAG_N && OPTIMAL_N > 0) {
 			BSGS_N.SetInt64(OPTIMAL_N);
-			printf("[I] Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
+			output_info("Using auto-tuned N value: 0x%llx\n", (unsigned long long)OPTIMAL_N);
 		}
 		else if(FLAG_N)	{	//Custom N by the -n param
 
@@ -3045,7 +3045,7 @@ int main(int argc, char **argv)	{
 		// Apply auto-tuned KFACTOR if user didn't specify -k
 		if(KFACTOR == 1 && OPTIMAL_KFACTOR > 0) {
 			KFACTOR = OPTIMAL_KFACTOR;
-			printf("[I] Using auto-tuned K factor: %d\n", OPTIMAL_KFACTOR);
+			output_info("Using auto-tuned K factor: %d\n", OPTIMAL_KFACTOR);
 		}
 
 	bsgs_recalculate_with_new_params:
@@ -3056,7 +3056,7 @@ int main(int argc, char **argv)	{
 			BSGS_M.ModSqrt();
 		}
 		else	{
-			fprintf(stderr,"[E] -n param doesn't have exact square root\n");
+			output_error("-n param doesn't have exact square root\n");
 			exit(EXIT_FAILURE);
 		}
 
@@ -3065,7 +3065,7 @@ int main(int argc, char **argv)	{
 		
 		if(!BSGS_AUX.IsZero()){ //If M is not divisible by  BSGS_GROUP_SIZE (1024) 
 			hextemp = BSGS_GROUP_SIZE.GetBase10();
-			fprintf(stderr,"[E] M value is not divisible by %s\n",hextemp);
+			output_error("M value is not divisible by %s\n",hextemp);
 			exit(EXIT_FAILURE);
 		}
 
@@ -3078,14 +3078,14 @@ int main(int argc, char **argv)	{
 
 				n_range_diff.Set(&n_range_end);
 				n_range_diff.Sub(&n_range_start);
-				printf("[+] Bit Range %i\n",bitrange);
-				printf("[+] -- from : 0x%s\n",bit_range_str_min);
-				printf("[+] -- to   : 0x%s\n",bit_range_str_max);
+				output_success("Bit Range %i\n",bitrange);
+				output_success("-- from : 0x%s\n",bit_range_str_min);
+				output_success("-- to   : 0x%s\n",bit_range_str_max);
 			}
 			else	{
-				printf("[+] Range \n");
-				printf("[+] -- from : 0x%s\n",range_start);
-				printf("[+] -- to   : 0x%s\n",range_end);
+				output_success("Range \n");
+				output_success("-- from : 0x%s\n",range_start);
+				output_success("-- to   : 0x%s\n",range_end);
 			}
 		}
 		else	{	//Random start
@@ -3099,7 +3099,7 @@ int main(int argc, char **argv)	{
 
 
 		if(n_range_diff.IsLower(&BSGS_N) )	{
-			fprintf(stderr,"[E] the given range is small\n");
+			output_error("the given range is small\n");
 			exit(EXIT_FAILURE);
 		}
 		
@@ -3165,7 +3165,7 @@ int main(int argc, char **argv)	{
 
 		
 		hextemp = BSGS_N.GetBase16();
-		printf("[+] N = 0x%s\n",hextemp);
+		output_success("N = 0x%s\n",hextemp);
 		free(hextemp);
 		if(((uint64_t)(bsgs_m/256)) > 10000)	{
 			itemsbloom = (uint64_t)(bsgs_m / 256);
@@ -3220,21 +3220,21 @@ int main(int argc, char **argv)	{
 
 			if(total_required_mb > safe_limit_mb) {
 				fprintf(stderr,"\n");
-				fprintf(stderr,"[W] ========================================================\n");
-				fprintf(stderr,"[W] INSUFFICIENT MEMORY FOR BSGS PARAMETERS\n");
-				fprintf(stderr,"[W] ========================================================\n");
-				fprintf(stderr,"[W] Required RAM:  %" PRIu64 " MB (~%.1f GB)\n", total_required_mb, (double)total_required_mb/1024);
-				fprintf(stderr,"[W] Available RAM: %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
-				fprintf(stderr,"[W] Safe limit:    %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
-				fprintf(stderr,"[W]\n");
-				fprintf(stderr,"[W] Current parameters:\n");
-				fprintf(stderr,"[W]   N = 0x%" PRIx64 "\n", BSGS_N.GetInt64());
-				fprintf(stderr,"[W]   K = %i\n", KFACTOR);
-				fprintf(stderr,"[W]   M = %" PRIu64 " (sqrt(N))\n", bsgs_m/KFACTOR);
-				fprintf(stderr,"[W]   M * K = %" PRIu64 " elements\n", bsgs_m);
-				fprintf(stderr,"[W]\n");
-				fprintf(stderr,"[W] AUTO-ADJUSTING PARAMETERS...\n");
-				fprintf(stderr,"[W] --------------------------------------------------------\n");
+				output_warning("========================================================\n");
+				output_warning("INSUFFICIENT MEMORY FOR BSGS PARAMETERS\n");
+				output_warning("========================================================\n");
+				output_warning("Required RAM:  %" PRIu64 " MB (~%.1f GB)\n", total_required_mb, (double)total_required_mb/1024);
+				output_warning("Available RAM: %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
+				output_warning("Safe limit:    %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
+				output_warning("\n");
+				output_warning("Current parameters:\n");
+				output_warning("  N = 0x%" PRIx64 "\n", BSGS_N.GetInt64());
+				output_warning("  K = %i\n", KFACTOR);
+				output_warning("  M = %" PRIu64 " (sqrt(N))\n", bsgs_m/KFACTOR);
+				output_warning("  M * K = %" PRIu64 " elements\n", bsgs_m);
+				output_warning("\n");
+				output_warning("AUTO-ADJUSTING PARAMETERS...\n");
+				output_warning("--------------------------------------------------------\n");
 
 				// Find optimal N values that would fit
 				struct {
@@ -3262,8 +3262,8 @@ int main(int argc, char **argv)	{
 					if(test_total_mb <= safe_limit_mb) {
 						new_n = suggestions[i].n;
 						new_k = suggestions[i].k;
-						fprintf(stderr,"[I] Auto-adjusted to: N = 0x%" PRIx64 ", K = %d\n", new_n, new_k);
-						fprintf(stderr,"[I] New RAM requirement: %" PRIu64 " MB (~%.1f GB)\n",
+						output_info("Auto-adjusted to: N = 0x%" PRIx64 ", K = %d\n", new_n, new_k);
+						output_info("New RAM requirement: %" PRIu64 " MB (~%.1f GB)\n",
 							test_total_mb, (double)test_total_mb/1024);
 						break;
 					}
@@ -3271,10 +3271,10 @@ int main(int argc, char **argv)	{
 
 				if(new_n == 0) {
 					// Even smallest config doesn't fit
-					fprintf(stderr,"[E] ERROR: Insufficient RAM even for minimum configuration\n");
-					fprintf(stderr,"[E] Minimum requires: ~1.8 GB, Available: %" PRIu64 " MB\n", available_ram_mb);
-					fprintf(stderr,"[E] Cannot continue.\n");
-					fprintf(stderr,"[E] ========================================================\n");
+					output_error("ERROR: Insufficient RAM even for minimum configuration\n");
+					output_error("Minimum requires: ~1.8 GB, Available: %" PRIu64 " MB\n", available_ram_mb);
+					output_error("Cannot continue.\n");
+					output_error("========================================================\n");
 					exit(EXIT_FAILURE);
 				}
 
@@ -3283,22 +3283,22 @@ int main(int argc, char **argv)	{
 				BSGS_N.SetInt64(new_n);
 
 				// Must recalculate all BSGS values - go back to start of BSGS calculations
-				fprintf(stderr,"[I] Recalculating with optimized parameters...\n");
-				fprintf(stderr,"[W] ========================================================\n\n");
+				output_info("Recalculating with optimized parameters...\n");
+				output_warning("========================================================\n\n");
 
 				// Recalculate from scratch
 				goto bsgs_recalculate_with_new_params;
 			}
 			else {
 				// Parameters OK - show memory usage
-				fprintf(stderr,"[I] Memory check: %" PRIu64 " MB required, %" PRIu64 " MB available (%.1f%% used)\n",
+				output_info("Memory check: %" PRIu64 " MB required, %" PRIu64 " MB available (%.1f%% used)\n",
 					total_required_mb, available_ram_mb,
 					(double)total_required_mb * 100.0 / (double)available_ram_mb);
 			}
 		}
 		// ==================================================================
 
-			printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m);
+			output_success("Bloom filter for %" PRIu64 " elements ",bsgs_m);
 			bloom_bP = (bloom_extended_t*)calloc(256,sizeof(bloom_extended_t));
 			checkpointer((void *)bloom_bP,__FILE__,"calloc","bloom_bP" ,__LINE__ -1 );
 			bloom_bP_checksums = (struct checksumsha256*)calloc(256,sizeof(struct checksumsha256));
@@ -3322,7 +3322,7 @@ int main(int argc, char **argv)	{
 				pthread_mutex_init(&bloom_bP_mutex[i],NULL);
 #endif
 				if(bloom_ext_init(&bloom_bP[i],itemsbloom,0.000001)	!= 0){
-					fprintf(stderr,"[E] error bloom_init _ [%" PRIu64 "]\n",i);
+					output_error("error bloom_init _ [%" PRIu64 "]\n",i);
 					exit(EXIT_FAILURE);
 				}
 				bloom_bP_totalbytes += bloom_ext_bytes(&bloom_bP[i]);
@@ -3331,7 +3331,7 @@ int main(int argc, char **argv)	{
 		printf(": %.2f MB\n",(float)((float)(uint64_t)bloom_bP_totalbytes/(float)(uint64_t)1048576));
 
 
-		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m2);
+		output_success("Bloom filter for %" PRIu64 " elements ",bsgs_m2);
 		
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		bloom_bPx2nd_mutex = (HANDLE*) calloc(256,sizeof(HANDLE));
@@ -3351,7 +3351,7 @@ int main(int argc, char **argv)	{
 			pthread_mutex_init(&bloom_bPx2nd_mutex[i],NULL);
 #endif
 				if(bloom_ext_init(&bloom_bPx2nd[i],itemsbloom2,0.000001)	!= 0){
-					fprintf(stderr,"[E] error bloom_init _ [%" PRIu64 "]\n",i);
+					output_error("error bloom_init _ [%" PRIu64 "]\n",i);
 					exit(EXIT_FAILURE);
 				}
 				bloom_bP2_totalbytes += bloom_ext_bytes(&bloom_bPx2nd[i]);
@@ -3371,7 +3371,7 @@ int main(int argc, char **argv)	{
 			bloom_bPx3rd_checksums = (struct checksumsha256*) calloc(256,sizeof(struct checksumsha256));
 			checkpointer((void *)bloom_bPx3rd_checksums,__FILE__,"calloc","bloom_bPx3rd_checksums" ,__LINE__ -1 );
 		
-		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m3);
+		output_success("Bloom filter for %" PRIu64 " elements ",bsgs_m3);
 		bloom_bP3_totalbytes = 0;
 		for(i=0; i< 256; i++)	{
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -3380,7 +3380,7 @@ int main(int argc, char **argv)	{
 			pthread_mutex_init(&bloom_bPx3rd_mutex[i],NULL);
 #endif
 				if(bloom_ext_init(&bloom_bPx3rd[i],itemsbloom3,0.000001)	!= 0){
-					fprintf(stderr,"[E] error bloom_init [%" PRIu64 "]\n",i);
+					output_error("error bloom_init [%" PRIu64 "]\n",i);
 					exit(EXIT_FAILURE);
 				}
 				bloom_bP3_totalbytes += bloom_ext_bytes(&bloom_bPx3rd[i]);
@@ -3450,7 +3450,7 @@ int main(int argc, char **argv)	{
 		}
 
 		bytes = (uint64_t)bsgs_m3 * (uint64_t) sizeof(struct bsgs_xvalue);
-		printf("[+] Allocating %.2f MB for %" PRIu64  " bP Points\n",(double)(bytes/1048576),bsgs_m3);
+		output_success("Allocating %.2f MB for %" PRIu64  " bP Points\n",(double)(bytes/1048576),bsgs_m3);
 		
 		bPtable = (struct bsgs_xvalue*) malloc(bytes);
 		checkpointer((void *)bPtable,__FILE__,"malloc","bPtable" ,__LINE__ -1 );
@@ -3462,13 +3462,13 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_11_%" PRIu64 ".blm",bsgs_m);
 				fd_aux1 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux1 != NULL)	{
-					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
+					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux1);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							output_error("Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 
@@ -3493,25 +3493,25 @@ int main(int argc, char **argv)	{
 						}
 #endif
 						if (!bloom_bP[i].orig.bf) {
-							fprintf(stderr,"[E] Error allocating memory for bloom cache %s\n",buffer_bloom_file);
+							output_error("Error allocating memory for bloom cache %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 
 						readed = fread(bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,1,fd_aux1);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							output_error("Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 						bloom_ext_sync_from_orig(&bloom_bP[i]);
 						readed = fread(&bloom_bP_checksums[i],sizeof(struct checksumsha256),1,fd_aux1);
 					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+						output_error("Error reading the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 						}
 						if(FLAGSKIPCHECKSUM == 0)	{
 							sha256((uint8_t*)bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bP_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bP_checksums[i].backup,rawvalue,32) != 0 )	{	/* Verification */
-								fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 					}
@@ -3539,13 +3539,13 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
+					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							output_error("Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 
@@ -3569,26 +3569,26 @@ int main(int argc, char **argv)	{
 						}
 #endif
 						if (!bloom_bPx2nd[i].orig.bf) {
-							fprintf(stderr,"[E] Error allocating memory for bloom cache %s\n",buffer_bloom_file);
+							output_error("Error allocating memory for bloom cache %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 
 						readed = fread(bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,1,fd_aux2);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							output_error("Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 						bloom_ext_sync_from_orig(&bloom_bPx2nd[i]);
 						readed = fread(&bloom_bPx2nd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+						output_error("Error reading the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
 						memset(rawvalue,0,32);
 						if(FLAGSKIPCHECKSUM == 0)	{								
 							sha256((uint8_t*)bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bPx2nd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx2nd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
-								fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 						}
 					}
@@ -3623,22 +3623,22 @@ int main(int argc, char **argv)	{
 			snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_2_%" PRIu64 ".tbl",bsgs_m3);
 			fd_aux3 = fopen(buffer_bloom_file,"rb");
 			if(fd_aux3 != NULL)	{
-				printf("[+] Reading bP Table from file %s .",buffer_bloom_file);
+				output_success("Reading bP Table from file %s .",buffer_bloom_file);
 				fflush(stdout);
 				rsize = fread(bPtable,bytes,1,fd_aux3);
 				if(rsize != 1)	{
-					fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+					output_error("Error reading the file %s\n",buffer_bloom_file);
 					exit(EXIT_FAILURE);
 				}
 				rsize = fread(checksum,32,1,fd_aux3);
 				if(rsize != 1)	{
-					fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+					output_error("Error reading the file %s\n",buffer_bloom_file);
 					exit(EXIT_FAILURE);
 				}
 				if(FLAGSKIPCHECKSUM == 0)	{
 					sha256((uint8_t*)bPtable,bytes,(uint8_t*)checksum_backup);
 					if(memcmp(checksum,checksum_backup,32) != 0)	{
-						fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+						output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
 				}
@@ -3654,13 +3654,13 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					printf("[+] Reading bloom filter from file %s ",buffer_bloom_file);
+					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							output_error("Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 
@@ -3684,26 +3684,26 @@ int main(int argc, char **argv)	{
 						}
 #endif
 						if (!bloom_bPx3rd[i].orig.bf) {
-							fprintf(stderr,"[E] Error allocating memory for bloom cache %s\n",buffer_bloom_file);
+							output_error("Error allocating memory for bloom cache %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 
 						readed = fread(bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,1,fd_aux2);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+							output_error("Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 						bloom_ext_sync_from_orig(&bloom_bPx3rd[i]);
 						readed = fread(&bloom_bPx3rd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 					if(readed != 1)	{
-						fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
+						output_error("Error reading the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
 						memset(rawvalue,0,32);
 						if(FLAGSKIPCHECKSUM == 0)	{							
 							sha256((uint8_t*)bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bPx3rd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx3rd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
-								fprintf(stderr,"[E] Error checksum file mismatch! %s\n",buffer_bloom_file);
+								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 					}
@@ -3730,7 +3730,7 @@ int main(int argc, char **argv)	{
 					- third  bloom fitler 0.25 %
 					- bp Table 0.25 %
 				*/
-				printf("[I] We need to recalculate some files, don't worry this is only 3%% of the previous work\n");
+				output_info("We need to recalculate some files, don't worry this is only 3%% of the previous work\n");
 				FINISHED_THREADS_COUNTER = 0;
 				FINISHED_THREADS_BP = 0;
 				FINISHED_ITEMS = 0;
@@ -3905,7 +3905,7 @@ int main(int argc, char **argv)	{
 								salir = 1;
 								//if(FLAGDEBUG) printf("[D] Salir OK\n");
 							}
-							//if(FLAGDEBUG) printf("[I] %lu to %lu\n",bPload_temp_ptr[i].from,bPload_temp_ptr[i].to);
+							//if(FLAGDEBUG) output_info("%lu to %lu\n",bPload_temp_ptr[i].from,bPload_temp_ptr[i].to);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 							tid[j] = CreateThread(NULL, 0, thread_bPload, (void*) &bPload_temp_ptr[j], 0, &s);
 #else
@@ -3952,7 +3952,7 @@ int main(int argc, char **argv)	{
 		}
 		
 		if(!FLAGREADEDFILE1 || !FLAGREADEDFILE2 || !FLAGREADEDFILE4)	{
-			printf("[+] Making checkums .. ");
+			output_success("Making checkums .. ");
 			fflush(stdout);
 		}	
 			if(!FLAGREADEDFILE1)	{
@@ -3981,7 +3981,7 @@ int main(int argc, char **argv)	{
 			fflush(stdout);
 		}	
 		if(!FLAGREADEDFILE3)	{
-			printf("[+] Sorting %lu elements... ",bsgs_m3);
+			output_success("Sorting %lu elements... ",bsgs_m3);
 			fflush(stdout);
 			bsgs_sort(bPtable,bsgs_m3);
 			sha256((uint8_t*)bPtable, bytes,(uint8_t*) checksum);
@@ -4001,22 +4001,22 @@ int main(int argc, char **argv)	{
 				
 					fd_aux1 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux1 != NULL)	{
-						printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
+						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
 						fflush(stdout);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bP[i].orig,sizeof(struct bloom),1,fd_aux1);
 							if(readed != 1)	{
-								fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+								output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 							readed = fwrite(bloom_bP[i].orig.bf,bloom_bP[i].orig.bytes,1,fd_aux1);
 							if(readed != 1)	{
-								fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+								output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 						readed = fwrite(&bloom_bP_checksums[i],sizeof(struct checksumsha256),1,fd_aux1);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 						if(i % 64 == 0)	{
@@ -4028,7 +4028,7 @@ int main(int argc, char **argv)	{
 					fclose(fd_aux1);
 				}
 				else	{
-					fprintf(stderr,"[E] Error can't create the file %s\n",buffer_bloom_file);
+					output_error("Error can't create the file %s\n",buffer_bloom_file);
 					exit(EXIT_FAILURE);
 				}
 			}
@@ -4039,22 +4039,22 @@ int main(int argc, char **argv)	{
 					/* Writing file for 2nd bloom filter */
 					fd_aux2 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux2 != NULL)	{
-						printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
+						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
 						fflush(stdout);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bPx2nd[i].orig,sizeof(struct bloom),1,fd_aux2);
 							if(readed != 1)	{
-								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								output_error("Error writing the file %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 							readed = fwrite(bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,1,fd_aux2);
 							if(readed != 1)	{
-								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								output_error("Error writing the file %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 						readed = fwrite(&bloom_bPx2nd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 						if(i % 64 == 0)	{
@@ -4066,7 +4066,7 @@ int main(int argc, char **argv)	{
 					fclose(fd_aux2);	
 				}
 				else	{
-					fprintf(stderr,"[E] Error can't create the file %s\n",buffer_bloom_file);
+					output_error("Error can't create the file %s\n",buffer_bloom_file);
 					exit(EXIT_FAILURE);
 				}
 			}
@@ -4076,23 +4076,23 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_2_%" PRIu64 ".tbl",bsgs_m3);
 				fd_aux3 = fopen(buffer_bloom_file,"wb");
 				if(fd_aux3 != NULL)	{
-					printf("[+] Writing bP Table to file %s .. ",buffer_bloom_file);
+					output_success("Writing bP Table to file %s .. ",buffer_bloom_file);
 					fflush(stdout);
 					readed = fwrite(bPtable,bytes,1,fd_aux3);
 					if(readed != 1)	{
-						fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+						output_error("Error writing the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
 					readed = fwrite(checksum,32,1,fd_aux3);
 					if(readed != 1)	{
-						fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+						output_error("Error writing the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
 					printf("Done!\n");
 					fclose(fd_aux3);	
 				}
 				else	{
-					fprintf(stderr,"[E] Error can't create the file %s\n",buffer_bloom_file);
+					output_error("Error can't create the file %s\n",buffer_bloom_file);
 					exit(EXIT_FAILURE);
 				}
 			}
@@ -4102,22 +4102,22 @@ int main(int argc, char **argv)	{
 					/* Writing file for 3rd bloom filter */
 					fd_aux2 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux2 != NULL)	{
-						printf("[+] Writing bloom filter to file %s ",buffer_bloom_file);
+						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
 						fflush(stdout);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bPx3rd[i].orig,sizeof(struct bloom),1,fd_aux2);
 							if(readed != 1)	{
-								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								output_error("Error writing the file %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 							readed = fwrite(bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,1,fd_aux2);
 							if(readed != 1)	{
-								fprintf(stderr,"[E] Error writing the file %s\n",buffer_bloom_file);
+								output_error("Error writing the file %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 						readed = fwrite(&bloom_bPx3rd_checksums[i],sizeof(struct checksumsha256),1,fd_aux2);
 						if(readed != 1)	{
-							fprintf(stderr,"[E] Error writing the file %s please delete it\n",buffer_bloom_file);
+							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
 						if(i % 64 == 0)	{
@@ -4129,7 +4129,7 @@ int main(int argc, char **argv)	{
 					fclose(fd_aux2);
 				}
 				else	{
-					fprintf(stderr,"[E] Error can't create the file %s\n",buffer_bloom_file);
+					output_error("Error can't create the file %s\n",buffer_bloom_file);
 					exit(EXIT_FAILURE);
 				}
 			}
@@ -4141,7 +4141,7 @@ int main(int argc, char **argv)	{
 		// Apply auto-tuned thread count ONLY if user didn't specify -t
 		if (!FLAGTHREADS && NTHREADS == 1 && OPTIMAL_THREADS > 0) {
 			NTHREADS = OPTIMAL_THREADS;
-			printf("[I] Using auto-tuned thread count: %d (optimal for %d physical cores)\n",
+			output_info("Using auto-tuned thread count: %d (optimal for %d physical cores)\n",
 			       NTHREADS, g_sysinfo.cpu_physical_cores);
 		}
 
@@ -4212,7 +4212,7 @@ int main(int argc, char **argv)	{
 #else
 			if(s != 0)	{
 #endif
-				fprintf(stderr,"[E] thread thread_process\n");
+				output_error("thread thread_process\n");
 				exit(EXIT_FAILURE);
 			}
 		}
@@ -4223,7 +4223,7 @@ int main(int argc, char **argv)	{
 			// Apply auto-tuned thread count ONLY if user didn't specify -t
 			if (!FLAGTHREADS && NTHREADS == 1 && OPTIMAL_THREADS > 0) {
 				NTHREADS = OPTIMAL_THREADS;
-				printf("[I] Using auto-tuned thread count: %d\n", NTHREADS);
+				output_info("Using auto-tuned thread count: %d\n", NTHREADS);
 			}
 		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
 		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
@@ -4246,7 +4246,7 @@ int main(int argc, char **argv)	{
 			// GPU Full Search Mode (ECC + hash160 + matching entirely on GPU)
 			// ============================================================================
 			if (FLAGGPU_FULL && !FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
-				printf("[+] Running GPU full search mode...\n");
+				output_success("Running GPU full search mode...\n");
 	
 					// Reset stats
 					__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
@@ -4282,19 +4282,19 @@ int main(int argc, char **argv)	{
 	
 				if (gpu_result >= 0) {
 					// GPU search completed successfully
-					printf("[+] GPU search finished. Keys found: %d\n", gpu_result);
-					printf("[+] Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
+					output_success("GPU search finished. Keys found: %d\n", gpu_result);
+					output_success("Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
 
 				// Cleanup and exit
 #ifndef _WIN64
 				shutdown_work_queue();
 #endif
 				gpu_backend_shutdown();
-				printf("[+] Done!\n");
+				output_success("Done!\n");
 				return 0;
 			} else {
 				// GPU search failed, fall back to CPU
-				fprintf(stderr, "[W] GPU search failed, falling back to CPU threads\n");
+				output_warning("GPU search failed, falling back to CPU threads\n");
 				FLAGGPU_FULL = 0;
 			}
 		}
@@ -4305,21 +4305,21 @@ int main(int argc, char **argv)	{
 		// ============================================================================
 			if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
 				if (!gpu_backend_available()) {
-					fprintf(stderr, "[W] GPU not available for hybrid mode, falling back to CPU-only\n");
+					output_warning("GPU not available for hybrid mode, falling back to CPU-only\n");
 					FLAGGPU_HYBRID = 0;
 					} else {
 						// Initialize adaptive scheduler for throughput tracking
 						// Use sysinfo hybrid ratio for initial CPU/GPU split
 						float initial_cpu_ratio = 1.0f - (g_gpu_range_percent / 100.0f);
 						adaptive_init(initial_cpu_ratio, 0, 0);  // Range tracking done separately
-						printf("[I] Adaptive scheduler initialized (CPU=%.0f%%, GPU=%.0f%%)\n",
+						output_info("Adaptive scheduler initialized (CPU=%.0f%%, GPU=%.0f%%)\n",
 						       initial_cpu_ratio * 100.0f, (1.0f - initial_cpu_ratio) * 100.0f);
 
 						const char *ws = getenv("KEYHUNT_HYBRID_WORK_STEAL");
 						const bool want_work_steal = (ws && *ws && atoi(ws) != 0);
 						const bool can_work_steal = want_work_steal && !FLAGRANDOM && stride.IsOne();
 						if (want_work_steal && !can_work_steal) {
-							fprintf(stderr, "[W] HYBRID: work-stealing requires non-random mode and stride=1; using static split\n");
+							output_warning("HYBRID: work-stealing requires non-random mode and stride=1; using static split\n");
 						}
 						if (can_work_steal) {
 							uint64_t block_size = 0x100000000ULL;  // 4G keys
@@ -4334,8 +4334,8 @@ int main(int argc, char **argv)	{
 							if (block_size < 1024ULL) block_size = 1024ULL;
 							block_size = (block_size / 1024ULL) * 1024ULL;
 
-							printf("[+] Running GPU+CPU hybrid mode (work-stealing)...\n");
-							printf("[I] HYBRID: work-stealing enabled (block size: 0x%llx, override: KEYHUNT_HYBRID_BLOCK_SIZE)\n",
+							output_success("Running GPU+CPU hybrid mode (work-stealing)...\n");
+							output_info("HYBRID: work-stealing enabled (block size: 0x%llx, override: KEYHUNT_HYBRID_BLOCK_SIZE)\n",
 							       (unsigned long long)block_size);
 
 							g_work_pool.init(&n_range_start, &n_range_end, block_size);
@@ -4355,15 +4355,15 @@ int main(int argc, char **argv)	{
 
 							int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
 							if (err != 0) {
-								fprintf(stderr, "[W] Failed to start GPU thread, falling back to CPU-only\n");
+								output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 								g_work_pool.disable();
 								FLAGGPU_HYBRID = 0;
 							} else {
 								gpu_hybrid_started = 1;
-								printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
+								output_success("GPU thread started, CPU uses normal fast algorithm\n");
 							}
 						} else {
-							printf("[+] Running GPU+CPU hybrid mode (static split)...\n");
+							output_success("Running GPU+CPU hybrid mode (static split)...\n");
 
 					// Auto-tune the split unless user overrides with KEYHUNT_HYBRID_GPU_PERCENT.
 					{
@@ -4372,7 +4372,7 @@ int main(int argc, char **argv)	{
 							int tuned = hybrid_get_gpu_range_percent_default(NTHREADS);
 							if (tuned != g_gpu_range_percent) {
 								g_gpu_range_percent = tuned;
-								printf("[I] HYBRID: auto split GPU %d%% / CPU %d%% (override: KEYHUNT_HYBRID_GPU_PERCENT)\n",
+								output_info("HYBRID: auto split GPU %d%% / CPU %d%% (override: KEYHUNT_HYBRID_GPU_PERCENT)\n",
 								       g_gpu_range_percent, 100 - g_gpu_range_percent);
 							}
 						}
@@ -4398,12 +4398,12 @@ int main(int argc, char **argv)	{
 				// CPU range: starts at GPU end (no +1, end is exclusive)
 				cpu_range_start.Set(&gpu_range_end);
 
-				printf("[+] GPU handles %d%% of range, CPU handles %d%%\n",
+				output_success("GPU handles %d%% of range, CPU handles %d%%\n",
 					   g_gpu_range_percent, 100 - g_gpu_range_percent);
 
 				// Print ranges in inclusive form for readability.
 				char *hextemp = n_range_start.GetBase16();
-				printf("[+] GPU range: 0x%s", hextemp);
+				output_success("GPU range: 0x%s", hextemp);
 				free(hextemp);
 				{
 					Int gpu_end_inclusive;
@@ -4416,7 +4416,7 @@ int main(int argc, char **argv)	{
 					free(hextemp);
 				}
 				hextemp = cpu_range_start.GetBase16();
-				printf("[+] CPU range: 0x%s", hextemp);
+				output_success("CPU range: 0x%s", hextemp);
 				free(hextemp);
 				{
 					Int cpu_end_inclusive;
@@ -4445,7 +4445,7 @@ int main(int argc, char **argv)	{
 			// Start GPU thread (with its fixed range)
 			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
 			if (err != 0) {
-				fprintf(stderr, "[W] Failed to start GPU thread, falling back to CPU-only\n");
+				output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 				FLAGGPU_HYBRID = 0;
 					} else {
 						gpu_hybrid_started = 1;
@@ -4453,7 +4453,7 @@ int main(int argc, char **argv)	{
 						n_range_start.Set(&cpu_range_start);
 							maybe_adjust_cpu_sequential_max((size_t)NTHREADS, cpu_range_start, n_range_end,
 							                                "KEYHUNT_HYBRID_CPU_N", "HYBRID");
-							printf("[+] GPU thread started, CPU uses normal fast algorithm\n");
+							output_success("GPU thread started, CPU uses normal fast algorithm\n");
 						}
 							}
 						}  // End of else (GPU available)
@@ -4506,7 +4506,7 @@ int main(int argc, char **argv)	{
 #endif
 			}
 			if(s != 0)	{
-				fprintf(stderr,"[E] pthread_create thread_process\n");
+				output_error("pthread_create thread_process\n");
 				exit(EXIT_FAILURE);
 			}
 		}
@@ -4794,17 +4794,17 @@ int main(int argc, char **argv)	{
 			printf("\n[+] Waiting for GPU thread to complete...\n");
 			pthread_join(gpu_thread_id, NULL);
 
-			printf("[+] GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
-			printf("[+] GPU keys checked: %" PRIu64 "\n", gpu_keys_checked_total_u64());
+			output_success("GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
+			output_success("GPU keys checked: %" PRIu64 "\n", gpu_keys_checked_total_u64());
 
 			// Print final adaptive scheduler stats
 			if (g_adaptive_scheduler.initialized) {
 				double cpu_mkeys = 0.0, gpu_mkeys = 0.0;
 				int cpu_pct = 0, gpu_pct = 0;
 				adaptive_get_stats(&cpu_mkeys, &gpu_mkeys, &cpu_pct, &gpu_pct);
-				printf("[+] Final adaptive stats: CPU=%.1f Mkeys/s (%d%%), GPU=%.1f Mkeys/s (%d%%)\n",
+				output_success("Final adaptive stats: CPU=%.1f Mkeys/s (%d%%), GPU=%.1f Mkeys/s (%d%%)\n",
 				       cpu_mkeys, cpu_pct, gpu_mkeys, gpu_pct);
-				printf("[+] Optimal ratio for next run: CPU=%d%%, GPU=%d%%\n", cpu_pct, gpu_pct);
+				output_success("Optimal ratio for next run: CPU=%d%%, GPU=%d%%\n", cpu_pct, gpu_pct);
 			}
 
 			// Cleanup adaptive scheduler
@@ -5036,7 +5036,7 @@ void *thread_process_minikeys(void *vargp)	{
 		if(continue_flag)	{
 			count = 0;
 			if(FLAGMATRIX)	{
-					printf("[+] Base minikey: %s     \n",minikey2check);
+					output_success("Base minikey: %s     \n",minikey2check);
 					fflush(stdout);
 			}
 			else	{
@@ -6636,7 +6636,7 @@ void *thread_process_bsgs(void *vargp)	{
 		
 		if(FLAGMATRIX)	{
 			aux_c = base_key.GetBase16();
-			printf("[+] Thread 0x%s \n",aux_c);
+			output_success("Thread 0x%s \n",aux_c);
 			fflush(stdout);
 			free(aux_c);
 		}
@@ -6720,10 +6720,10 @@ void *thread_process_bsgs(void *vargp)	{
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
-								printf("[+] Thread Key found privkey %s   \n",hextemp);
+								output_success("Thread Key found privkey %s   \n",hextemp);
 								point_found = secp->ComputePublicKey(&keyfound);
 								aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed[k],point_found);
-								printf("[+] Publickey %s\n",aux_c);
+								output_success("Publickey %s\n",aux_c);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 								WaitForSingleObject(write_keys, INFINITE);
 #else
@@ -6850,7 +6850,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 
 		if(FLAGMATRIX)	{
 				aux_c = base_key.GetBase16();
-				printf("[+] Thread 0x%s  \n",aux_c);
+				output_success("Thread 0x%s  \n",aux_c);
 				fflush(stdout);
 				free(aux_c);
 		}
@@ -6947,10 +6947,10 @@ void *thread_process_bsgs_random(void *vargp)	{
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
-								printf("[+] Thread Key found privkey %s    \n",hextemp);
+								output_success("Thread Key found privkey %s    \n",hextemp);
 								point_found = secp->ComputePublicKey(&keyfound);
 								aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed[k],point_found);
-								printf("[+] Publickey %s\n",aux_c);
+								output_success("Publickey %s\n",aux_c);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 								WaitForSingleObject(write_keys, INFINITE);
 #else
@@ -7599,7 +7599,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 			
 		if(FLAGMATRIX)	{
 			aux_c = base_key.GetBase16();
-			printf("[+] Thread 0x%s \n",aux_c);
+			output_success("Thread 0x%s \n",aux_c);
 			fflush(stdout);
 			free(aux_c);
 		}
@@ -7696,10 +7696,10 @@ void *thread_process_bsgs_dance(void *vargp)	{
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
-								printf("[+] Thread Key found privkey %s   \n",hextemp);
+								output_success("Thread Key found privkey %s   \n",hextemp);
 								point_found = secp->ComputePublicKey(&keyfound);
 								aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed[k],point_found);
-								printf("[+] Publickey %s\n",aux_c);
+								output_success("Publickey %s\n",aux_c);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 								WaitForSingleObject(write_keys, INFINITE);
 #else
@@ -7838,7 +7838,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 		
 		if(FLAGMATRIX)	{
 			aux_c = base_key.GetBase16();
-			printf("[+] Thread 0x%s \n",aux_c);
+			output_success("Thread 0x%s \n",aux_c);
 			fflush(stdout);
 			free(aux_c);
 		}
@@ -7933,10 +7933,10 @@ void *thread_process_bsgs_backward(void *vargp)	{
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
-								printf("[+] Thread Key found privkey %s   \n",hextemp);
+								output_success("Thread Key found privkey %s   \n",hextemp);
 								point_found = secp->ComputePublicKey(&keyfound);
 								aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed[k],point_found);
-								printf("[+] Publickey %s\n",aux_c);
+								output_success("Publickey %s\n",aux_c);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 								WaitForSingleObject(write_keys, INFINITE);
 #else
@@ -8101,7 +8101,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 		
 		if(FLAGMATRIX)	{
 			aux_c = base_key.GetBase16();
-			printf("[+] Thread 0x%s \n",aux_c);
+			output_success("Thread 0x%s \n",aux_c);
 			fflush(stdout);
 			free(aux_c);
 		}
@@ -8196,10 +8196,10 @@ void *thread_process_bsgs_both(void *vargp)	{
 								r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
 								if(r)	{
 									hextemp = keyfound.GetBase16();
-									printf("[+] Thread Key found privkey %s   \n",hextemp);
+									output_success("Thread Key found privkey %s   \n",hextemp);
 									point_found = secp->ComputePublicKey(&keyfound);
 									aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed[k],point_found);
-									printf("[+] Publickey %s\n",aux_c);
+									output_success("Publickey %s\n",aux_c);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 									WaitForSingleObject(write_keys, INFINITE);
 #else
@@ -8477,7 +8477,7 @@ bool vanityrmdmatch(unsigned char *rmdhash)	{
 	result = bloom_check(vanity_bloom,rmdhash,vanity_rmd_minimun_bytes_check_length);
 	switch(result)	{
 		case -1:
-			fprintf(stderr,"[E] Bloom is not initialized\n");
+			output_error("Bloom is not initialized\n");
 			exit(EXIT_FAILURE);
 		break;
 		case 1:
@@ -8877,7 +8877,7 @@ static void *gpu_hybrid_thread(void *arg) {
 	// Run full GPU search with CPU fallback
 	static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count) {
 	if (!gpu_backend_available()) {
-		fprintf(stderr, "[W] GPU not available, cannot run full GPU search\n");
+		output_warning("GPU not available, cannot run full GPU search\n");
 		return -1;
 	}
 
@@ -8908,12 +8908,12 @@ static void *gpu_hybrid_thread(void *arg) {
 		config.should_stop = &g_gpu_should_stop;
 		config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
 
-		printf("[+] Starting GPU full search (ECC + hash160 + matching on GPU)\n");
-		printf("[+] Target count: %" PRId64 ", using %s\n",
+		output_success("Starting GPU full search (ECC + hash160 + matching on GPU)\n");
+		output_success("Target count: %" PRId64 ", using %s\n",
 			target_count,
 			target_count == 1 ? "direct comparison" :
 				(config.use_bloom ? "GPU bloom + binary search" : "binary search"));
-		printf("[+] Search mode: %s\n",
+		output_success("Search mode: %s\n",
 			(config.search_compressed && config.search_uncompressed) ? "compressed + uncompressed" :
 			(config.search_compressed ? "compressed only" :
 				(config.search_uncompressed ? "uncompressed only" : "none")));
@@ -8929,7 +8929,7 @@ static void *gpu_hybrid_thread(void *arg) {
 
 void checkpointer(void *ptr,const char *file,const char *function,const  char *name,int line)	{
 	if(ptr == NULL)	{
-		fprintf(stderr,"[E] error in file %s, %s pointer %s on line %i\n",file,function,name,line); 
+		output_error("error in file %s, %s pointer %s on line %i\n",file,function,name,line); 
 		exit(EXIT_FAILURE);
 	}
 }
@@ -9050,7 +9050,7 @@ bool isValidBase58String(char *str)	{
 bool processOneVanity()	{
 	int i,k;
 	if(vanity_rmd_targets == 0)	{
-		fprintf(stderr,"[E] There aren't any vanity targets\n");
+		output_error("There aren't any vanity targets\n");
 		return false;
 	}
 
@@ -9074,7 +9074,7 @@ bool readFileVanity(char *fileName)	{
 	fileDescriptor = fopen(fileName,"r");
 	if(fileDescriptor == NULL)	{
 		if(vanity_rmd_targets == 0)	{
-			fprintf(stderr,"[E] There aren't any vanity targets\n");
+			output_error("There aren't any vanity targets\n");
 			return false;
 		}
 	}
@@ -9087,7 +9087,7 @@ bool readFileVanity(char *fileName)	{
 					addvanity(aux);
 				}
 				else	{
-					fprintf(stderr,"[E] the string \"%s\" is not valid Base58, omiting it\n",aux);
+					output_error("the string \"%s\" is not valid Base58, omiting it\n",aux);
 				}
 			}
 		}
@@ -9118,14 +9118,14 @@ bool readFileAddress(char *fileName)	{
 	*/
 	if(FLAGSAVEREADFILE)	{	/* if the flag is set to REAd and SAVE the file firs we need to check it the file exist*/
 		if(!sha256_file((const char*)fileName,checksum)){
-			fprintf(stderr,"[E] sha256_file error line %i\n",__LINE__ - 1);
+			output_error("sha256_file error line %i\n",__LINE__ - 1);
 			return false;
 		}
 		tohex_dst((char*)checksum,4,(char*)hexPrefix); // we save the prefix (last fourt bytes) hexadecimal value
 		snprintf(fileBloomName,30,"data_%s.dat",hexPrefix);
 		fileDescriptor = fopen(fileBloomName,"rb");
 		if(fileDescriptor != NULL)	{
-			printf("[+] Reading file %s\n",fileBloomName);
+			output_success("Reading file %s\n",fileBloomName);
 		
 			//read bloom checksum (expected value to be checked)
 			//read bloom filter structure
@@ -9142,7 +9142,7 @@ bool readFileAddress(char *fileName)	{
 			//read bloom checksum (expected value to be checked)
 			bytesRead = fread(bloomChecksum,1,32,fileDescriptor);
 			if(bytesRead != 32)	{
-				fprintf(stderr,"[E] Errore reading file, code line %i\n",__LINE__ - 2);
+				output_error("Errore reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
@@ -9150,12 +9150,12 @@ bool readFileAddress(char *fileName)	{
 			//read bloom filter structure
 			bytesRead = fread(&bloom.orig,1,sizeof(struct bloom),fileDescriptor);
 			if(bytesRead != sizeof(struct bloom))	{
-				fprintf(stderr,"[E] Error reading file, code line %i\n",__LINE__ - 2);
+				output_error("Error reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 			
-			printf("[+] Bloom filter for %" PRIu64 " elements.\n",bloom.orig.entries);
+			output_success("Bloom filter for %" PRIu64 " elements.\n",bloom.orig.entries);
 
 			const bool cache_fast = (bloom.orig.major == BLOOM_EXT_FAST_MAJOR && bloom.orig.minor == BLOOM_EXT_FAST_MINOR);
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -9174,7 +9174,7 @@ bool readFileAddress(char *fileName)	{
 			}
 #endif
 			if(bloom.orig.bf == NULL)	{
-				fprintf(stderr,"[E] Error allocating memory, code line %i\n",__LINE__ - 2);
+				output_error("Error allocating memory, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
@@ -9182,7 +9182,7 @@ bool readFileAddress(char *fileName)	{
 			//read bloom filter data
 			bytesRead = fread(bloom.orig.bf,1,bloom.orig.bytes,fileDescriptor);
 			if(bytesRead != bloom.orig.bytes)	{
-				fprintf(stderr,"[E] Error reading file, code line %i\n",__LINE__ - 2);
+				output_error("Error reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
@@ -9200,7 +9200,7 @@ bool readFileAddress(char *fileName)	{
 				}
 				*/
 				if(memcmp(checksum,bloomChecksum,32) != 0)	{
-					fprintf(stderr,"[E] Error checksum mismatch, code line %i\n",__LINE__ - 2);
+					output_error("Error checksum mismatch, code line %i\n",__LINE__ - 2);
 					fclose(fileDescriptor);
 					return false;
 				}
@@ -9220,7 +9220,7 @@ bool readFileAddress(char *fileName)	{
 			bloom_ext_sync_from_orig(&bloom);
 #if USE_FAST_BLOOM
 			if (bloom_ext_is_fast(&bloom)) {
-				printf("[+] Using FAST bloom filter (cached)\n");
+				output_success("Using FAST bloom filter (cached)\n");
 			}
 #endif
 #ifdef __linux__
@@ -9231,31 +9231,31 @@ bool readFileAddress(char *fileName)	{
 			
 			bytesRead = fread(dataChecksum,1,32,fileDescriptor);
 			if(bytesRead != 32)	{
-				fprintf(stderr,"[E] Errore reading file, code line %i\n",__LINE__ - 2);
+				output_error("Errore reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 			
 			bytesRead = fread(&dataSize,1,sizeof(uint64_t),fileDescriptor);
 			if(bytesRead != sizeof(uint64_t))	{
-				fprintf(stderr,"[E] Errore reading file, code line %i\n",__LINE__ - 2);
+				output_error("Errore reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false; 
 			}
 			N = dataSize / sizeof(struct address_value);
 	
-			printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",N,(double)(((double) sizeof(struct address_value)*N)/(double)1048576));
+			output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n",N,(double)(((double) sizeof(struct address_value)*N)/(double)1048576));
 			
 			addressTable = (struct address_value*) malloc(dataSize);
 			if(addressTable == NULL)	{
-				fprintf(stderr,"[E] Error allocating memory, code line %i\n",__LINE__ - 2);
+				output_error("Error allocating memory, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 			
 			bytesRead = fread(addressTable,1,dataSize,fileDescriptor);
 			if(bytesRead != dataSize)	{
-				fprintf(stderr,"[E] Error reading file, code line %i\n",__LINE__ - 2);
+				output_error("Error reading file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
@@ -9263,7 +9263,7 @@ bool readFileAddress(char *fileName)	{
 					
 				sha256((uint8_t*)addressTable,dataSize,(uint8_t*)checksum);
 				if(memcmp(checksum,dataChecksum,32) != 0)	{
-					fprintf(stderr,"[E] Error checksum mismatch, code line %i\n",__LINE__ - 2);
+					output_error("Error checksum mismatch, code line %i\n",__LINE__ - 2);
 					fclose(fileDescriptor);
 					return false;
 				}
@@ -9315,7 +9315,7 @@ bool forceReadFileAddress(char *fileName)	{
 	char aux[100];
 	fileDescriptor = fopen(fileName,"r");
 	if(fileDescriptor == NULL)	{
-		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
+		output_error("Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
 		return false;
 	}
 
@@ -9331,7 +9331,7 @@ bool forceReadFileAddress(char *fileName)	{
 	fseek(fileDescriptor,0,SEEK_SET);
 	MAXLENGTHADDRESS = 20;		/*20 bytes beacuase we only need the data in binary*/
 
-	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
+	output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ -1 );
 
@@ -9367,7 +9367,7 @@ bool forceReadFileAddress(char *fileName)	{
 			}
 		}
 		if(!validAddress)	{
-			fprintf(stderr,"[I] Ommiting invalid line %s\n",aux);
+			output_info("Ommiting invalid line %s\n",aux);
 			numberItems--;
 		}
 	}
@@ -9385,7 +9385,7 @@ bool forceReadFileAddressEth(char *fileName)	{
 	char aux[100];
 	fileDescriptor = fopen(fileName,"r");
 	if(fileDescriptor == NULL)	{
-		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
+		output_error("Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
 		return false;
 	}
 	/*Count lines in the file*/
@@ -9402,7 +9402,7 @@ bool forceReadFileAddressEth(char *fileName)	{
 	MAXLENGTHADDRESS = 20;		/*20 bytes beacuase we only need the data in binary*/
 	N = numberItems;
 
-	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
+	output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ -1 );
 
@@ -9440,7 +9440,7 @@ bool forceReadFileAddressEth(char *fileName)	{
 			}
 		}
 		if(!validAddress)	{
-			fprintf(stderr,"[I] Ommiting invalid line %s\n",aux);
+			output_info("Ommiting invalid line %s\n",aux);
 			numberItems--;
 		}
 	}
@@ -9461,7 +9461,7 @@ bool forceReadFileXPoint(char *fileName)	{
 	Tokenizer tokenizer_xpoint{};	//tokenizer
 	fileDescriptor = fopen(fileName,"r");	
 	if(fileDescriptor == NULL)	{
-		fprintf(stderr,"[E] Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
+		output_error("Error opening the file %s, line %i\n",fileName,__LINE__ - 2);
 		return false;
 	}
 	/*Count lines in the file*/
@@ -9477,7 +9477,7 @@ bool forceReadFileXPoint(char *fileName)	{
 
 	MAXLENGTHADDRESS = 20;		/*20 bytes beacuase we only need the data in binary*/
 
-	printf("[+] Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
+	output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n",numberItems,(double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable,__FILE__,"malloc","addressTable" ,__LINE__ - 1);
 	
@@ -9505,7 +9505,7 @@ bool forceReadFileXPoint(char *fileName)	{
 							bloom_ext_add(&bloom,rawvalue,MAXLENGTHADDRESS);
 						}
 						else	{
-							fprintf(stderr,"[E] error hexs2bin\n");
+							output_error("error hexs2bin\n");
 						}
 					break;
 					case 66:	/*Compress publickey*/
@@ -9515,7 +9515,7 @@ bool forceReadFileXPoint(char *fileName)	{
 							bloom_ext_add(&bloom,rawvalue,MAXLENGTHADDRESS);
 						}
 						else	{
-							fprintf(stderr,"[E] error hexs2bin\n");
+							output_error("error hexs2bin\n");
 						}
 					break;
 					case 130:	/* Uncompress publickey length*/
@@ -9525,21 +9525,21 @@ bool forceReadFileXPoint(char *fileName)	{
 								bloom_ext_add(&bloom,rawvalue,MAXLENGTHADDRESS);
 						}
 						else	{
-							fprintf(stderr,"[E] error hexs2bin\n");
+							output_error("error hexs2bin\n");
 						}
 					break;
 					default:
-						fprintf(stderr,"[E] Omiting line unknow length size %li: %s\n",lenaux,aux);
+						output_error("Omiting line unknow length size %li: %s\n",lenaux,aux);
 					break;
 				}
 			}
 			else	{
-				fprintf(stderr,"[E] Ignoring invalid hexvalue %s\n",aux);
+				output_error("Ignoring invalid hexvalue %s\n",aux);
 			}
 			freetokenizer(&tokenizer_xpoint);
 		}
 		else	{
-			fprintf(stderr,"[E] Omiting line : %s\n",aux);
+			output_error("Omiting line : %s\n",aux);
 			N--;
 		}
 		i++;
@@ -9555,20 +9555,20 @@ bool forceReadFileXPoint(char *fileName)	{
 
 bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
 	bool r = true;
-	printf("[+] Bloom filter for %" PRIu64 " elements.\n",items_bloom);
+	output_success("Bloom filter for %" PRIu64 " elements.\n",items_bloom);
 	if(items_bloom <= 10000)	{
 		if(bloom_init2(bloom_arg,10000,0.000001) == 1){
-			fprintf(stderr,"[E] error bloom_init for 10000 elements.\n");
+			output_error("error bloom_init for 10000 elements.\n");
 			r = false;
 		}
 	}
 	else	{
 		if(bloom_init2(bloom_arg,FLAGBLOOMMULTIPLIER*items_bloom,0.000001)	== 1){
-			fprintf(stderr,"[E] error bloom_init for %" PRIu64 " elements.\n",items_bloom);
+			output_error("error bloom_init for %" PRIu64 " elements.\n",items_bloom);
 			r = false;
 		}
 	}
-	printf("[+] Loading data to the bloomfilter total: %.2f MB\n",(double)(((double) bloom_arg->bytes)/(double)1048576));
+	output_success("Loading data to the bloomfilter total: %.2f MB\n",(double)(((double) bloom_arg->bytes)/(double)1048576));
 
 	// Memory check: verify bloom filter fits in available RAM
 	if(r) {
@@ -9578,32 +9578,32 @@ bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
 
 		if(bloom_mb > safe_limit_mb) {
 			fprintf(stderr,"\n");
-			fprintf(stderr,"[W] ========================================================\n");
-			fprintf(stderr,"[W] INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
-			fprintf(stderr,"[W] ========================================================\n");
-			fprintf(stderr,"[W] Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb/1024);
-			fprintf(stderr,"[W] Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
-			fprintf(stderr,"[W] Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
-			fprintf(stderr,"[W]\n");
-			fprintf(stderr,"[W] Current settings:\n");
-			fprintf(stderr,"[W]   Items:      %" PRIu64 "\n", items_bloom);
-			fprintf(stderr,"[W]   Multiplier: %d (-z parameter)\n", FLAGBLOOMMULTIPLIER);
-			fprintf(stderr,"[W]   Total bloom elements: %" PRIu64 "\n", FLAGBLOOMMULTIPLIER*items_bloom);
-			fprintf(stderr,"[W]\n");
-			fprintf(stderr,"[W] SUGGESTIONS:\n");
-			fprintf(stderr,"[W] --------------------------------------------------------\n");
+			output_warning("========================================================\n");
+			output_warning("INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
+			output_warning("========================================================\n");
+			output_warning("Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb/1024);
+			output_warning("Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
+			output_warning("Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
+			output_warning("\n");
+			output_warning("Current settings:\n");
+			output_warning("  Items:      %" PRIu64 "\n", items_bloom);
+			output_warning("  Multiplier: %d (-z parameter)\n", FLAGBLOOMMULTIPLIER);
+			output_warning("  Total bloom elements: %" PRIu64 "\n", FLAGBLOOMMULTIPLIER*items_bloom);
+			output_warning("\n");
+			output_warning("SUGGESTIONS:\n");
+			output_warning("--------------------------------------------------------\n");
 
 			// Calculate optimal multiplier that fits
 			int suggested_multiplier = (int)(safe_limit_mb * 1024 * 1024 / items_bloom / 3.59);
 			if(suggested_multiplier < 1) suggested_multiplier = 1;
 
-			fprintf(stderr,"[W] Try reducing -z parameter to: %d\n", suggested_multiplier);
-			fprintf(stderr,"[W]   Command: add -z %d to your command line\n", suggested_multiplier);
-			fprintf(stderr,"[W]   This will use ~%" PRIu64 " MB\n",
+			output_warning("Try reducing -z parameter to: %d\n", suggested_multiplier);
+			output_warning("  Command: add -z %d to your command line\n", suggested_multiplier);
+			output_warning("  This will use ~%" PRIu64 " MB\n",
 				(uint64_t)(items_bloom * suggested_multiplier * 3.59 / 1024 / 1024));
-			fprintf(stderr,"[W]\n");
-			fprintf(stderr,"[W] Or reduce the number of items in your input file\n");
-			fprintf(stderr,"[W] ========================================================\n\n");
+			output_warning("\n");
+			output_warning("Or reduce the number of items in your input file\n");
+			output_warning("========================================================\n\n");
 
 			// Free the bloom filter we just allocated
 			bloom_free(bloom_arg);
@@ -9614,7 +9614,7 @@ bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
 		else {
 			// Show memory usage info
 			double percent_used = (double)bloom_mb * 100.0 / (double)available_ram_mb;
-			fprintf(stderr,"[I] Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
+			output_info("Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
 				bloom_mb, available_ram_mb, percent_used);
 		}
 	}
@@ -9630,18 +9630,18 @@ bool initBloomFilterExt(bloom_extended_t *bloom_arg, uint64_t items_bloom) {
 	bool r = true;
 	uint64_t effective_items = items_bloom <= 10000 ? 10000 : FLAGBLOOMMULTIPLIER * items_bloom;
 
-	printf("[+] Bloom filter for %" PRIu64 " elements.\n", items_bloom);
+	output_success("Bloom filter for %" PRIu64 " elements.\n", items_bloom);
 
 	if (bloom_ext_init(bloom_arg, effective_items, 0.000001) != 0) {
-		fprintf(stderr, "[E] error bloom_init for %" PRIu64 " elements.\n", effective_items);
+		output_error("error bloom_init for %" PRIu64 " elements.\n", effective_items);
 		return false;
 	}
 
 	uint64_t bloom_bytes = bloom_ext_bytes(bloom_arg);
-	printf("[+] Loading data to the bloomfilter total: %.2f MB\n", (double)bloom_bytes / 1048576.0);
+	output_success("Loading data to the bloomfilter total: %.2f MB\n", (double)bloom_bytes / 1048576.0);
 
 	if (bloom_ext_is_fast(bloom_arg)) {
-		printf("[+] Using FAST bloom filter (XXH3 + bitmask optimization)\n");
+		output_success("Using FAST bloom filter (XXH3 + bitmask optimization)\n");
 	}
 
 	// Memory check
@@ -9651,21 +9651,21 @@ bool initBloomFilterExt(bloom_extended_t *bloom_arg, uint64_t items_bloom) {
 
 	if (bloom_mb > safe_limit_mb) {
 		fprintf(stderr, "\n");
-		fprintf(stderr, "[W] ========================================================\n");
-		fprintf(stderr, "[W] INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
-		fprintf(stderr, "[W] ========================================================\n");
-		fprintf(stderr, "[W] Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb / 1024);
-		fprintf(stderr, "[W] Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb / 1024);
-		fprintf(stderr, "[W] Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
-		fprintf(stderr, "[W]\n");
-		fprintf(stderr, "[W] Try reducing -z parameter or input file size\n");
-		fprintf(stderr, "[W] ========================================================\n\n");
+		output_warning("========================================================\n");
+		output_warning("INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
+		output_warning("========================================================\n");
+		output_warning("Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb / 1024);
+		output_warning("Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb / 1024);
+		output_warning("Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
+		output_warning("\n");
+		output_warning("Try reducing -z parameter or input file size\n");
+		output_warning("========================================================\n\n");
 
 		bloom_ext_free(bloom_arg);
 		r = false;
 	} else {
 		double percent_used = (double)bloom_mb * 100.0 / (double)available_ram_mb;
-		fprintf(stderr, "[I] Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
+		output_info("Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
 			bloom_mb, available_ram_mb, percent_used);
 	}
 
@@ -9682,7 +9682,7 @@ void writeFileIfNeeded(const char *fileName)	{
 		size_t bytesWrite;
 		uint64_t dataSize;
 		if(!sha256_file((const char*)fileName,checksum)){
-			fprintf(stderr,"[E] sha256_file error line %i\n",__LINE__ - 1);
+			output_error("sha256_file error line %i\n",__LINE__ - 1);
 			exit(EXIT_FAILURE);
 		}
 		tohex_dst((char*)checksum,4,(char*)hexPrefix); // we save the prefix (last fourt bytes) hexadecimal value
@@ -9693,7 +9693,7 @@ void writeFileIfNeeded(const char *fileName)	{
 			printf("[D] size data %" PRIu64 "\n", dataSize);
 		}
 		if(fileDescriptor != NULL)	{
-			printf("[+] Writing file %s ",fileBloomName);
+			output_success("Writing file %s ",fileBloomName);
 			
 
 			//calculate bloom checksum
@@ -9714,21 +9714,21 @@ void writeFileIfNeeded(const char *fileName)	{
 			printf(".");
 			bytesWrite = fwrite(bloomChecksum,1,32,fileDescriptor);
 			if(bytesWrite != 32)	{
-				fprintf(stderr,"[E] Errore writing file, code line %i\n",__LINE__ - 2);
+				output_error("Errore writing file, code line %i\n",__LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
 
 			bytesWrite = fwrite(&bloom.orig,1,sizeof(struct bloom),fileDescriptor);
 			if(bytesWrite != sizeof(struct bloom))	{
-				fprintf(stderr,"[E] Error writing file, code line %i\n",__LINE__ - 2);
+				output_error("Error writing file, code line %i\n",__LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
 
 			bytesWrite = fwrite(bloom.orig.bf,1,bloom.orig.bytes,fileDescriptor);
 			if(bytesWrite != bloom.orig.bytes)	{
-				fprintf(stderr,"[E] Error writing file, code line %i\n",__LINE__ - 2);
+				output_error("Error writing file, code line %i\n",__LINE__ - 2);
 				fclose(fileDescriptor);
 				exit(EXIT_FAILURE);
 			}
@@ -9750,21 +9750,21 @@ void writeFileIfNeeded(const char *fileName)	{
 
 			bytesWrite = fwrite(dataChecksum,1,32,fileDescriptor);
 			if(bytesWrite != 32)	{
-				fprintf(stderr,"[E] Errore writing file, code line %i\n",__LINE__ - 2);
+				output_error("Errore writing file, code line %i\n",__LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");	
 			
 			bytesWrite = fwrite(&dataSize,1,sizeof(uint64_t),fileDescriptor);
 			if(bytesWrite != sizeof(uint64_t))	{
-				fprintf(stderr,"[E] Errore writing file, code line %i\n",__LINE__ - 2);
+				output_error("Errore writing file, code line %i\n",__LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
 			
 			bytesWrite = fwrite(addressTable,1,dataSize,fileDescriptor);
 			if(bytesWrite != dataSize)	{
-				fprintf(stderr,"[E] Error writing file, code line %i\n",__LINE__ - 2);
+				output_error("Error writing file, code line %i\n",__LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
