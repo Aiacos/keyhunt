@@ -19,7 +19,7 @@
 #include <cstring>
 #include "SECP256k1.h"
 #include "Point.h"
-#include "../util.h"
+#include "../core/util.h"
 #include "../hash/sha256.h"
 #include "../hash/sha256_avx2.h"
 #include "../hash/ripemd160.h"

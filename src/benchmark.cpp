@@ -1,6 +1,6 @@
 // src/benchmark.cpp
 #include "benchmark.h"
-#include "../sysinfo.h"
+#include "core/sysinfo.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

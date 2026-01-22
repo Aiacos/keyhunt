@@ -5,7 +5,7 @@
  * Esegui:  ./puzzle71_coordinator [porta]
  */
 
-#include "distributed/distributed.h"
+#include "../src/distributed/distributed.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>

@@ -10,8 +10,8 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include "bloom/bloom.h"
-#include "bloom/bloom_fast.h"
+#include "../src/bloom/bloom.h"
+#include "../src/bloom/bloom_fast.h"
 
 #define ITERATIONS 10000000
 #define WARMUP_ITERATIONS 100000

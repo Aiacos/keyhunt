@@ -4,8 +4,8 @@
 #include <cstring>
 #include "GMP256K1.h"
 #include "Point.h"
-#include "../util.h"
-#include "../hashing.h"
+#include "../core/util.h"
+#include "../core/hashing.h"
 
 Secp256K1::Secp256K1() {
 }

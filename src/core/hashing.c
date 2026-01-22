@@ -6,8 +6,8 @@
 #include <errno.h>
 #include <stdint.h>
 #include "hashing.h"
-#include "sha3/sha3.h"
-#include "hash/ripemd160.h"
+#include "../sha3/sha3.h"
+#include "../hash/ripemd160.h"
 
 int sha256(const unsigned char *data, size_t length, unsigned char *digest) {
     if (digest == NULL) {

@@ -5,7 +5,7 @@
  */
 
 #include "wizard.h"
-#include "../sysinfo.h"
+#include "../core/sysinfo.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

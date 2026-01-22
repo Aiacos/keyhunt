@@ -12,7 +12,7 @@
 
 /* Test both implementations */
 #define USE_FAST_BLOOM 1
-#include "bloom/bloom_wrapper.h"
+#include "../src/bloom/bloom_wrapper.h"
 
 #define NUM_ENTRIES 1000000
 #define NUM_CHECKS 10000000
