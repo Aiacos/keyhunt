@@ -172,25 +172,44 @@ All messages are prefixed with a 4-byte network-order length, followed by the JS
 
 ### Worker Registration
 
-When a worker connects, it sends:
+When a worker connects, it sends detailed hardware information:
 
 ```json
 {
   "type": "register",
   "id": "12345-hostname",
   "hostname": "worker-machine",
-  "perf_score": 1.5
+  "perf_score": 15.5,
+  "cpu_cores": 8,
+  "cpu_threads": 16,
+  "cpu_name": "AMD Ryzen 7 5800X",
+  "gpu_name": "NVIDIA GeForce RTX 3080",
+  "gpu_memory_mb": 10240,
+  "cpu_speed_mkeys": 5.0,
+  "gpu_speed_mkeys": 325.0
 }
 ```
 
-Coordinator responds with:
+Coordinator responds with job configuration:
 
 ```json
 {
   "type": "welcome",
   "worker_id": 0,
-  "work_units": 100000
+  "work_units": 100000,
+  "target_address": "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU",
+  "mode": "address",
+  "key_type": "compress",
+  "puzzle_number": 71,
+  "bits": 71,
+  "heartbeat_interval": 30
 }
+```
+
+The coordinator logs hardware information when workers connect:
+```
+[Coordinator] Worker 0 connected from hostname (score=15.5)
+[Coordinator]   Hardware: AMD Ryzen 7 5800X (16 threads), GPU: NVIDIA GeForce RTX 3080 (10240 MB)
 ```
 
 ### Work Unit Assignment

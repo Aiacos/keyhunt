@@ -12,6 +12,13 @@ Work for Bitcoin
 Work for Ethereum
 - address
 
+## New Features
+
+- **[Distributed Mode](#distributed-mode)**: Coordinate searches across multiple machines with server/client architecture
+- **[Community Progress Integration](#community-progress-integration)**: Leverage community scanning data to avoid redundant searches
+- **[Hardware Auto-Detection](#hardware-auto-detection)**: Automatic CPU/GPU detection with optimized parameters
+- **[GPU Acceleration](#gpu-modes)**: CUDA-based GPU support with multi-GPU scheduling and async pipelines
+
 # TL:DR
 
 - Download and build
@@ -1378,9 +1385,375 @@ Also thanks to @XopMC
 Available in: https://github.com/XopMC/keyhunt-win
 
 
+---
+
+# Distributed Mode
+
+Keyhunt supports distributed computing with a coordinator/worker architecture, enabling you to combine the power of multiple machines for key searches.
+
+## Architecture Overview
+
+```
+┌─────────────────────┐
+│    Coordinator      │  (Server on port 7777)
+│  - Distributes work │
+│  - Collects results │
+│  - Tracks progress  │
+└──────────┬──────────┘
+     ┌─────┴─────┬─────────────┐
+ ┌───▼───┐  ┌───▼───┐    ┌───▼───┐
+ │Worker1│  │Worker2│    │Worker3│
+ │(local)│  │(remote)│   │(remote)│
+ └───────┘  └───────┘    └───────┘
+```
+
+## Communication Protocol
+
+The distributed mode uses TCP with JSON messages. All messages are length-prefixed (4-byte network order length followed by JSON payload).
+
+### Message Types
+
+| Message | Direction | Description |
+|---------|-----------|-------------|
+| `register` | Worker -> Server | Initial registration with hardware info |
+| `welcome` | Server -> Worker | Acknowledgment with job config and heartbeat interval |
+| `request_work` | Worker -> Server | Request a work range |
+| `work_assignment` | Server -> Worker | Assign range (range_start, range_end as hex) |
+| `work_done` | Worker -> Server | Report completed work with keys_processed |
+| `heartbeat` | Worker -> Server | Periodic health check |
+| `found` | Worker -> Server | Report found key (private_key, address) |
+| `ack` | Server -> Worker | Generic acknowledgment |
+| `shutdown` | Server -> Worker | Graceful shutdown signal |
+
+### Registration Message Example
+
+Workers send their hardware capabilities during registration:
+
+```json
+{
+  "type": "register",
+  "id": "hostname-12345",
+  "hostname": "worker-1",
+  "perf_score": 15.5,
+  "cpu_cores": 8,
+  "cpu_threads": 16,
+  "cpu_name": "AMD Ryzen 7 5800X",
+  "gpu_name": "NVIDIA GeForce RTX 3080",
+  "gpu_memory_mb": 10240,
+  "cpu_speed_mkeys": 5.0,
+  "gpu_speed_mkeys": 325.0
+}
+```
+
+### Welcome Message Example
+
+The server responds with job configuration:
+
+```json
+{
+  "type": "welcome",
+  "worker_id": 1,
+  "work_units": 10000,
+  "target_address": "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
+  "mode": "address",
+  "key_type": "compress",
+  "puzzle_number": 66,
+  "bits": 66,
+  "heartbeat_interval": 30
+}
+```
+
+## Using the Wizard Mode
+
+The easiest way to use distributed mode is through the interactive wizard:
+
+```bash
+./keyhunt --wizard
+# or
+./keyhunt -W
+```
+
+The wizard guides you through:
+1. Choosing server or client mode
+2. Selecting the puzzle to search
+3. Configuring search parameters
+4. Setting up community progress integration
+
+### Server Mode
+
+Start a server that coordinates work distribution:
+
+```bash
+./keyhunt --wizard
+# Select "Server" mode
+# Configure puzzle and parameters
+```
+
+The server:
+- Listens on port 7777 (configurable)
+- Distributes work ranges to connected workers
+- Optionally runs a local worker (server also contributes to search)
+- Tracks progress and saves checkpoints
+- Saves configuration to `keyhunt_wizard.json`
+
+### Client Mode
+
+Connect to a server as a worker:
+
+```bash
+./keyhunt --wizard
+# Select "Client" mode
+# Enter server hostname/IP
+```
+
+The client:
+- Auto-detects local hardware (CPU cores, GPU, SIMD features)
+- Connects to the coordinator
+- Receives job configuration (target, mode, puzzle info)
+- Requests and processes work ranges
+- Reports results and heartbeats
+
+## Default Port
+
+The default coordinator port is **7777**. To use a different port, configure it during wizard setup.
+
+---
+
+# Community Progress Integration
+
+Keyhunt integrates with community puzzle-solving efforts to avoid redundant searches.
+
+## Privatekeys.pw Cloud Search Integration
+
+Keyhunt can fetch community scanning progress from https://privatekeys.pw/cloud-search:
+
+- Extracts "Keys Scanned (Total)" percentage from the webpage
+- Implements 24-hour caching to avoid excessive requests
+- Cache stored in `~/.keyhunt/privatekeys_progress.json`
+
+### How It Works
+
+1. **Sequential Mode**: Automatically calculates a starting offset to skip community-scanned regions
+2. **Random Mode**: Checks if random ranges fall within scanned regions to avoid redundant work
+
+### Cache Format
+
+```json
+{
+  "puzzle_number": 71,
+  "percent_scanned": 0.022477,
+  "keys_scanned": 1234567890,
+  "fetch_time": 1706000000
+}
+```
+
+## BTCPuzzle.info Integration
+
+The wizard can also fetch puzzle definitions and scanned ranges from BTCPuzzle.info:
+
+- Downloads current puzzle list with addresses, ranges, rewards
+- Fetches community-scanned ranges per puzzle
+- Merges exclusions into local exclusion files
+
+---
+
+# Hardware Auto-Detection
+
+Keyhunt automatically detects your hardware and configures optimal parameters.
+
+## Detected Information
+
+### CPU Detection
+
+| Information | Source |
+|-------------|--------|
+| Physical cores | `/sys/devices/system/cpu/*/topology/core_id` |
+| Logical threads | `sysconf(_SC_NPROCESSORS_ONLN)` |
+| CPU model name | `/proc/cpuinfo` (model name field) |
+| Cache sizes (L1/L2/L3) | `/sys/devices/system/cpu/cpu0/cache/` |
+| SIMD features | `__builtin_cpu_supports()` or `/proc/cpuinfo` flags |
+
+### SIMD Feature Detection
+
+| Feature | Detection Method | Performance Impact |
+|---------|------------------|-------------------|
+| AVX2 | `__builtin_cpu_supports("avx2")` | 8-way parallel RIPEMD160 |
+| AVX-512F | `__builtin_cpu_supports("avx512f")` | 16-way parallel RIPEMD160 |
+| AVX-512DQ | `/proc/cpuinfo` flags | Required for AVX-512 hash |
+| SHA-NI | `/proc/cpuinfo` flags | Hardware SHA256 acceleration |
+
+### GPU Detection (NVIDIA)
+
+GPU detection uses NVML (NVIDIA Management Library) when available:
+
+| Information | Source |
+|-------------|--------|
+| GPU count | `nvmlDeviceGetCount()` |
+| GPU name | `nvmlDeviceGetName()` |
+| VRAM size | `nvmlDeviceGetMemoryInfo()` |
+| CUDA capability | Parsed from GPU model |
+
+Fallback: `/proc/driver/nvidia/gpus/*/information`
+
+### Memory Detection
+
+| Information | Source |
+|-------------|--------|
+| Total RAM | `sysinfo()` syscall |
+| Available RAM | `/proc/meminfo` (MemAvailable) |
+| Free RAM | `sysinfo()` syscall |
+
+## Auto-Tuned Parameters
+
+Based on detected hardware, keyhunt automatically configures:
+
+| Parameter | Calculation |
+|-----------|-------------|
+| Threads | All logical cores |
+| Batch size | 1024 (cache-optimized) |
+| N value (BSGS) | Largest N fitting in 60% of available RAM |
+| K factor (BSGS) | Balanced K based on N and RAM |
+
+### Performance Score Calculation
+
+```
+CPU Score = physical_cores * (1.0 + 0.5*AVX2 + 1.0*AVX512 + 0.1*SHA-NI)
+GPU Score = SM_count * compute_capability_factor * 7.5
+Hybrid Ratio = GPU_Score / (CPU_Score + GPU_Score)
+```
+
+### Example Auto-Detection Output
+
+```
+[+] System Configuration Detected:
+    ├─ CPU: 8 physical cores, 16 logical cores
+    ├─ Cache: L1=32 KB, L2=256 KB, L3=32768 KB
+    ├─ RAM: 32768 MB total, 28000 MB available
+    ├─ GPU: NVIDIA GeForce RTX 3080 x1 (10240 MB VRAM, sm_86)
+    ├─ Features: AVX2=yes, AVX-512=no, SHA-NI=yes
+    └─ Scores: CPU=12.8, GPU=510.0 (hybrid: 97% GPU)
+
+[+] Auto-Tuned Parameters:
+    ├─ Threads: 16 (optimal for CPU)
+    ├─ Batch Size: 1024 keys (optimized for L3 cache)
+    ├─ Workload/Thread: 4096 (based on available RAM)
+    ├─ N value: 0x100000000000 (range coverage)
+    └─ K factor: 2048 (jump multiplier)
+```
+
+---
+
+# GPU Performance Optimizations
+
+## GPU Autotune
+
+The GPU autotune feature (`gpu/gpu_autotune.c`) runs mini-benchmarks to find optimal kernel parameters for your specific GPU:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `blocks_per_sm` | Thread blocks per streaming multiprocessor | 16 |
+| `keys_per_thread` | Keys processed per CUDA thread | 512 |
+| `threads_per_block` | CUDA threads per block | 256 |
+
+### Usage
+
+GPU autotuning runs automatically when using GPU modes. The measured throughput is stored for subsequent runs.
+
+## Multi-GPU Scheduler
+
+The multi-GPU scheduler (`gpu/multi_gpu_scheduler.c`) enables work distribution across multiple GPUs:
+
+### Features
+
+- **Auto-detection**: Automatically detects all available GPUs
+- **Adaptive balancing**: Dynamically adjusts work allocation based on GPU throughput
+- **Performance scoring**: Tracks per-GPU performance for optimal distribution
+- **Heterogeneous support**: Works with mixed GPU models (different speeds)
+
+### Configuration
+
+```c
+typedef struct {
+    int device_count;           // -1 for auto-detect all
+    int device_ids[16];         // Specific GPU IDs to use
+    bool adaptive_balancing;    // Enable dynamic rebalancing
+    uint64_t rebalance_interval_keys;  // Keys between rebalancing
+} multi_gpu_config_t;
+```
+
+### Work Distribution Algorithm
+
+1. Initial allocation: Equal split across all GPUs
+2. After each work unit completion:
+   - Update per-GPU throughput (exponential moving average)
+   - Recalculate allocation proportions based on relative speeds
+   - Faster GPUs receive larger work chunks
+
+## Async Pipeline (Triple Buffering)
+
+The async pipeline (`gpu/async_pipeline.c`) maximizes GPU utilization through overlapped operations:
+
+```
+Time ->
+          ┌─────────┐┌─────────┐┌─────────┐
+GPU:      │Compute A││Compute B││Compute C│ ...
+          └─────────┘└─────────┘└─────────┘
+               ┌─────────┐┌─────────┐
+Transfer:      │Upload B ││Upload C │ ...
+               │Download A│Download B│
+               └─────────┘└─────────┘
+                    ┌─────────┐┌─────────┐
+CPU:                │Process A││Process B│ ...
+                    │Prepare C││Prepare D│
+                    └─────────┘└─────────┘
+```
+
+### Configuration
+
+```c
+typedef struct {
+    size_t batch_size;          // Keys per batch (max 1M)
+    size_t result_size;         // Bytes per result (20 for RIPEMD160)
+    bool use_pinned_memory;     // Faster transfers with pinned memory
+    int device_id;              // GPU to use
+} async_pipeline_config_t;
+```
+
+### Statistics Tracked
+
+| Metric | Description |
+|--------|-------------|
+| `batches_processed` | Total batches completed |
+| `keys_processed` | Total keys hashed |
+| `avg_compute_ms` | Average GPU compute time |
+| `avg_transfer_ms` | Average memory transfer time |
+| `gpu_utilization` | GPU busy ratio (0.0 - 1.0) |
+
+## Memory Pool Integration
+
+The memory pool (`util/mempool.c`) provides fast arena-style allocation for GPU batch operations:
+
+### Features
+
+- **Cache-line aligned**: 64-byte alignment for optimal memory access
+- **Instant reset**: Zero-cost "free all" operation between batches
+- **Peak tracking**: Monitors maximum memory usage for sizing
+
+### API
+
+```c
+bool mempool_init(mem_pool_t *p, size_t size);
+void* mempool_alloc(mem_pool_t *p, size_t size);
+void* mempool_alloc_aligned(mem_pool_t *p, size_t size, size_t alignment);
+void mempool_reset(mem_pool_t *p);
+void mempool_destroy(mem_pool_t *p);
+```
+
+---
+
 ## Thanks
 
-This program was possible thanks to 
+This program was possible thanks to
 - IceLand
 - kanhavishva
 - XopMC

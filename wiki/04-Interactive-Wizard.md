@@ -115,6 +115,21 @@ Fetch community progress from BTCPuzzle.info? [Y/n]:
 Add these to exclusion list? [Y/n]:
 ```
 
+The wizard also integrates with **privatekeys.pw cloud search** to fetch community scanning progress:
+
+```
+[+] Refreshing privatekeys.pw progress (daily update)...
+[+] Fetching privatekeys.pw cloud search progress...
+[+] Parsed: 0.022477% scanned (1234567890 keys)
+```
+
+**Features:**
+- Extracts "Keys Scanned (Total)" percentage from https://privatekeys.pw/cloud-search
+- 24-hour caching to avoid excessive requests
+- Cache stored in `~/.keyhunt/privatekeys_progress.json`
+- Sequential mode: Automatically starts search after community-scanned region
+- Random mode: Avoids generating ranges within already-scanned regions
+
 ## Intelligent Auto-Configuration
 
 ### Puzzles WITH Public Key

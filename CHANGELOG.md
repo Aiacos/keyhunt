@@ -1,3 +1,45 @@
+# Version 0.3.0 Distributed Mode (Unreleased)
+
+## Distributed Computing
+- **Coordinator/Worker Architecture**: TCP-based distributed mode on port 7777
+- **JSON Protocol**: Length-prefixed JSON messages for all communication
+- **Message Types**: register, welcome, request_work, work_assignment, work_done, heartbeat, found
+- **Hardware Reporting**: Workers report CPU cores/threads/name, GPU name/memory/speed
+- **Heartbeat System**: Server-configurable heartbeat interval in welcome message
+- **Work Synchronization**: Hex-encoded range_start/range_end in work assignments
+- **Key Found Notification**: Immediate reporting with private_key and address
+
+## Interactive Wizard (`--wizard` or `-W`)
+- **5-Step Setup Flow**: Puzzle selection, mode, server config, search config, community sync
+- **Dual-Mode Operation**: Server (coordinator + local worker) and Client (worker only)
+- **JSON Configuration**: Saves to `keyhunt_wizard.json` for session resume
+
+## Community Progress Integration
+- **BTCPuzzle.info Integration**: Downloads puzzle database and scanned ranges
+- **Privatekeys.pw Cloud Search**: Fetches community scanning progress percentage
+- **24-Hour Caching**: Stored in `~/.keyhunt/privatekeys_progress.json`
+- **Search Optimization**: Sequential mode skips scanned regions, random mode avoids them
+
+## Hardware Auto-Detection (`sysinfo.c`)
+- **CPU Detection**: Physical cores, logical threads, model name, cache sizes (L1/L2/L3)
+- **SIMD Detection**: AVX2, AVX-512 (F/DQ/BW/VL), SHA-NI
+- **GPU Detection**: NVIDIA via NVML (count, name, VRAM, compute capability)
+- **Memory Detection**: Total, available, and free RAM
+- **Auto-Tuning**: Optimal threads, batch size, N value, K factor based on hardware
+
+## GPU Performance Optimizations
+- **GPU Autotune** (`gpu/gpu_autotune.c`): Runtime kernel parameter optimization
+- **Multi-GPU Scheduler** (`gpu/multi_gpu_scheduler.c`): Adaptive work distribution across GPUs
+- **Async Pipeline** (`gpu/async_pipeline.c`): Triple-buffered GPU operations for max utilization
+- **Memory Pool** (`util/mempool.c`): Fast arena-style allocation with cache-line alignment
+
+## Parameter Validation (`parameter_validator.c`)
+- **Input Validation**: Threads vs cores, N/K vs RAM, batch size alignment
+- **Auto-Correction**: Prevents OOM crashes and excessive thread counts
+- **User Feedback**: Visual indicators for optimal/acceptable/corrected parameters
+
+---
+
 # Version 0.2.230519 Satoshi Quest
 - Speed x2 in BSGS mode for main version
 

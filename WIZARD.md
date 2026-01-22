@@ -28,8 +28,10 @@ The wizard automatically calculates optimal parameters based on:
 
 ### 4. Community Integration
 - Fetches already-scanned ranges from BTCPuzzle.info
+- Integrates with privatekeys.pw cloud search progress
 - Avoids duplicate work by excluding community-tested ranges
 - Syncs periodically to stay updated
+- 24-hour caching for privatekeys.pw data
 
 ## Configuration Flow
 
@@ -238,6 +240,36 @@ Client can't reach the server. Check:
 - Server is running
 - Firewall allows port 7777 (or configured port)
 - Correct IP address
+
+## Privatekeys.pw Integration
+
+The wizard fetches community scanning progress from https://privatekeys.pw/cloud-search:
+
+### How It Works
+
+1. **Data Extraction**: Scrapes "Keys Scanned (Total)" percentage from the webpage
+2. **Caching**: Stores result in `~/.keyhunt/privatekeys_progress.json` with 24-hour TTL
+3. **Search Optimization**:
+   - **Sequential mode**: Calculates starting offset to skip scanned regions
+   - **Random mode**: Filters out ranges that fall within community-scanned area
+
+### Cache File Format
+
+```json
+{
+  "puzzle_number": 71,
+  "percent_scanned": 0.022477,
+  "keys_scanned": 1234567890,
+  "fetch_time": 1706000000
+}
+```
+
+### Integration with BTCPuzzle.info
+
+When both sources are enabled, the wizard combines exclusion ranges:
+1. Community-reported ranges from BTCPuzzle.info
+2. Progress percentage from privatekeys.pw
+3. Locally completed ranges from previous sessions
 
 ## Future Improvements
 
