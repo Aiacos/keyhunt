@@ -2,6 +2,40 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working Style Guidelines
+
+### Always Use Available Tools
+
+**MCP Servers**: Always check for and use available MCP (Model Context Protocol) servers. They provide enhanced capabilities for specific tasks like file operations, database access, or external API integrations.
+
+**Plugins**: Use installed plugins proactively. Plugins extend Claude's capabilities with specialized functionality. Check available plugins and use them when relevant to the task.
+
+**Skills**: Always invoke relevant skills using the Skill tool before starting work. Skills provide structured workflows for common tasks:
+- **brainstorming** - For creative work, new features, design decisions
+- **writing-plans** - For multi-step implementation tasks
+- **executing-plans** - For implementing written plans
+- **subagent-driven-development** - For parallel task execution
+- **systematic-debugging** - For investigating bugs and failures
+- **test-driven-development** - For writing tests before implementation
+- **code-review** - For reviewing completed work
+- **verification-before-completion** - For verifying work before claiming completion
+
+### Work Autonomously with Agents
+
+When facing complex or multi-step tasks:
+1. Use the **Task tool** to spawn specialized subagents for parallel work
+2. Use **TodoWrite** to track progress on multi-step tasks
+3. Run independent tasks in parallel using multiple Task tool calls
+4. Let agents complete their work before integrating results
+
+### Proactive Behavior
+
+- Run tests after making code changes
+- Use code review agents after implementing features
+- Verify builds succeed before committing
+- Update documentation when adding new features
+- Commit changes with meaningful messages
+
 ## Overview
 
 **keyhunt** is a high-performance cryptocurrency private key search tool for secp256k1-based cryptocurrencies (Bitcoin, Ethereum). It implements multiple search algorithms optimized for CPU with SIMD instructions (SSE2/AVX2/AVX-512).
