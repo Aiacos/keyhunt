@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
@@ -19,6 +18,22 @@ static unsigned int simple_hash(const char *str) {
         hash = ((hash << 5) + hash) + c;
     }
     return hash;
+}
+
+// Escape a string for JSON output (handles quotes, backslashes, newlines)
+static void json_escape_string(FILE *f, const char *str) {
+    if (!f || !str) return;
+
+    for (const char *p = str; *p; p++) {
+        switch (*p) {
+            case '"':  fputs("\\\"", f); break;
+            case '\\': fputs("\\\\", f); break;
+            case '\n': fputs("\\n", f); break;
+            case '\r': fputs("\\r", f); break;
+            case '\t': fputs("\\t", f); break;
+            default:   fputc(*p, f); break;
+        }
+    }
 }
 
 // Get expanded progress directory path (replaces ~ with $HOME)
@@ -364,13 +379,24 @@ int progress_save(const progress_state_t *state) {
     FILE *f = fopen(filepath, "w");
     if (!f) return -1;
 
+    // Write JSON with proper escaping for string values
     fprintf(f, "{\n");
-    fprintf(f, "  \"mode\": \"%s\",\n", state->mode);
-    fprintf(f, "  \"target_file\": \"%s\",\n", state->target_file);
+    fputs("  \"mode\": \"", f);
+    json_escape_string(f, state->mode);
+    fputs("\",\n", f);
+    fputs("  \"target_file\": \"", f);
+    json_escape_string(f, state->target_file);
+    fputs("\",\n", f);
     fprintf(f, "  \"bits\": %d,\n", state->bits);
-    fprintf(f, "  \"range_start\": \"%s\",\n", state->range_start);
-    fprintf(f, "  \"range_end\": \"%s\",\n", state->range_end);
-    fprintf(f, "  \"current_position\": \"%s\",\n", state->current_position);
+    fputs("  \"range_start\": \"", f);
+    json_escape_string(f, state->range_start);
+    fputs("\",\n", f);
+    fputs("  \"range_end\": \"", f);
+    json_escape_string(f, state->range_end);
+    fputs("\",\n", f);
+    fputs("  \"current_position\": \"", f);
+    json_escape_string(f, state->current_position);
+    fputs("\",\n", f);
     fprintf(f, "  \"keys_checked\": %llu,\n", (unsigned long long)state->keys_checked);
     fprintf(f, "  \"keys_total\": %llu,\n", (unsigned long long)state->keys_total);
     fprintf(f, "  \"elapsed_seconds\": %.2f,\n", state->elapsed_seconds);
@@ -499,15 +525,16 @@ int progress_list(void) {
 
         // Format elapsed time
         char elapsed_str[32];
-        if (elapsed < 3600) {
-            snprintf(elapsed_str, sizeof(elapsed_str), "%.0fm %.0fs",
-                     elapsed / 60, fmod(elapsed, 60));
-        } else if (elapsed < 86400) {
-            snprintf(elapsed_str, sizeof(elapsed_str), "%.0fh %.0fm",
-                     elapsed / 3600, fmod(elapsed, 3600) / 60);
+        int elapsed_int = (int)elapsed;
+        if (elapsed_int < 3600) {
+            snprintf(elapsed_str, sizeof(elapsed_str), "%dm %ds",
+                     elapsed_int / 60, elapsed_int % 60);
+        } else if (elapsed_int < 86400) {
+            snprintf(elapsed_str, sizeof(elapsed_str), "%dh %dm",
+                     elapsed_int / 3600, (elapsed_int % 3600) / 60);
         } else {
-            snprintf(elapsed_str, sizeof(elapsed_str), "%.0fd %.0fh",
-                     elapsed / 86400, fmod(elapsed, 86400) / 3600);
+            snprintf(elapsed_str, sizeof(elapsed_str), "%dd %dh",
+                     elapsed_int / 86400, (elapsed_int % 86400) / 3600);
         }
 
         printf("%-12s %-6d %-20llu %-15s %s\n",
