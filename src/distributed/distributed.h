@@ -235,6 +235,25 @@ void dist_coordinator_stats(const dist_coordinator_t *coordinator,
                             int *work_completed, double *throughput);
 
 /**
+ * Print detailed worker statistics
+ * Shows CPU speed, GPU speed, and total for each worker plus grand total
+ * @param coordinator Coordinator state
+ */
+void dist_coordinator_print_worker_stats(const dist_coordinator_t *coordinator);
+
+/**
+ * Get detailed speed statistics
+ * @param coordinator Coordinator state
+ * @param total_cpu_speed Output: total CPU speed across all workers (Mkeys/s)
+ * @param total_gpu_speed Output: total GPU speed across all workers (Mkeys/s)
+ * @param total_combined Output: total combined speed (Mkeys/s)
+ */
+void dist_coordinator_get_speed_stats(const dist_coordinator_t *coordinator,
+                                      double *total_cpu_speed,
+                                      double *total_gpu_speed,
+                                      double *total_combined);
+
+/**
  * Shutdown coordinator
  * @param coordinator Coordinator state
  */

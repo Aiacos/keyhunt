@@ -87,23 +87,28 @@ int main(int argc, char **argv) {
             double throughput;
             dist_coordinator_stats(&coord, &workers, &pending, &completed, &throughput);
 
+            // Get detailed CPU/GPU speeds
+            double cpu_speed, gpu_speed, combined_speed;
+            dist_coordinator_get_speed_stats(&coord, &cpu_speed, &gpu_speed, &combined_speed);
+
             double progress = (double)completed / (double)coord.work_unit_count * 100.0;
             time_t elapsed = now - start_time;
 
-            // Calcola ETA
+            // Calcola ETA usando la velocità combinata
             double keys_done = (double)completed * 0x100000000ULL;
             double keys_total = (double)coord.work_unit_count * 0x100000000ULL;
             double keys_remaining = keys_total - keys_done;
-            double eta_seconds = (throughput > 0) ? (keys_remaining / (throughput * 1000000.0)) : 0;
+            double effective_speed = combined_speed > 0 ? combined_speed : throughput;
+            double eta_seconds = (effective_speed > 0) ? (keys_remaining / (effective_speed * 1000000.0)) : 0;
 
             int eta_days = (int)(eta_seconds / 86400);
             int eta_hours = (int)((eta_seconds - eta_days * 86400) / 3600);
 
-            printf("\r[%02ld:%02ld:%02ld] Workers: %d | Progresso: %d/%d (%.4f%%) | "
-                   "Speed: %.2f Mkeys/s | ETA: %dd %dh    ",
+            printf("\r[%02ld:%02ld:%02ld] Workers: %d | %d/%d (%.2f%%) | "
+                   "CPU: %.1f | GPU: %.1f | Total: \033[1;32m%.1f\033[0m Mkeys/s | ETA: %dd %dh    ",
                    elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
                    workers, completed, coord.work_unit_count, progress,
-                   throughput, eta_days, eta_hours);
+                   cpu_speed, gpu_speed, combined_speed, eta_days, eta_hours);
             fflush(stdout);
         }
     }
@@ -113,6 +118,9 @@ int main(int argc, char **argv) {
     printf("    Work units completati: %d/%d\n", coord.work_units_completed, coord.work_unit_count);
     printf("    Chiavi controllate: %.2e\n", (double)coord.keys_processed);
     printf("    Risultati trovati: %d\n", coord.result_count);
+
+    // Print detailed worker statistics
+    dist_coordinator_print_worker_stats(&coord);
 
     if (coord.result_count > 0) {
         printf("\n[!!!] CHIAVI TROVATE:\n");

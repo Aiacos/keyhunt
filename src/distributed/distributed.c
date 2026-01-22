@@ -469,17 +469,24 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                              coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30);
                     send_msg(client_fd, welcome);
 
-                    /* Print connection info with hardware details */
-                    printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET,
+                    /* Print connection info with hardware details and speeds */
+                    printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
                            worker->id, worker->hostname[0] ? worker->hostname : "localhost");
                     if (worker->cpu_name[0]) {
-                        printf(" (%s", worker->cpu_name);
+                        printf(LOG_SERVER LOG_INFO "  Hardware: %s", worker->cpu_name);
                         if (worker->gpu_name[0]) {
                             printf(" + %s", worker->gpu_name);
                         }
-                        printf(")");
+                        printf("\n");
                     }
-                    printf("\n");
+                    /* Show speeds */
+                    double worker_total = worker->cpu_speed_mkeys + worker->gpu_speed_mkeys;
+                    printf(LOG_SERVER LOG_INFO "  Speed: CPU: " CLR_CYAN "%.2f" CLR_RESET " Mkeys/s",
+                           worker->cpu_speed_mkeys);
+                    if (worker->gpu_speed_mkeys > 0) {
+                        printf(" | GPU: " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s", worker->gpu_speed_mkeys);
+                    }
+                    printf(" | Total: " CLR_BOLD CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", worker_total);
                 }
             } else {
                 close(client_fd);
@@ -610,6 +617,57 @@ void dist_coordinator_stats(const dist_coordinator_t *coord,
     if (work_pending) *work_pending = coord->work_units_pending;
     if (work_completed) *work_completed = coord->work_units_completed;
     if (throughput) *throughput = coord->total_throughput;
+}
+
+void dist_coordinator_get_speed_stats(const dist_coordinator_t *coord,
+                                      double *total_cpu_speed,
+                                      double *total_gpu_speed,
+                                      double *total_combined) {
+    double cpu_sum = 0.0;
+    double gpu_sum = 0.0;
+
+    for (int i = 0; i < coord->worker_count; i++) {
+        if (coord->workers[i].connected) {
+            cpu_sum += coord->workers[i].cpu_speed_mkeys;
+            gpu_sum += coord->workers[i].gpu_speed_mkeys;
+        }
+    }
+
+    if (total_cpu_speed) *total_cpu_speed = cpu_sum;
+    if (total_gpu_speed) *total_gpu_speed = gpu_sum;
+    if (total_combined) *total_combined = cpu_sum + gpu_sum;
+}
+
+void dist_coordinator_print_worker_stats(const dist_coordinator_t *coord) {
+    double total_cpu = 0.0;
+    double total_gpu = 0.0;
+    int active_count = 0;
+
+    printf("\n" CLR_CYAN "┌──────────────────────────────────────────────────────────────────┐" CLR_RESET "\n");
+    printf(CLR_CYAN "│" CLR_RESET CLR_BOLD "  Worker Statistics                                               " CLR_RESET CLR_CYAN "│" CLR_RESET "\n");
+    printf(CLR_CYAN "├──────┬────────────────┬────────────────┬────────────────┬─────────┤" CLR_RESET "\n");
+    printf(CLR_CYAN "│" CLR_RESET " ID   " CLR_CYAN "│" CLR_RESET " CPU (Mkeys/s) " CLR_CYAN "│" CLR_RESET " GPU (Mkeys/s) " CLR_CYAN "│" CLR_RESET " Total (Mkeys/s)" CLR_CYAN "│" CLR_RESET " Status " CLR_CYAN "│" CLR_RESET "\n");
+    printf(CLR_CYAN "├──────┼────────────────┼────────────────┼────────────────┼─────────┤" CLR_RESET "\n");
+
+    for (int i = 0; i < coord->worker_count; i++) {
+        const dist_worker_t *w = &coord->workers[i];
+        double worker_total = w->cpu_speed_mkeys + w->gpu_speed_mkeys;
+        const char *status = w->connected ? CLR_GREEN "Online" CLR_RESET : CLR_RED "Offline" CLR_RESET;
+
+        printf(CLR_CYAN "│" CLR_RESET " %4d " CLR_CYAN "│" CLR_RESET " %14.2f " CLR_CYAN "│" CLR_RESET " %14.2f " CLR_CYAN "│" CLR_RESET " %14.2f " CLR_CYAN "│" CLR_RESET " %s " CLR_CYAN "│" CLR_RESET "\n",
+               w->id, w->cpu_speed_mkeys, w->gpu_speed_mkeys, worker_total, status);
+
+        if (w->connected) {
+            total_cpu += w->cpu_speed_mkeys;
+            total_gpu += w->gpu_speed_mkeys;
+            active_count++;
+        }
+    }
+
+    printf(CLR_CYAN "├──────┴────────────────┴────────────────┴────────────────┴─────────┤" CLR_RESET "\n");
+    printf(CLR_CYAN "│" CLR_RESET CLR_BOLD " TOTAL (%d workers): CPU: %.2f | GPU: %.2f | Combined: " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s " CLR_CYAN "│" CLR_RESET "\n",
+           active_count, total_cpu, total_gpu, total_cpu + total_gpu);
+    printf(CLR_CYAN "└──────────────────────────────────────────────────────────────────┘" CLR_RESET "\n\n");
 }
 
 void dist_coordinator_shutdown(dist_coordinator_t *coord) {

@@ -233,26 +233,29 @@ int wizard_server_run(wizard_config_t *cfg) {
             double throughput;
             dist_coordinator_stats(&coord, &workers, &pending, &completed, &throughput);
 
-            /* Note: local client stats are now included in workers count via TCP */
+            /* Get detailed CPU/GPU speeds */
+            double cpu_speed, gpu_speed, combined_speed;
+            dist_coordinator_get_speed_stats(&coord, &cpu_speed, &gpu_speed, &combined_speed);
 
             double progress = (double)completed / (double)num_units * 100.0;
             time_t elapsed = now - start_time;
 
-            /* Calculate ETA */
+            /* Calculate ETA using combined speed */
             double keys_done = (double)completed * cfg->work_unit_size;
             double keys_total = (double)num_units * cfg->work_unit_size;
             double keys_remaining = keys_total - keys_done;
-            double eta_sec = (throughput > 0) ? (keys_remaining / (throughput * 1000000.0)) : 0;
+            double effective_speed = combined_speed > 0 ? combined_speed : throughput;
+            double eta_sec = (effective_speed > 0) ? (keys_remaining / (effective_speed * 1000000.0)) : 0;
 
             int eta_days = (int)(eta_sec / 86400);
             int eta_hours = (int)((eta_sec - eta_days * 86400) / 3600);
 
-            printf("\r[%02ld:%02ld:%02ld] Workers: %d | Progress: %d/%d (%.4f%%) | "
-                   "%.2f Mkeys/s | ETA: %dd %dh     ",
+            printf("\r[%02ld:%02ld:%02ld] Workers: %d | %d/%d (%.2f%%) | "
+                   "CPU: %.1f | GPU: %.1f | Total: \033[1;32m%.1f\033[0m Mkeys/s | ETA: %dd %dh     ",
                    elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
                    workers,
                    completed, num_units, progress,
-                   throughput,
+                   cpu_speed, gpu_speed, combined_speed,
                    eta_days, eta_hours);
             fflush(stdout);
 
@@ -262,17 +265,20 @@ int wizard_server_run(wizard_config_t *cfg) {
                     last_worker_stats = now;
                     last_worker_count = workers;
                     if (workers > 0) {
-                        printf("\n\n  \033[36m%-4s %-18s %12s %10s\033[0m\n",
-                               "ID", "Host", "Speed", "Keys Done");
-                        printf("  \033[36m%.4s %.18s %.12s %.10s\033[0m\n",
-                               "----", "------------------", "------------", "----------");
+                        printf("\n\n  \033[36m%-4s %-18s %10s %10s %10s %10s\033[0m\n",
+                               "ID", "Host", "CPU M/s", "GPU M/s", "Total M/s", "Keys Done");
+                        printf("  \033[36m%.4s %.18s %.10s %.10s %.10s %.10s\033[0m\n",
+                               "----", "------------------", "----------", "----------", "----------", "----------");
                         for (int i = 0; i < coord.worker_count; i++) {
                             dist_worker_t *w = &coord.workers[i];
                             if (!w->connected) continue;
-                            printf("  %-4d %-18.18s %9.1f M/s %10.2e\n",
+                            double worker_total = w->cpu_speed_mkeys + w->gpu_speed_mkeys;
+                            printf("  %-4d %-18.18s %10.1f %10.1f \033[32m%10.1f\033[0m %10.2e\n",
                                    w->id,
                                    w->hostname[0] ? w->hostname : "localhost",
-                                   w->throughput,
+                                   w->cpu_speed_mkeys,
+                                   w->gpu_speed_mkeys,
+                                   worker_total,
                                    (double)w->keys_processed);
                         }
                         printf("\n");
@@ -318,6 +324,9 @@ int wizard_server_run(wizard_config_t *cfg) {
            (double)coord.work_units_completed / num_units * 100.0);
     printf("    Total keys processed: %.2e\n", (double)coord.keys_processed);
     printf("    Run time: %ld seconds\n", time(NULL) - start_time);
+
+    /* Print final worker statistics table */
+    dist_coordinator_print_worker_stats(&coord);
 
     if (coord.result_count > 0) {
         printf("\n");
