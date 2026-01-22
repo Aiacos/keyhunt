@@ -27,10 +27,10 @@ ifneq ($(CUDA_CC_BINDIR),)
 endif
 HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
 ifeq ($(HAVE_NVCC),)
-  GPU_OBJS := gpu/gpu_backend_none.o gpu/gpu_autotune.o
+  GPU_OBJS := gpu/gpu_backend_none.o gpu/gpu_autotune.o gpu/multi_gpu_scheduler.o
   GPU_CXXFLAGS :=
 else
-  GPU_OBJS := gpu/gpu_backend_cuda.o gpu/gpu_autotune.o
+  GPU_OBJS := gpu/gpu_backend_cuda.o gpu/gpu_autotune.o gpu/multi_gpu_scheduler.o
   GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
 endif
 
@@ -87,7 +87,7 @@ clean:
 	$(RM) keyhunt keyhunt_legacy bsgsd
 	$(RM) $(KEYHUNT_OBJS) $(BSGSD_OBJS) $(LEGACY_OBJS) parameter_validator.o config.o
 	$(RM) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) bloom/bloom_simd.o hash/sha256_shani.o
-	$(RM) gpu/gpu_autotune.o gpu/gpu_backend_none.o gpu/gpu_backend_cuda.o
+	$(RM) gpu/gpu_autotune.o gpu/gpu_backend_none.o gpu/gpu_backend_cuda.o gpu/multi_gpu_scheduler.o
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
