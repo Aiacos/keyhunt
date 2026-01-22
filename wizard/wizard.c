@@ -362,10 +362,11 @@ static int wizard_configure_community(wizard_config_t *cfg) {
     cfg->community_sync_interval_sec = 3600;  /* 1 hour default */
 
     printf("\n\033[1;36m[AUTO-CONFIG] Community Progress Integration\033[0m\n");
-    printf("  ✓ Community sync: enabled (BTCPuzzle.info)\n");
+    printf("  ✓ Community sync: enabled\n");
     printf("  ✓ Sync interval: %d seconds\n", cfg->community_sync_interval_sec);
 
-    printf("\n[+] Fetching community data for puzzle #%d...\n", cfg->puzzle_number);
+    /* Fetch BTCPuzzle.info data (existing) */
+    printf("\n[+] Fetching BTCPuzzle.info data for puzzle #%d...\n", cfg->puzzle_number);
 
     community_range_t *ranges = NULL;
     int count = 0;
@@ -375,17 +376,51 @@ static int wizard_configure_community(wizard_config_t *cfg) {
         cfg->community_last_sync = time(NULL);
 
         if (count > 0) {
-            printf("  ✓ Found %d ranges already scanned by community\n", count);
-            /* Auto-add to exclusion list (no asking) */
+            printf("  ✓ BTCPuzzle.info: %d ranges already scanned\n", count);
             wizard_community_merge_exclusions(cfg->exclusion_file, ranges, count);
-            printf("  ✓ Added to exclusion list (avoiding duplicate work)\n");
             wizard_community_free(ranges, count);
         } else {
-            printf("  ✓ No community progress data yet (fresh puzzle)\n");
+            printf("  ✓ BTCPuzzle.info: no community data yet\n");
         }
     } else {
-        printf("  ! Could not fetch community data (network error?)\n");
-        printf("    Will retry during search\n");
+        printf("  ! BTCPuzzle.info: could not fetch (network error?)\n");
+    }
+
+    /* Fetch privatekeys.pw cloud search progress (NEW) */
+    printf("\n[+] Fetching privatekeys.pw cloud search progress...\n");
+
+    privatekeys_progress_t pk_progress;
+    if (wizard_privatekeys_get_progress(cfg->puzzle_number, &pk_progress) == 0) {
+        cfg->privatekeys_percent = pk_progress.percent_scanned;
+
+        printf("  ✓ privatekeys.pw: %.4f%% scanned by community\n", pk_progress.percent_scanned);
+
+        /* Apply based on mode */
+        if (!cfg->random_mode && pk_progress.percent_scanned > 0.0) {
+            /* Sequential mode: adjust range_start */
+            const puzzle_def_t *puzzle = wizard_get_puzzle(cfg->puzzle_number);
+            if (puzzle) {
+                char original_start[68];
+                strcpy(original_start, cfg->range_start);
+
+                wizard_calculate_search_offset(puzzle, pk_progress.percent_scanned, cfg->range_start);
+
+                printf("  ✓ Sequential mode: adjusted start from %s to %s\n",
+                       original_start, cfg->range_start);
+            }
+        } else if (cfg->random_mode) {
+            printf("  ✓ Random mode: will exclude first %.4f%% from random selection\n",
+                   pk_progress.percent_scanned);
+        }
+    } else {
+        cfg->privatekeys_percent = 0.0;
+        printf("  ! privatekeys.pw: no data available (searching full range)\n");
+    }
+
+    /* Load local progress count */
+    int local_count = wizard_load_local_progress_count(cfg->puzzle_number);
+    if (local_count > 0) {
+        printf("  ✓ Local progress: %d ranges previously completed\n", local_count);
     }
 
     return 0;
