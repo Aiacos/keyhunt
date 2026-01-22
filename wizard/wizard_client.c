@@ -325,3 +325,43 @@ int wizard_client_run(wizard_config_t *cfg) {
 
     return 0;
 }
+
+/* ============================================================================
+ * Non-Interactive Client Mode (spawned by server)
+ * ============================================================================ */
+
+int wizard_client_run_auto(const char *host_port) {
+    wizard_config_t cfg;
+    wizard_config_init(&cfg);
+
+    /* Parse host:port */
+    char host[256] = "localhost";
+    int port = 7777;
+
+    if (host_port) {
+        const char *colon = strchr(host_port, ':');
+        if (colon) {
+            size_t host_len = colon - host_port;
+            if (host_len > 0 && host_len < sizeof(host)) {
+                strncpy(host, host_port, host_len);
+                host[host_len] = '\0';
+            }
+            port = atoi(colon + 1);
+            if (port <= 0 || port > 65535) {
+                port = 7777;
+            }
+        } else {
+            /* Just host, use default port */
+            strncpy(host, host_port, sizeof(host) - 1);
+        }
+    }
+
+    /* Configure as client */
+    strncpy(cfg.server_host, host, sizeof(cfg.server_host) - 1);
+    cfg.server_port = port;
+    cfg.is_server = false;
+
+    printf("[Auto-Client] Connecting to %s:%d\n", cfg.server_host, cfg.server_port);
+
+    return wizard_client_run(&cfg);
+}

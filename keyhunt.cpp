@@ -1967,6 +1967,12 @@ int main(int argc, char **argv)	{
 			int result = wizard_run();
 			exit(result < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
 		}
+		// Non-interactive wizard client mode (spawned by server)
+		if (strcmp(argv[ai], "--wizard-client") == 0 && ai + 1 < argc) {
+			const char *host_port = argv[ai + 1];
+			int result = wizard_client_run_auto(host_port);
+			exit(result < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -8245,6 +8251,7 @@ void menu() {
 	printf("\nUsage:\n");
 	printf("-h          show this help\n");
 	printf("-W, --wizard  Interactive setup wizard for distributed mode\n");
+	printf("--wizard-client host:port  Non-interactive client mode (spawned by server)\n");
 	printf("-B Mode     BSGS now have some modes <sequential, backward, both, random, dance>\n");
 	printf("-b bits     For some puzzles you only need some numbers of bits in the test keys.\n");
 	printf("-c crypto   Search for specific crypto. <btc, eth> valid only w/ -m address\n");

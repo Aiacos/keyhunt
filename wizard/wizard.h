@@ -2,12 +2,15 @@
  * wizard.h - Interactive Wizard for Keyhunt Distributed Mode
  *
  * Usage: ./keyhunt --wizard or ./keyhunt -W
+ *        ./keyhunt --wizard-client host:port  (non-interactive client mode)
  *
  * Features:
  * - Interactive setup for server/client mode
  * - Auto-configuration with JSON persistence
  * - Community progress integration (BTCPuzzle.info)
- * - Server acts as both coordinator AND worker
+ * - Server handles ONLY orchestration (no computation)
+ * - Server spawns local client process for computation
+ * - Clean separation of concerns for better performance
  * - Automatic puzzle database updates
  */
 
@@ -294,6 +297,16 @@ int wizard_server_run(wizard_config_t *cfg);
  * - Runs as worker
  */
 int wizard_client_run(wizard_config_t *cfg);
+
+/**
+ * Run in client mode (non-interactive, auto-configured)
+ * - Used when server spawns local client process
+ * - Parses host:port from string
+ * - Auto-detects hardware and connects
+ * @param host_port String in format "host:port" (e.g., "localhost:7777")
+ * @return 0 on clean exit, -1 on error
+ */
+int wizard_client_run_auto(const char *host_port);
 
 /* ============================================================================
  * Search Function (implemented in keyhunt.cpp)
