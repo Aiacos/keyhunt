@@ -804,3 +804,54 @@ bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
 
     return (check_pos < scanned_boundary);
 }
+
+/* ============================================================================
+ * Local Progress Tracking (Resume Capability)
+ * ============================================================================ */
+
+int wizard_save_local_progress(int puzzle_number,
+                               const char *range_start,
+                               const char *range_end) {
+    if (!range_start || !range_end) return -1;
+
+    char dir[512];
+    if (get_cache_dir(dir, sizeof(dir)) != 0) {
+        return -1;
+    }
+
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "%s/puzzle_%d_progress.dat", dir, puzzle_number);
+
+    /* Append to file */
+    FILE *f = fopen(filepath, "a");
+    if (!f) return -1;
+
+    fprintf(f, "%s:%s\n", range_start, range_end);
+    fclose(f);
+
+    return 0;
+}
+
+int wizard_load_local_progress_count(int puzzle_number) {
+    char dir[512];
+    if (get_cache_dir(dir, sizeof(dir)) != 0) {
+        return 0;
+    }
+
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "%s/puzzle_%d_progress.dat", dir, puzzle_number);
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) return 0;
+
+    int count = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] != '#' && line[0] != '\n' && strchr(line, ':')) {
+            count++;
+        }
+    }
+
+    fclose(f);
+    return count;
+}
