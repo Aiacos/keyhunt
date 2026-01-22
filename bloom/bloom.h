@@ -12,6 +12,8 @@
 #include <windows.h>
 #endif
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -42,6 +44,7 @@ struct bloom
   uint8_t minor;
   double bpe;
   uint8_t *bf;
+  int external_memory;  /* 1 if bf was allocated externally (don't free) */
 };
 /*
 Customs
@@ -89,6 +92,30 @@ int bloom_init2(struct bloom * bloom, uint64_t entries, long double error);
  *
  */
 int bloom_init(struct bloom * bloom, uint64_t entries, long double error);
+
+
+/** ***************************************************************************
+ * Initialize bloom filter using memory from a pool.
+ *
+ * Similar to bloom_init2 but allocates the bit field from a memory pool
+ * instead of the heap. This improves cache locality when multiple bloom
+ * filters are allocated from the same pool.
+ *
+ * Parameters:
+ * -----------
+ *     bloom   - Pointer to an allocated struct bloom (see above).
+ *     entries - The expected number of entries which will be inserted.
+ *     error   - Probability of collision.
+ *     pool    - Memory pool to allocate from (NULL for standard allocation).
+ *
+ * Return:
+ * -------
+ *     0 - on success
+ *     1 - on failure
+ *
+ */
+int bloom_init_with_pool(struct bloom *bloom, uint64_t entries, double error,
+                         void *pool);
 
 
 /** ***************************************************************************

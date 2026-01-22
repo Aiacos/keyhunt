@@ -24,6 +24,7 @@
 
 #include "bloom.h"
 #include "../xxhash/xxhash.h"
+#include "../util/mempool.h"
 
 /* Cache line size for optimal memory alignment */
 #define CACHE_LINE 64
@@ -93,6 +94,11 @@ static int bloom_check_add(struct bloom * bloom, const void * buffer, int len, i
   uint8_t hits = 0;
   uint64_t a = XXH64(buffer, len, 0x59f2815b16f81798);
   uint64_t b = XXH64(buffer, len, a);
+
+  /* Prefetch first hash location */
+  uint64_t first_x = a % bloom->bits;
+  __builtin_prefetch(&bloom->bf[first_x >> 3], 0, 3);
+
   uint64_t x;
   uint8_t i;
   for (i = 0; i < bloom->hashes; i++) {
@@ -159,7 +165,58 @@ int bloom_init2(struct bloom * bloom, uint64_t entries, long double error)
   bloom->ready = 1;
   bloom->major = BLOOM_VERSION_MAJOR;
   bloom->minor = BLOOM_VERSION_MINOR;
+  bloom->external_memory = 0;
   return 0;
+}
+
+/* LN2 constant for bloom_init_with_pool */
+#define LN2 0.693147180559945
+
+int bloom_init_with_pool(struct bloom *bloom, uint64_t entries, double error,
+                         void *pool_ptr)
+{
+    if (entries < 1 || error <= 0 || error >= 1.0) {
+        return 1;
+    }
+
+    memset(bloom, 0, sizeof(struct bloom));
+
+    bloom->entries = entries;
+    bloom->error = error;
+    bloom->bits = (uint64_t)(-log(error) / (LN2 * LN2) * entries);
+    /* Avoid zero-sized filters that would trigger modulo-by-zero. */
+    if (bloom->bits < 8) {
+        bloom->bits = 8;
+    }
+    bloom->bytes = (bloom->bits + 7) / 8;
+    {
+        double hashes_d = ceil(LN2 * bloom->bits / entries);
+        if (hashes_d < 1) hashes_d = 1;
+        if (hashes_d > 255) hashes_d = 255;
+        bloom->hashes = (uint8_t)hashes_d;
+    }
+    bloom->bpe = (double)bloom->bits / entries;
+
+    /* Allocate from pool if provided, otherwise use standard allocation */
+    if (pool_ptr) {
+        mem_pool_t *pool = (mem_pool_t *)pool_ptr;
+        bloom->bf = (uint8_t *)mempool_alloc_aligned(pool, bloom->bytes, CACHE_LINE);
+        bloom->external_memory = 1;  /* Don't free this */
+    } else {
+        bloom->bf = (uint8_t *)bloom_aligned_alloc(bloom->bytes);
+        bloom->external_memory = 0;
+    }
+
+    if (bloom->bf == NULL) {
+        return 1;
+    }
+
+    memset(bloom->bf, 0, bloom->bytes);
+    bloom->ready = 1;
+    bloom->major = BLOOM_VERSION_MAJOR;
+    bloom->minor = BLOOM_VERSION_MINOR;
+
+    return 0;
 }
 
 int bloom_check(struct bloom * bloom, const void * buffer, int len)
@@ -211,9 +268,10 @@ void bloom_print(struct bloom * bloom)
 
 void bloom_free(struct bloom * bloom)
 {
-  if (bloom->ready) {
+  if (bloom->ready && bloom->bf && !bloom->external_memory) {
     bloom_aligned_free(bloom->bf);
   }
+  bloom->bf = NULL;
   bloom->ready = 0;
 }
 
