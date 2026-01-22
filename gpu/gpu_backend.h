@@ -102,6 +102,25 @@ size_t gpu_get_optimal_batch_size(void);
 // Benchmark GPU performance (returns keys/second)
 double gpu_benchmark(size_t duration_ms);
 
+// ============================================================================
+// GPU auto-tuning
+// ============================================================================
+
+typedef struct {
+    int blocks_per_sm;
+    int keys_per_thread;
+    int threads_per_block;
+    double measured_mkeys;
+} gpu_tune_result_t;
+
+// Run auto-tune benchmark and return optimal parameters
+// duration_ms: benchmark duration per configuration (100-1000ms recommended)
+// Returns 0 on success, fills result with best parameters
+int gpu_autotune(size_t duration_ms, gpu_tune_result_t *result);
+
+// Apply tuned parameters (call before gpu_full_search)
+void gpu_apply_tune(const gpu_tune_result_t *tune);
+
 #ifdef __cplusplus
 }
 #endif
