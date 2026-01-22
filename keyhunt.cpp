@@ -31,6 +31,7 @@ email: albertobsd@gmail.com
 #include "config.h"
 #include "hybrid/adaptive_scheduler.h"
 #include "wizard/wizard.h"
+#include "src/benchmark.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -1975,6 +1976,13 @@ int main(int argc, char **argv)	{
 			const char *host_port = argv[ai + 1];
 			int result = wizard_client_run_auto(host_port);
 			exit(result < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
+		}
+		// Benchmark mode
+		if (strcmp(argv[ai], "--benchmark") == 0) {
+			benchmark_result_t bench_result;
+			benchmark_run(&bench_result, 15);  // 15 second benchmark
+			benchmark_print_results(&bench_result, 66);  // Default to puzzle 66
+			exit(EXIT_SUCCESS);
 		}
 	}
 
