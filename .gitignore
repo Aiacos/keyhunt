@@ -4,15 +4,31 @@ hexcharstoraw
 keyhunt
 keyhunt_legacy
 bsgsd
-keyhunt_wizard.json
 
-# CUDA build artifacts
-_cuda_tmp/
+# Wizard and progress files
+keyhunt_wizard.json
+puzzles_cache.txt
+~/.keyhunt/
+
+# Output/found key files
 KEYFOUNDKEYFOUND.txt
 VANITYKEYFOUND.txt
+*.found
+
+# BSGS cache files
 *.dat
 *.tbl
 *.blm
+keyhunt_bsgs_*
+
+# CUDA build artifacts
+_cuda_tmp/
+
+# Profiling
+gmon.out
+*.gcda
+*.gcno
+analysis.txt
 
 # Prerequisites
 *.d
