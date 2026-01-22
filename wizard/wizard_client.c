@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/wait.h>
 
 static volatile int g_client_running = 1;
 
@@ -53,13 +54,14 @@ static int search_range_subprocess(const char *start, const char *end,
         snprintf(gpu_arg, sizeof(gpu_arg), "-G hybrid ");
     }
 
+    /* Use timeout to prevent hung subprocess (5 minutes max per work unit) */
     if (strcmp(cfg->mode, "bsgs") == 0) {
         snprintf(cmd, sizeof(cmd),
-            "./keyhunt -m bsgs -f %s -r %s:%s -t %d %s-q -s 1 2>&1",
+            "timeout 300s ./keyhunt -m bsgs -f %s -r %s:%s -t %d %s-q -s 1 2>&1",
             target_file, start, end, cfg->threads, gpu_arg);
     } else {
         snprintf(cmd, sizeof(cmd),
-            "./keyhunt -m %s -f %s -r %s:%s -t %d %s-l %s -q -s 1 2>&1",
+            "timeout 300s ./keyhunt -m %s -f %s -r %s:%s -t %d %s-l %s -q -s 1 2>&1",
             cfg->mode, target_file, start, end, cfg->threads, gpu_arg, cfg->key_type);
     }
 
@@ -107,8 +109,20 @@ static int search_range_subprocess(const char *start, const char *end,
         }
     }
 
-    pclose(fp);
+    int exit_status = pclose(fp);
     unlink(target_file);
+
+    /* Check if keyhunt subprocess failed */
+    if (exit_status != 0 && !found) {
+        int exit_code = WEXITSTATUS(exit_status);
+        if (exit_code == 124) {
+            fprintf(stderr, "\n[-] Keyhunt subprocess TIMED OUT (5 min limit)\n");
+            return -2;  /* Timeout - work unit incomplete */
+        } else if (exit_code != 0) {
+            fprintf(stderr, "\n[-] Keyhunt subprocess exited with code %d\n", exit_code);
+            fprintf(stderr, "    Command: %s\n", cmd);
+        }
+    }
 
     return found ? 1 : 0;
 }
@@ -222,6 +236,8 @@ int wizard_client_run(wizard_config_t *cfg) {
     time_t last_heartbeat = start_time;
 
     /* Main work loop */
+    int no_work_count = 0;
+
     while (g_client_running) {
         /* Request work from coordinator */
         char range_start[65], range_end[65];
@@ -229,9 +245,20 @@ int wizard_client_run(wizard_config_t *cfg) {
         int result = dist_worker_request_work(&client, range_start, range_end);
 
         if (result == 1) {
-            printf("\n[+] No more work available from server.\n");
-            break;
+            /* No work available - wait and retry (work might become available) */
+            no_work_count++;
+            if (no_work_count >= 10) {
+                printf("\n[+] No more work available from server (waited 30s).\n");
+                break;
+            }
+            printf("\r[i] Waiting for work... (%d/10)     ", no_work_count);
+            fflush(stdout);
+            sleep(3);
+            continue;
         }
+
+        /* Reset counter when work is available */
+        no_work_count = 0;
 
         if (result < 0) {
             printf("\n[-] Error requesting work, reconnecting...\n");
@@ -269,10 +296,15 @@ int wizard_client_run(wizard_config_t *cfg) {
         time_t unit_elapsed = time(NULL) - unit_start;
         if (unit_elapsed == 0) unit_elapsed = 1;
 
+        /* Handle timeout - subprocess killed after 5 minutes */
+        if (search_result == -2) {
+            printf("\n[!] Work unit timed out, reporting partial progress and continuing\n");
+        }
+
         total_keys += keys_checked;
         double speed = (double)keys_checked / unit_elapsed / 1000000.0;
 
-        /* Report completion */
+        /* Report completion (even partial for timeout) */
         if (dist_worker_report_done(&client, keys_checked, unit_elapsed * 1000) != 0) {
             printf("\n[-] Failed to report completion\n");
         }

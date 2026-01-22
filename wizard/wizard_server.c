@@ -209,9 +209,19 @@ int wizard_server_run(wizard_config_t *cfg) {
 
         /* Check if local client is still running */
         if (has_local_client && check_local_client(g_local_client_pid) == 0) {
-            printf("\n[!] Local client exited unexpectedly\n");
-            has_local_client = false;
-            g_local_client_pid = 0;
+            printf("\n\n[!] Local client exited unexpectedly, respawning...\n");
+
+            /* Wait a moment before respawning */
+            sleep(2);
+
+            g_local_client_pid = spawn_local_client(cfg->server_port);
+            if (g_local_client_pid > 0) {
+                printf("[+] Local client respawned (PID: %d)\n\n", g_local_client_pid);
+            } else {
+                printf("[-] Failed to respawn local client\n");
+                has_local_client = false;
+                g_local_client_pid = 0;
+            }
         }
 
         /* Print stats every second */
