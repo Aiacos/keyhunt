@@ -309,6 +309,9 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
     json_get_string(msg, "type", type, sizeof(type));
 
     if (strcmp(type, "request_work") == 0) {
+        /* Update heartbeat - worker is alive */
+        worker->last_heartbeat = time_ms();
+
         dist_work_unit_t *unit = find_pending_work(coord);
         char response[DIST_MAX_MSG_SIZE];
 
@@ -338,6 +341,9 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         int work_id = (int)json_get_int(msg, "work_id");
         uint64_t keys = (uint64_t)json_get_int(msg, "keys_processed");
         uint64_t elapsed = (uint64_t)json_get_int(msg, "elapsed_ms");
+
+        /* Update heartbeat - worker is alive */
+        worker->last_heartbeat = time_ms();
 
         if (work_id >= 0 && work_id < coord->work_unit_count) {
             dist_work_unit_t *unit = &coord->work_units[work_id];
@@ -509,6 +515,36 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         coord->work_units_pending++;
                     }
                 }
+            }
+        }
+    }
+
+    /* Check for stale work units (assigned but worker unresponsive) */
+    uint64_t now_ms = time_ms();
+    uint64_t stale_timeout_ms = 5 * 60 * 1000;  /* 5 minutes */
+
+    for (int i = 0; i < coord->work_unit_count; i++) {
+        dist_work_unit_t *unit = &coord->work_units[i];
+        if (unit->status == WORK_STATUS_ASSIGNED) {
+            /* Check if assigned worker is still connected and responsive */
+            bool worker_alive = false;
+            for (int w = 0; w < coord->worker_count; w++) {
+                if (coord->workers[w].id == unit->assigned_worker &&
+                    coord->workers[w].connected) {
+                    /* Worker connected - check heartbeat timeout */
+                    if (now_ms - coord->workers[w].last_heartbeat < stale_timeout_ms) {
+                        worker_alive = true;
+                    }
+                    break;
+                }
+            }
+
+            /* If worker not alive or unit assigned too long, reassign */
+            if (!worker_alive || (now_ms - unit->assigned_time > stale_timeout_ms)) {
+                printf(LOG_SERVER LOG_WARN "Work unit #%d timed out, reassigning\n", unit->id);
+                unit->status = WORK_STATUS_PENDING;
+                unit->assigned_worker = -1;
+                coord->work_units_pending++;
             }
         }
     }
