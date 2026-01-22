@@ -33,6 +33,7 @@ email: albertobsd@gmail.com
 #include "wizard/wizard.h"
 #include "src/benchmark.h"
 #include "src/output.h"
+#include "src/progress.h"
 #include "src/cli.h"
 
 #include "secp256k1/SECP256k1.h"
@@ -91,6 +92,10 @@ static bool g_avx2_available = false;
 static keyhunt_config_t g_config;
 static bool g_config_loaded = false;
 static const char *g_save_config_path = NULL;
+
+// Progress tracking state
+static progress_state_t g_progress_state;
+static bool g_progress_enabled = false;
 
 #ifndef _WIN64
 static WorkQueue<Int> g_workQueue;
@@ -2891,7 +2896,28 @@ int main(int argc, char **argv)	{
 				}
 			}
 		}
-	
+
+	// =========================================================================
+	// Initialize progress tracking system
+	// =========================================================================
+	if (progress_init() == 0) {
+		char *range_start_hex = n_range_start.GetBase16();
+		char *range_end_hex = n_range_end.GetBase16();
+
+		if (progress_create(&g_progress_state, get_mode_name(FLAGMODE),
+		                    fileName, bitrange,
+		                    range_start_hex ? range_start_hex : "0",
+		                    range_end_hex ? range_end_hex : "0") == 0) {
+			g_progress_enabled = true;
+			g_progress_state.is_random_mode = (FLAGRANDOM != 0);
+			g_progress_state.thread_count = NTHREADS;
+			output_info("Progress tracking enabled (auto-saves every 60s)\n");
+		}
+
+		if (range_start_hex) free(range_start_hex);
+		if (range_end_hex) free(range_end_hex);
+	}
+
 	if(FLAGMODE == MODE_BSGS )	{
 		printf("[+] Opening file %s\n",fileName);
 		fd = fopen(fileName,"rb");
@@ -4669,6 +4695,13 @@ int main(int argc, char **argv)	{
 						fflush(stdout);
 						THREADOUTPUT = 0;
 
+						// Update progress tracking (auto-saves every 60s)
+						if (g_progress_enabled) {
+							char *current_hex = n_range_start.GetBase16();
+							progress_update(&g_progress_state, current_hex, strtoull(str_total ? str_total : "0", NULL, 10));
+							if (current_hex) free(current_hex);
+						}
+
 						free(str_seconds);
 						free(str_pretotal);
 						free(str_total);
@@ -4709,6 +4742,12 @@ int main(int argc, char **argv)	{
 				g_work_pool.disable();
 			}
 		}
+
+	// Mark progress as complete (removes progress file)
+	if (g_progress_enabled) {
+		progress_complete(&g_progress_state);
+		output_info("Progress tracking completed\n");
+	}
 
 	printf("\nEnd\n");
 #ifndef _WIN64
