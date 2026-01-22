@@ -1960,9 +1960,12 @@ int main(int argc, char **argv)	{
 	fprintf(stderr,"[I] Using CPU_GRP_SIZE: %u (proven optimal)\n", CPU_GRP_SIZE);
 
 	// -------------------------------------------------------------------------
-	// Wizard mode check (before anything else)
+	// Help and wizard mode check (before anything else)
 	// -------------------------------------------------------------------------
 	for (int ai = 1; ai < argc; ai++) {
+		if (strcmp(argv[ai], "--help") == 0) {
+			menu();
+		}
 		if (strcmp(argv[ai], "--wizard") == 0 || strcmp(argv[ai], "-W") == 0) {
 			int result = wizard_run();
 			exit(result < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
@@ -2121,7 +2124,7 @@ int main(int argc, char **argv)	{
 					*/
 					default:
 						FLAGCRYPTO = CRYPTO_NONE;
-						fprintf(stderr,"[E] Unknow crypto value %s\n",optarg);
+						fprintf(stderr,"[E] Unknown crypto value %s\n",optarg);
 						exit(EXIT_FAILURE);
 					break;
 				}
@@ -2268,7 +2271,7 @@ int main(int argc, char **argv)	{
 						}
 					break;
 					default:
-						fprintf(stderr,"[E] Unknow mode value %s\n",optarg);
+						fprintf(stderr,"[E] Unknown mode value %s\n",optarg);
 						exit(EXIT_FAILURE);
 					break;
 				}
@@ -2316,7 +2319,7 @@ int main(int argc, char **argv)	{
 							}
 						break;
 						default:
-							printf("[E] Unknow number of Range Params: %i\n",t.n);
+							printf("[E] Unknown number of Range Params: %i\n",t.n);
 						break;
 					}
 				}
@@ -2383,7 +2386,7 @@ int main(int argc, char **argv)	{
 				printf("[+] Bloom Size Multiplier %i\n",FLAGBLOOMMULTIPLIER);
 			break;
 			default:
-				fprintf(stderr,"[E] Unknow opcion -%c\n",c);
+				fprintf(stderr,"[E] Unknown option -%c\n",c);
 				exit(EXIT_FAILURE);
 			break;
 		}
@@ -2809,13 +2812,13 @@ int main(int argc, char **argv)	{
 			case MODE_ADDRESS:
 			case MODE_XPOINT:
 				if(!readFileAddress(fileName))	{
-					fprintf(stderr,"[E] Unenexpected error\n");
+					fprintf(stderr,"[E] Unexpected error\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
 			case MODE_VANITY:
 				if(!readFileVanity(fileName))	{
-					fprintf(stderr,"[E] Unenexpected error\n");
+					fprintf(stderr,"[E] Unexpected error\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
@@ -8248,41 +8251,84 @@ void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, ui
 }
 
 void menu() {
-	printf("\nUsage:\n");
-	printf("-h          show this help\n");
-	printf("-W, --wizard  Interactive setup wizard for distributed mode\n");
-	printf("--wizard-client host:port  Non-interactive client mode (spawned by server)\n");
-	printf("-B Mode     BSGS now have some modes <sequential, backward, both, random, dance>\n");
-	printf("-b bits     For some puzzles you only need some numbers of bits in the test keys.\n");
-	printf("-c crypto   Search for specific crypto. <btc, eth> valid only w/ -m address\n");
-	printf("-C mini     Set the minikey Base only 22 character minikeys, ex: SRPqx8QiwnW4WNWnTVa2W5\n");
-	printf("-8 alpha    Set the bas58 alphabet for minikeys\n");
-	printf("-e          Enable endomorphism search (Only for address, rmd160 and vanity)\n");
-	printf("-G mode     GPU usage for rmd160/address <auto,on,off> (default off)\n");
-	printf("-f file     Specify file name with addresses or xpoints or uncompressed public keys\n");
-	printf("-I stride   Stride for xpoint, rmd160 and address, this option don't work with bsgs\n");
-	printf("-k value    Use this only with bsgs mode, k value is factor for M, more speed but more RAM use wisely\n");
-	printf("-l look     What type of address/hash160 are you looking for <compress, uncompress, both> Only for rmd160 and address\n");
-	printf("-m mode     mode of search for cryptos. (bsgs, xpoint, rmd160, address, vanity) default: address\n");
-	printf("-M          Matrix screen, feel like a h4x0r, but performance will dropped\n");
-	printf("-P          Enable segmented range progress indicator (non-random address/xpoint/rmd160/vanity)\n");
-	printf("-n number   Check for N sequential numbers before the random chosen, this only works with -R option\n");
-	printf("            Use -n to set the N for the BSGS process. Bigger N more RAM needed\n");
-	printf("-q          Quiet the thread output\n");
-	printf("-r SR:EN    StarRange:EndRange, the end range can be omitted for search from start range to N-1 ECC value\n");
-	printf("-R          Random, this is the default behavior\n");
-	printf("-s ns       Number of seconds for the stats output, 0 to omit output.\n");
-	printf("-S          S is for SAVING in files BSGS data (Bloom filters and bPtable)\n");
-	printf("-6          to skip sha256 Checksum on data files");
-	printf("-t tn       Threads number, must be a positive integer\n");
-	printf("-v value    Search for vanity Address, only with -m vanity\n");
-	printf("-z value    Bloom size multiplier, only address,rmd160,vanity, xpoint, value >= 1\n");
-	printf("\nExample:\n\n");
-	printf("./keyhunt -m rmd160 -f tests/unsolvedpuzzles.rmd -b 66 -l compress -R -q -t 8\n\n");
-	printf("This line runs the program with 8 threads from the range 20000000000000000 to 40000000000000000 without stats output\n\n");
-	printf("Developed by AlbertoBSD\tTips BTC: 1Coffee1jV4gB5gaXfHgSHDz9xx9QSECVW\n");
-	printf("Thanks to Iceland always helping and sharing his ideas.\nTips to Iceland: bc1q39meky2mn5qjq704zz0nnkl0v7kj4uz6r529at\n\n");
-	exit(EXIT_FAILURE);
+	printf("\n");
+	printf("keyhunt - High-performance cryptocurrency private key search tool\n");
+	printf("\n");
+	printf("USAGE:\n");
+	printf("  keyhunt -m <mode> -f <file> [options]\n");
+	printf("\n");
+	printf("MODES (-m):\n");
+	printf("  address     Search for Bitcoin addresses using bloom filters (default)\n");
+	printf("  rmd160      Search for RIPEMD160 hashes directly\n");
+	printf("  xpoint      Search for public key X-coordinates (fastest for known pubkeys)\n");
+	printf("  bsgs        Baby Step Giant Step algorithm for known public keys\n");
+	printf("  vanity      Generate vanity addresses with specific prefixes\n");
+	printf("\n");
+	printf("REQUIRED OPTIONS:\n");
+	printf("  -f <file>   Input file with addresses, xpoints, or public keys\n");
+	printf("  -m <mode>   Search mode (see MODES above)\n");
+	printf("\n");
+	printf("COMMON OPTIONS:\n");
+	printf("  -h, --help  Show this help message\n");
+	printf("  -t <num>    Number of threads (default: auto-detect CPU cores)\n");
+	printf("  -b <bits>   Bit range for puzzle solving (e.g., 66 for puzzle #66)\n");
+	printf("  -r <range>  Search range as START:END in hex (e.g., 1:FFFFFFFF)\n");
+	printf("  -R          Random search mode (default behavior)\n");
+	printf("  -q          Quiet mode - suppress thread output\n");
+	printf("  -s <secs>   Stats output interval in seconds (0 to disable)\n");
+	printf("  -l <type>   Address type: compress, uncompress, both\n");
+	printf("  -c <crypto> Cryptocurrency: btc, eth (only with -m address)\n");
+	printf("  -e          Enable endomorphism (6x speed for full curve search)\n");
+	printf("  -I <stride> Stride value for sequential search\n");
+	printf("  -P          Show segmented range progress indicator\n");
+	printf("  -M          Matrix display mode (slower but cool looking)\n");
+	printf("\n");
+	printf("BSGS OPTIONS:\n");
+	printf("  -n <value>  N value - larger N uses more RAM but faster search\n");
+	printf("  -k <value>  K factor multiplier for M (more RAM, more speed)\n");
+	printf("  -B <mode>   BSGS search pattern: sequential, backward, both, random, dance\n");
+	printf("  -S          Save/load BSGS data (bloom filters and bP tables)\n");
+	printf("  -6          Skip SHA256 checksum verification on data files\n");
+	printf("\n");
+	printf("VANITY OPTIONS:\n");
+	printf("  -v <prefix> Vanity address prefix to search for\n");
+	printf("\n");
+	printf("MINIKEY OPTIONS:\n");
+	printf("  -C <base>   Set 22-character minikey base (e.g., SRPqx8QiwnW4WNWnTVa2W5)\n");
+	printf("  -8 <alpha>  Set custom Base58 alphabet for minikeys\n");
+	printf("\n");
+	printf("GPU OPTIONS:\n");
+	printf("  -G <mode>   GPU mode: auto, on, off (default: off)\n");
+	printf("\n");
+	printf("ADVANCED OPTIONS:\n");
+	printf("  -z <mult>   Bloom filter size multiplier (>= 1)\n");
+	printf("  -W, --wizard          Interactive setup wizard\n");
+	printf("  --wizard-client <hp>  Non-interactive client mode (host:port)\n");
+	printf("  --config <file>       Load configuration from file\n");
+	printf("  --save-config <file>  Save current configuration to file\n");
+	printf("\n");
+	printf("QUICK START EXAMPLES:\n");
+	printf("\n");
+	printf("  # Search for Bitcoin addresses in a 32-bit range:\n");
+	printf("  ./keyhunt -m address -f targets.txt -r 1:FFFFFFFF\n");
+	printf("\n");
+	printf("  # Solve puzzle #66 with RIPEMD160 hashes:\n");
+	printf("  ./keyhunt -m rmd160 -f puzzle66.rmd -b 66 -l compress -R -q -t 8\n");
+	printf("\n");
+	printf("  # BSGS mode for known public key:\n");
+	printf("  ./keyhunt -m bsgs -f pubkey.txt -b 125 -q -S -R\n");
+	printf("\n");
+	printf("  # Search for vanity address starting with '1ABC':\n");
+	printf("  ./keyhunt -m vanity -v 1ABC -t 4\n");
+	printf("\n");
+	printf("For more information, see: https://github.com/albertobsd/keyhunt\n");
+	printf("\n");
+	printf("Developed by AlbertoBSD\n");
+	printf("Tips BTC: 1Coffee1jV4gB5gaXfHgSHDz9xx9QSECVW\n");
+	printf("Thanks to Iceland for ideas and contributions.\n");
+	printf("Tips to Iceland: bc1q39meky2mn5qjq704zz0nnkl0v7kj4uz6r529at\n");
+	printf("\n");
+	exit(EXIT_SUCCESS);
 }
 
 bool vanityrmdmatch(unsigned char *rmdhash)	{
