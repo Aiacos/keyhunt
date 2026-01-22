@@ -171,8 +171,8 @@ static void calculate_puzzle_recommendation(int bits, bool has_pubkey,
         /* BSGS is O(sqrt(N)), so random doesn't help much */
         rec->recommended_random = false;
 
-        /* Smaller work units for BSGS (more frequent progress updates) */
-        rec->recommended_work_unit = 0x8000000ULL;  /* 128M - ~2.5 seconds per unit */
+        /* Work units for BSGS - larger for continuous execution */
+        rec->recommended_work_unit = 0x40000000ULL;  /* 1G - ~20 seconds per unit */
 
     } else {
         rec->recommended_mode = "address";
@@ -180,14 +180,15 @@ static void calculate_puzzle_recommendation(int bits, bool has_pubkey,
         /* For address mode, random is better for large ranges */
         rec->recommended_random = (bits >= 66);
 
-        /* Work unit size: balance between progress frequency and subprocess overhead */
-        /* Target: ~2-5 seconds per work unit at ~50 Mkeys/s for quick feedback */
+        /* Work unit size: large for continuous CPU utilization
+         * Target: ~30-60 seconds per work unit at ~50 Mkeys/s
+         * Reduces subprocess spawn overhead significantly */
         if (bits <= 50) {
-            rec->recommended_work_unit = 0x4000000ULL;    /* 64M - ~1.3 seconds */
+            rec->recommended_work_unit = 0x40000000ULL;   /* 1G - ~20 seconds */
         } else if (bits <= 75) {
-            rec->recommended_work_unit = 0x8000000ULL;    /* 128M - ~2.5 seconds */
+            rec->recommended_work_unit = 0x80000000ULL;   /* 2G - ~40 seconds */
         } else {
-            rec->recommended_work_unit = 0x10000000ULL;   /* 256M - ~5 seconds */
+            rec->recommended_work_unit = 0x100000000ULL;  /* 4G - ~80 seconds */
         }
     }
 

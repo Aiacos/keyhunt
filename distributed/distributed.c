@@ -17,6 +17,70 @@
 #include <netdb.h>
 #include <fcntl.h>
 
+/* ============================================================================
+ * Clean Logging System
+ * ============================================================================ */
+
+/* ANSI color codes */
+#define CLR_RESET   "\033[0m"
+#define CLR_BOLD    "\033[1m"
+#define CLR_DIM     "\033[2m"
+#define CLR_GREEN   "\033[32m"
+#define CLR_YELLOW  "\033[33m"
+#define CLR_BLUE    "\033[34m"
+#define CLR_CYAN    "\033[36m"
+#define CLR_RED     "\033[31m"
+#define CLR_MAGENTA "\033[35m"
+
+/* Log prefixes */
+#define LOG_SERVER  CLR_CYAN  "[SERVER]" CLR_RESET
+#define LOG_CLIENT  CLR_BLUE  "[CLIENT]" CLR_RESET
+#define LOG_WORKER  CLR_GREEN "[WORKER]" CLR_RESET
+#define LOG_OK      CLR_GREEN "  ✓ " CLR_RESET
+#define LOG_INFO    CLR_CYAN  "  ℹ " CLR_RESET
+#define LOG_WARN    CLR_YELLOW"  ⚠ " CLR_RESET
+#define LOG_ERR     CLR_RED   "  ✗ " CLR_RESET
+#define LOG_FOUND   CLR_MAGENTA CLR_BOLD "  ★ " CLR_RESET
+
+/* Verbosity control (can be set externally) */
+static int g_dist_verbose = 1;
+
+static void dist_log_worker_table(const dist_coordinator_t *coord) {
+    if (!g_dist_verbose) return;
+
+    printf("\n" CLR_CYAN "┌─────┬────────────────┬─────────────────────────┬──────────────┬────────────┐" CLR_RESET "\n");
+    printf(CLR_CYAN "│" CLR_BOLD " ID  " CLR_RESET CLR_CYAN "│" CLR_BOLD " Host           " CLR_RESET CLR_CYAN "│" CLR_BOLD " CPU                     " CLR_RESET CLR_CYAN "│" CLR_BOLD " GPU          " CLR_RESET CLR_CYAN "│" CLR_BOLD " Speed      " CLR_RESET CLR_CYAN "│" CLR_RESET "\n");
+    printf(CLR_CYAN "├─────┼────────────────┼─────────────────────────┼──────────────┼────────────┤" CLR_RESET "\n");
+
+    for (int i = 0; i < coord->worker_count; i++) {
+        const dist_worker_t *w = &coord->workers[i];
+        if (!w->connected) continue;
+
+        char cpu_short[22];
+        if (w->cpu_name[0]) {
+            snprintf(cpu_short, sizeof(cpu_short), "%.18s", w->cpu_name);
+            if (strlen(w->cpu_name) > 18) strcat(cpu_short, "..");
+        } else {
+            snprintf(cpu_short, sizeof(cpu_short), "%d cores", w->cpu_threads);
+        }
+
+        char gpu_short[13] = "-";
+        if (w->gpu_name[0]) {
+            snprintf(gpu_short, sizeof(gpu_short), "%.10s", w->gpu_name);
+        }
+
+        printf(CLR_CYAN "│" CLR_RESET " %s%-3d" CLR_RESET " " CLR_CYAN "│" CLR_RESET " %-14.14s " CLR_CYAN "│" CLR_RESET " %-23s " CLR_CYAN "│" CLR_RESET " %-12s " CLR_CYAN "│" CLR_RESET " %7.1f M/s " CLR_CYAN "│" CLR_RESET "\n",
+               w->connected ? CLR_GREEN : CLR_DIM,
+               w->id,
+               w->hostname[0] ? w->hostname : "localhost",
+               cpu_short,
+               gpu_short,
+               w->throughput);
+    }
+
+    printf(CLR_CYAN "└─────┴────────────────┴─────────────────────────┴──────────────┴────────────┘" CLR_RESET "\n\n");
+}
+
 /* Simple JSON helpers (minimal, no external deps) */
 static void json_add_string(char *buf, size_t sz, const char *key, const char *val) {
     char tmp[512];
@@ -176,8 +240,7 @@ int dist_coordinator_set_range(dist_coordinator_t *coord,
     __uint128_t end = parse_hex128(range_end);
 
     if (end <= start) {
-        printf("[Coordinator] Error: end <= start (start=0x%s, end=0x%s)\n",
-               range_start, range_end);
+        printf(LOG_SERVER LOG_ERR "Invalid range: end <= start\n");
         return -1;
     }
 
@@ -197,7 +260,7 @@ int dist_coordinator_set_range(dist_coordinator_t *coord,
     int num_units;
     if (num_units_128 > 100000) {
         num_units = 100000;  /* Limit to prevent excessive memory */
-        printf("[Coordinator] Warning: Range too large, limiting to %d work units\n", num_units);
+        printf(LOG_SERVER LOG_WARN "Range too large, limiting to %d work units\n", num_units);
     } else {
         num_units = (int)num_units_128;
     }
@@ -227,8 +290,8 @@ int dist_coordinator_set_range(dist_coordinator_t *coord,
         pos = unit_end;
     }
 
-    printf("[Coordinator] Created %d work units for range 0x%s - 0x%s\n",
-           coord->work_unit_count, range_start, range_end);
+    printf(LOG_SERVER LOG_OK "Created %d work units (range 0x%.16s...)\n",
+           coord->work_unit_count, range_start);
     return coord->work_unit_count;
 }
 
@@ -264,7 +327,7 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
     set_nonblocking(coord->listen_socket);
     coord->running = true;
 
-    printf("[Coordinator] Listening on port %d\n", coord->port);
+    printf(LOG_SERVER LOG_OK "Listening on port " CLR_BOLD "%d" CLR_RESET "\n", coord->port);
     return 0;
 }
 
@@ -344,8 +407,9 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             result->worker_id = worker->id;
             result->found_time = time_ms();
 
-            printf("[Coordinator] FOUND by worker %d: %s -> %s\n",
-                   worker->id, privkey, address);
+            printf("\n" LOG_SERVER LOG_FOUND CLR_BOLD CLR_MAGENTA "KEY FOUND!" CLR_RESET " Worker #%d\n", worker->id);
+            printf(LOG_INFO "Private Key: " CLR_BOLD "%s" CLR_RESET "\n", privkey);
+            printf(LOG_INFO "Address:     " CLR_BOLD "%s" CLR_RESET "\n\n", address);
         }
 
         send_msg(worker->socket_fd, "{\"type\":\"ack\"}");
@@ -438,17 +502,11 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                              coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30);
                     send_msg(client_fd, welcome);
 
-                    printf("[Coordinator] Worker %d connected from %s (score=%.1f)\n",
-                           worker->id, worker->hostname, worker->perf_score);
-                    if (worker->cpu_name[0] || worker->gpu_name[0]) {
-                        printf("[Coordinator]   Hardware: %s (%d threads)",
-                               worker->cpu_name[0] ? worker->cpu_name : "unknown CPU",
-                               worker->cpu_threads);
-                        if (worker->gpu_name[0]) {
-                            printf(", GPU: %s (%d MB)", worker->gpu_name, worker->gpu_memory_mb);
-                        }
-                        printf("\n");
-                    }
+                    printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
+                           worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+
+                    /* Print worker table after new connection */
+                    dist_log_worker_table(coord);
                 }
             } else {
                 close(client_fd);
@@ -470,7 +528,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 handle_worker_msg(coord, i, msg);
             } else {
                 /* Worker disconnected */
-                printf("[Coordinator] Worker %d disconnected\n", worker->id);
+                printf(LOG_SERVER LOG_WARN "Worker " CLR_YELLOW "#%d" CLR_RESET " disconnected\n", worker->id);
                 close(worker->socket_fd);
                 worker->socket_fd = -1;
                 worker->connected = false;
@@ -537,7 +595,7 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     free(coord->work_units);
     free(coord->results);
 
-    printf("[Coordinator] Shutdown complete. %d results found.\n", coord->result_count);
+    printf(LOG_SERVER LOG_INFO "Shutdown complete. " CLR_BOLD "%d" CLR_RESET " results found.\n", coord->result_count);
 }
 
 /* ============================================================================
@@ -638,15 +696,14 @@ int dist_worker_connect(dist_worker_client_t *client) {
     if (client->heartbeat_interval_sec <= 0) client->heartbeat_interval_sec = 30;
 
     client->connected = true;
-    printf("[Worker] Connected to coordinator at %s:%d\n",
+    printf(LOG_CLIENT LOG_OK "Connected to " CLR_BOLD "%s:%d" CLR_RESET "\n",
            client->coordinator_host, client->coordinator_port);
 
     if (client->received_target_address[0]) {
-        printf("[Worker] Received job config: puzzle #%d (%d bits), mode=%s\n",
+        printf(LOG_CLIENT LOG_INFO "Job: Puzzle " CLR_BOLD "#%d" CLR_RESET " (%d bits) | Mode: %s\n",
                client->received_puzzle_number, client->received_bits, client->received_mode);
-        printf("[Worker] Target: %.40s%s\n", client->received_target_address,
+        printf(LOG_CLIENT LOG_INFO "Target: %.40s%s\n", client->received_target_address,
                strlen(client->received_target_address) > 40 ? "..." : "");
-        printf("[Worker] Heartbeat interval: %d seconds\n", client->heartbeat_interval_sec);
     }
 
     return 0;
@@ -746,7 +803,7 @@ void dist_worker_disconnect(dist_worker_client_t *client) {
         client->socket_fd = -1;
     }
     client->connected = false;
-    printf("[Worker] Disconnected from coordinator\n");
+    printf(LOG_CLIENT LOG_INFO "Disconnected\n");
 }
 
 /* ============================================================================
@@ -774,18 +831,14 @@ void dist_coordinator_set_job_config(dist_coordinator_t *coordinator,
     coordinator->job_puzzle_number = puzzle_number;
     coordinator->job_bits = bits;
 
-    printf("[Coordinator] Job config: puzzle #%d (%d bits), mode=%s, key_type=%s\n",
+    printf(LOG_SERVER LOG_INFO "Job: Puzzle " CLR_BOLD "#%d" CLR_RESET " (%d bits) | Mode: %s | Keys: %s\n",
            puzzle_number, bits, mode ? mode : "?", key_type ? key_type : "?");
-    printf("[Coordinator] Target: %.40s%s\n", target_address ? target_address : "?",
-           target_address && strlen(target_address) > 40 ? "..." : "");
 }
 
 void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
                                              int interval_sec) {
     if (!coordinator) return;
     coordinator->heartbeat_interval_sec = interval_sec > 0 ? interval_sec : 30;
-    printf("[Coordinator] Heartbeat interval: %d seconds\n",
-           coordinator->heartbeat_interval_sec);
 }
 
 void dist_worker_set_hardware_info(dist_worker_client_t *client,

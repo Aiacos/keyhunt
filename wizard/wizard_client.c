@@ -139,6 +139,16 @@ int wizard_client_run(wizard_config_t *cfg) {
         cfg->threads = sysinfo.cpu_logical_cores;
     }
 
+    /* Auto-configure GPU if available and not manually set */
+    if (cfg->gpu_percent == 0 && sysinfo.has_cuda) {
+        cfg->gpu_percent = sysinfo_get_hybrid_gpu_percent(&sysinfo);
+        printf("    GPU: %s (%llu MB VRAM) - auto-enabled %d%%\n",
+               sysinfo.gpu_name, (unsigned long long)sysinfo.gpu_vram_mb, cfg->gpu_percent);
+    } else if (sysinfo.has_cuda) {
+        printf("    GPU: %s (%llu MB VRAM) - %d%%\n",
+               sysinfo.gpu_name, (unsigned long long)sysinfo.gpu_vram_mb, cfg->gpu_percent);
+    }
+
     printf("\n[+] Connecting to server %s:%d...\n",
            cfg->server_host, cfg->server_port);
 
