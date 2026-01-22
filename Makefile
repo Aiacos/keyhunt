@@ -63,9 +63,10 @@ DIST_OBJS := distributed/distributed.o
 OUTPUT_OBJS := src/output.o
 PROGRESS_OBJS := src/progress.o
 BENCHMARK_OBJS := src/benchmark.o
+CLI_OBJS := src/cli.o
 WIZARD_OBJS := wizard/wizard.o wizard/wizard_config.o wizard/wizard_ui.o wizard/wizard_community.o wizard/wizard_server.o wizard/wizard_client.o
 
-COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o config.o $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS)
+COMMON_OBJS := base58/base58.o rmd160/rmd160.o xxhash/xxhash.o util.o sysinfo.o parameter_validator.o config.o $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS)
 
 KEYHUNT_OBJS := keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OBJS)
 BSGSD_OBJS := bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
@@ -89,7 +90,7 @@ keyhunt_legacy: $(LEGACY_OBJS)
 clean:
 	$(RM) keyhunt keyhunt_legacy bsgsd
 	$(RM) $(KEYHUNT_OBJS) $(BSGSD_OBJS) $(LEGACY_OBJS) parameter_validator.o config.o
-	$(RM) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) bloom/bloom_simd.o hash/sha256_shani.o
+	$(RM) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) bloom/bloom_simd.o hash/sha256_shani.o
 	$(RM) gpu/gpu_autotune.o gpu/gpu_backend_none.o gpu/gpu_backend_cuda.o gpu/multi_gpu_scheduler.o gpu/async_pipeline.o
 
 %.o: %.cpp
