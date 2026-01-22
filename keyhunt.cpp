@@ -2133,7 +2133,7 @@ int main(int argc, char **argv)	{
 					FLAGBITRANGE = 1;
 				}
 				else	{
-					fprintf(stderr,"[E] invalid bits param: %s.\n",optarg);
+					output_error("invalid bits param: %s.\n",optarg);
 				}
 			break;
 			case 'c':
@@ -2153,7 +2153,7 @@ int main(int argc, char **argv)	{
 					*/
 					default:
 						FLAGCRYPTO = CRYPTO_NONE;
-						fprintf(stderr,"[E] Unknown crypto value %s\n",optarg);
+						output_error("Unknown crypto value %s\n",optarg);
 						exit(EXIT_FAILURE);
 					break;
 				}
@@ -2172,7 +2172,7 @@ int main(int argc, char **argv)	{
 							raw_baseminikey[i] = (int)(strchr(Ccoinbuffer,str_baseminikey[i+1]) - Ccoinbuffer) % 58;
 						}
 						else	{
-							fprintf(stderr,"[E] invalid character in minikey\n");
+							output_error("invalid character in minikey\n");
 							exit(EXIT_FAILURE);
 						}
 						
@@ -2180,7 +2180,7 @@ int main(int argc, char **argv)	{
 					raw_baseminikey[21] = '\0';
 				}
 				else	{
-					fprintf(stderr,"[E] Invalid Minikey length %zu : %s\n",strlen(optarg),optarg);
+					output_error("Invalid Minikey length %zu : %s\n",strlen(optarg),optarg);
 					exit(EXIT_FAILURE);
 				}
 				
@@ -2329,7 +2329,7 @@ int main(int argc, char **argv)	{
 								range_end = secp->order.GetBase16();
 							}
 							else	{
-								fprintf(stderr,"[E] Invalid hexstring : %s.\n",range_start);
+								output_error("Invalid hexstring : %s.\n",range_start);
 							}
 						break;
 						case 2:
@@ -2340,15 +2340,15 @@ int main(int argc, char **argv)	{
 							}
 							else	{
 								if(isValidHex(range_start)) {
-									fprintf(stderr,"[E] Invalid hexstring : %s\n",range_start);
+									output_error("Invalid hexstring : %s\n",range_start);
 								}
 								else	{
-									fprintf(stderr,"[E] Invalid hexstring : %s\n",range_end);
+									output_error("Invalid hexstring : %s\n",range_end);
 								}
 							}
 						break;
 						default:
-							printf("[E] Unknown number of Range Params: %i\n",t.n);
+							output_error("Unknown number of Range Params: %i\n",t.n);
 						break;
 					}
 				}
@@ -2403,7 +2403,7 @@ int main(int argc, char **argv)	{
 					printf("[+] Base58 for Minikeys %s\n",Ccoinbuffer);
 				}
 				else	{
-					fprintf(stderr,"[E] The base58 alphabet must be 58 characters long.\n");
+					output_error("The base58 alphabet must be 58 characters long.\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
@@ -2844,13 +2844,13 @@ int main(int argc, char **argv)	{
 			case MODE_ADDRESS:
 			case MODE_XPOINT:
 				if(!readFileAddress(fileName))	{
-					fprintf(stderr,"[E] Unexpected error\n");
+					output_error("Unexpected error\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
 			case MODE_VANITY:
 				if(!readFileVanity(fileName))	{
-					fprintf(stderr,"[E] Unexpected error\n");
+					output_error("Unexpected error\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
@@ -2871,7 +2871,7 @@ int main(int argc, char **argv)	{
 				if (gpu_upload_gtable_from_secp() == 0) {
 					printf("[+] G table uploaded to GPU (8192 points)\n");
 				} else {
-					fprintf(stderr, "[E] Failed to upload G table to GPU\n");
+					output_error("Failed to upload G table to GPU\n");
 					FLAGGPU_FULL = 0;
 					FLAGGPU = 0;
 				}
@@ -2886,11 +2886,11 @@ int main(int argc, char **argv)	{
 							g_gpu_bloom_uploaded = 1;
 							printf("[+] GPU bloom uploaded (accelerates matching for large target sets)\n");
 						} else {
-							fprintf(stderr, "[W] GPU bloom upload failed; continuing without GPU bloom\n");
+							output_warning("GPU bloom upload failed; continuing without GPU bloom\n");
 						}
 					}
 				} else if (FLAGGPU_FULL) {
-					fprintf(stderr, "[E] Failed to upload targets to GPU\n");
+					output_error("Failed to upload targets to GPU\n");
 					FLAGGPU_FULL = 0;
 					FLAGGPU = 0;
 				}
@@ -2938,7 +2938,7 @@ int main(int argc, char **argv)	{
 			}
 		}
 		if(N == 0)	{
-			fprintf(stderr,"[E] There is no valid data in the file\n");
+			output_error("There is no valid data in the file\n");
 			exit(EXIT_FAILURE);
 		}
 		bsgs_found = (int*) calloc(N,sizeof(int));
