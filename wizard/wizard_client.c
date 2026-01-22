@@ -306,7 +306,17 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         /* Report completion (even partial for timeout) */
         if (dist_worker_report_done(&client, keys_checked, unit_elapsed * 1000) != 0) {
-            printf("\n[-] Failed to report completion\n");
+            printf("\n[-] Failed to report completion, reconnecting...\n");
+
+            /* Try to reconnect */
+            dist_worker_disconnect(&client);
+            sleep(2);
+            if (dist_worker_connect(&client) != 0) {
+                printf("[-] Reconnection failed, exiting\n");
+                break;
+            }
+            printf("[+] Reconnected to server\n");
+            continue;  /* Skip to next work unit request */
         }
 
         /* Save local progress */

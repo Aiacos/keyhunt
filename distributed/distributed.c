@@ -549,6 +549,38 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         }
     }
 
+    /* Check for stuck workers (connected but no progress for too long) */
+    uint64_t stuck_timeout_ms = 3 * 60 * 1000;  /* 3 minutes no progress */
+
+    for (int i = 0; i < coord->worker_count; i++) {
+        dist_worker_t *worker = &coord->workers[i];
+        if (worker->connected && worker->socket_fd >= 0) {
+            /* Worker is stuck if no heartbeat for 3 minutes */
+            if (now_ms - worker->last_heartbeat > stuck_timeout_ms) {
+                printf(LOG_SERVER LOG_WARN "Worker #%d (%s) stuck for 3+ min, forcing disconnect\n",
+                       worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+
+                /* Force disconnect - this will trigger work reassignment */
+                close(worker->socket_fd);
+                worker->socket_fd = -1;
+                worker->connected = false;
+                worker->throughput = 0.0;
+
+                /* Reassign any work this worker had */
+                if (worker->current_work_id >= 0 &&
+                    worker->current_work_id < coord->work_unit_count) {
+                    dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
+                    if (unit->status == WORK_STATUS_ASSIGNED) {
+                        unit->status = WORK_STATUS_PENDING;
+                        unit->assigned_worker = -1;
+                        coord->work_units_pending++;
+                        printf(LOG_SERVER LOG_INFO "Work unit #%d reassigned to pool\n", unit->id);
+                    }
+                }
+            }
+        }
+    }
+
     /* Update total throughput */
     coord->total_throughput = 0.0;
     for (int i = 0; i < coord->worker_count; i++) {
