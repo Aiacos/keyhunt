@@ -282,6 +282,9 @@ typedef struct {
 
     uint64_t keys_processed;
 
+    /* Local progress (reported at registration for resume) */
+    int local_completed_count;      /* Number of locally completed ranges */
+
     /* Server-configured settings */
     int heartbeat_interval_sec;
 
@@ -590,6 +593,13 @@ int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client);
  * @param token Authentication token to use
  */
 void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token);
+
+/**
+ * Set local completed count for cross-execution tracking
+ * @param client Client state
+ * @param count Number of locally completed ranges
+ */
+void dist_worker_set_local_progress(dist_worker_client_t *client, int count);
 
 /**
  * Enable TLS for worker client

@@ -40,7 +40,13 @@
  * ============================================================================ */
 
 static volatile int g_client_running = 1;
+static volatile int g_shutdown_requested = 0;
 static char g_executable_path[PATH_MAX] = "";  /* Absolute path to keyhunt binary */
+
+/* State for graceful shutdown progress saving */
+static int g_client_puzzle_number = 0;
+static char g_client_last_range_start[65] = "";
+static char g_client_last_range_end[65] = "";
 
 /* Heartbeat thread state */
 static pthread_t g_heartbeat_thread;
@@ -231,7 +237,10 @@ static void client_signal_handler(int sig) {
     (void)sig;
     g_client_running = 0;
     g_heartbeat_running = 0;
-    printf("\n\n[!] Shutdown signal received...\n");
+    g_shutdown_requested = 1;
+    /* Use write() which is async-signal-safe instead of printf */
+    const char msg[] = "\n\n[!] Shutdown signal received...\n";
+    (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
 }
 
 /* ============================================================================
@@ -595,6 +604,13 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("    Using authentication token\n");
     }
 
+    /* Load and report local progress count for cross-execution resume */
+    int local_count = wizard_load_local_progress_count(cfg->puzzle_number);
+    if (local_count > 0) {
+        dist_worker_set_local_progress(&client, local_count);
+        printf("    Local progress: %d ranges already completed\n", local_count);
+    }
+
     /* Connection retry loop */
     int connect_attempts = 0;
     const int max_attempts = 5;
@@ -634,6 +650,9 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("[i] BSGS mode detected - disabling GPU (CPU-optimized algorithm)\n");
         cfg->gpu_percent = 0;
     }
+
+    /* Store puzzle number for graceful shutdown */
+    g_client_puzzle_number = cfg->puzzle_number;
 
     printf("    Puzzle: #%d (%d bits)\n", cfg->puzzle_number, cfg->bits);
     printf("    Target: %s\n", cfg->target_address);
@@ -705,6 +724,10 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         work_count++;
         error_count = 0;  /* Reset on successful work request */
+
+        /* Store current range for graceful shutdown progress saving */
+        strncpy(g_client_last_range_start, range_start, sizeof(g_client_last_range_start) - 1);
+        strncpy(g_client_last_range_end, range_end, sizeof(g_client_last_range_end) - 1);
 
         /* Process the range */
         printf("\r[Unit #%d] Range: %.16s...%.8s ",
@@ -809,6 +832,15 @@ int wizard_client_run(wizard_config_t *cfg) {
     /* Stop heartbeat thread */
     stop_heartbeat_thread();
 
+    /* Graceful shutdown: save final progress if we have a pending work unit */
+    if (g_shutdown_requested && g_client_puzzle_number > 0 &&
+        g_client_last_range_start[0] != '\0' && g_client_last_range_end[0] != '\0') {
+        printf("[+] Saving final progress before shutdown...\n");
+        wizard_save_local_progress(g_client_puzzle_number,
+                                   g_client_last_range_start,
+                                   g_client_last_range_end);
+    }
+
     /* Cleanup and final stats */
     printf("\n\n");
     wizard_print_separator();
@@ -820,6 +852,11 @@ int wizard_client_run(wizard_config_t *cfg) {
         double avg_speed = (double)total_keys / (time(NULL) - start_time) / 1000000.0;
         printf("    Average speed: %.2f Mkeys/s\n", avg_speed);
     }
+
+    /* Clear global state */
+    g_client_puzzle_number = 0;
+    g_client_last_range_start[0] = '\0';
+    g_client_last_range_end[0] = '\0';
 
     dist_worker_disconnect(&client);
     return 0;

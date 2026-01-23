@@ -228,6 +228,55 @@ static int count_active_workers(dist_coordinator_t *coord, time_t now) {
 }
 
 /* ============================================================================
+ * Progress History CSV Logging
+ * ============================================================================ */
+
+/**
+ * Append a progress entry to the history CSV file.
+ * Creates the file with headers if it doesn't exist.
+ * Format: timestamp, keys_checked, speed_mkeys, active_workers
+ *
+ * @param puzzle_number Puzzle number (used in filename)
+ * @param keys_checked Total keys checked so far
+ * @param speed_mkeys Current speed in Mkeys/s
+ * @param active_workers Number of active workers
+ * @return 0 on success, -1 on error
+ */
+static int append_progress_history(int puzzle_number, uint64_t keys_checked,
+                                   double speed_mkeys, int active_workers) {
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "progress_history_%d.csv", puzzle_number);
+
+    /* Check if file exists to determine if we need headers */
+    int needs_header = (access(filepath, F_OK) != 0);
+
+    FILE *f = fopen(filepath, "a");
+    if (!f) {
+        return -1;
+    }
+
+    /* Write header if new file */
+    if (needs_header) {
+        fprintf(f, "timestamp,keys_checked,speed_mkeys,active_workers\n");
+    }
+
+    /* Write data row with ISO 8601 timestamp */
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", tm_info);
+
+    fprintf(f, "%s,%llu,%.2f,%d\n",
+            timestamp,
+            (unsigned long long)keys_checked,
+            speed_mkeys,
+            active_workers);
+
+    fclose(f);
+    return 0;
+}
+
+/* ============================================================================
  * Stable UI Rendering
  * ============================================================================ */
 
@@ -587,12 +636,27 @@ int wizard_server_run(wizard_config_t *cfg) {
             cfg->local_completed = coord.work_units_completed;
             wizard_config_save(cfg, "keyhunt_wizard.json");
             dist_coordinator_save_state(&coord, state_file);
+
+            /* Append to progress history CSV for external graphing tools */
+            double cpu_speed, gpu_speed, combined_speed;
+            dist_coordinator_get_speed_stats(&coord, &cpu_speed, &gpu_speed, &combined_speed);
+            append_progress_history(cfg->puzzle_number, coord.keys_processed,
+                                    combined_speed, current_workers);
+
             last_checkpoint = now;
         }
     }
 
-    /* Shutdown */
+    /* Shutdown - immediately save state when shutdown requested */
     g_server_running = 0;
+
+    /* Emergency checkpoint save - ensure we capture latest progress */
+    if (g_shutdown_requested) {
+        printf("\n[+] Saving state before shutdown...\n");
+        cfg->local_completed = coord.work_units_completed;
+        wizard_config_save(cfg, "keyhunt_wizard.json");
+        dist_coordinator_save_state(&coord, state_file);
+    }
 
     if (has_local_client && g_local_client_pid > 0) {
         printf("\n[+] Waiting for local client to finish...\n");

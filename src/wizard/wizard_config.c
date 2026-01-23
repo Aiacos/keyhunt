@@ -92,7 +92,7 @@ void wizard_config_init(wizard_config_t *cfg) {
     cfg->puzzle_number = 71;
     cfg->server_port = 7777;
     cfg->work_unit_size = 0x100000000ULL;  /* 4G keys */
-    cfg->checkpoint_interval_sec = 300;
+    cfg->checkpoint_interval_sec = 60;  /* Reduced from 300s for better crash recovery */
     strcpy(cfg->mode, "address");
     strcpy(cfg->key_type, "compress");
     cfg->random_mode = true;
@@ -282,7 +282,7 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     json_get_string(json, "host", cfg->server_host, sizeof(cfg->server_host), "0.0.0.0");
     cfg->server_port = json_get_int(json, "port", 7777);
     cfg->work_unit_size = json_get_hex(json, "work_unit_size", 0x100000000ULL);
-    cfg->checkpoint_interval_sec = json_get_int(json, "checkpoint_interval", 300);
+    cfg->checkpoint_interval_sec = json_get_int(json, "checkpoint_interval", 60);
     cfg->server_also_worker = json_get_bool(json, "also_worker", true);
     json_get_string(json, "auth_token", cfg->auth_token, sizeof(cfg->auth_token), "");
 

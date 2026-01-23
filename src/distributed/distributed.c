@@ -1533,6 +1533,8 @@ int dist_worker_connect(dist_worker_client_t *client) {
     json_add_int(msg, sizeof(msg), "gpu_memory_mb", client->gpu_memory_mb);
     json_add_double(msg, sizeof(msg), "cpu_speed_mkeys", client->cpu_speed_mkeys);
     json_add_double(msg, sizeof(msg), "gpu_speed_mkeys", client->gpu_speed_mkeys);
+    /* Include local completed count for cross-execution resume */
+    json_add_int(msg, sizeof(msg), "local_completed_count", client->local_completed_count);
     /* Include auth token if set */
     if (client->auth_token[0] != '\0') {
         json_add_string(msg, sizeof(msg), "auth_token", client->auth_token);
@@ -1845,6 +1847,11 @@ void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token)
     } else {
         client->auth_token[0] = '\0';
     }
+}
+
+void dist_worker_set_local_progress(dist_worker_client_t *client, int count) {
+    if (!client) return;
+    client->local_completed_count = count;
 }
 
 int dist_worker_enable_tls(dist_worker_client_t *client, bool verify_server) {
