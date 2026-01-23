@@ -56,6 +56,13 @@ static pthread_mutex_t g_heartbeat_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile uint64_t g_keys_since_heartbeat = 0;
 static volatile time_t g_last_heartbeat_time = 0;
 
+/* Reconnection state */
+static volatile int g_reconnecting = 0;
+static volatile int g_heartbeat_failures = 0;
+#define HEARTBEAT_FAILURE_THRESHOLD 3
+#define RECONNECT_BACKOFF_INITIAL_SEC 1
+#define RECONNECT_BACKOFF_MAX_SEC 32
+
 /* ============================================================================
  * Executable Path Resolution
  * ============================================================================ */
@@ -250,6 +257,7 @@ static void client_signal_handler(int sig) {
 /**
  * Background thread that sends periodic heartbeats to the server.
  * This ensures the server knows we're still alive during long searches.
+ * Tracks failures and sets reconnection flag when threshold is exceeded.
  */
 static void *heartbeat_thread_func(void *arg) {
     int interval_sec = *(int *)arg;
@@ -259,9 +267,14 @@ static void *heartbeat_thread_func(void *arg) {
         /* Sleep in small increments to respond quickly to shutdown */
         for (int i = 0; i < interval_sec && g_heartbeat_running && g_client_running; i++) {
             sleep(1);
+            /* Stop sleeping if we're reconnecting */
+            if (g_reconnecting) break;
         }
 
         if (!g_heartbeat_running || !g_client_running) break;
+
+        /* Don't send heartbeats during reconnection */
+        if (g_reconnecting) continue;
 
         /* Send heartbeat */
         pthread_mutex_lock(&g_heartbeat_mutex);
@@ -272,6 +285,13 @@ static void *heartbeat_thread_func(void *arg) {
             int result = dist_worker_heartbeat(g_heartbeat_client, keys);
             if (result == 0) {
                 g_last_heartbeat_time = time(NULL);
+                g_heartbeat_failures = 0;  /* Reset failure count on success */
+            } else {
+                g_heartbeat_failures++;
+                if (g_heartbeat_failures >= HEARTBEAT_FAILURE_THRESHOLD) {
+                    /* Trigger reconnection - heartbeat failed multiple times */
+                    g_reconnecting = 1;
+                }
             }
         }
         pthread_mutex_unlock(&g_heartbeat_mutex);
@@ -309,6 +329,133 @@ static void stop_heartbeat_thread(void) {
     g_heartbeat_running = 0;
     pthread_join(g_heartbeat_thread, NULL);
     g_heartbeat_client = NULL;
+}
+
+/**
+ * Pause heartbeat during reconnection.
+ * The thread keeps running but won't send heartbeats.
+ */
+static void pause_heartbeat(void) {
+    pthread_mutex_lock(&g_heartbeat_mutex);
+    g_heartbeat_failures = 0;
+    pthread_mutex_unlock(&g_heartbeat_mutex);
+}
+
+/**
+ * Resume heartbeat after successful reconnection.
+ */
+static void resume_heartbeat(void) {
+    pthread_mutex_lock(&g_heartbeat_mutex);
+    g_heartbeat_failures = 0;
+    g_last_heartbeat_time = time(NULL);
+    g_reconnecting = 0;
+    pthread_mutex_unlock(&g_heartbeat_mutex);
+}
+
+/**
+ * Attempt to reconnect to the server with exponential backoff.
+ *
+ * Backoff sequence: 1s, 2s, 4s, 8s, 16s, 32s (max)
+ * Unlimited retries until:
+ *   - Connection succeeds
+ *   - Shutdown requested (SIGINT)
+ *
+ * On disconnect:
+ *   - Current work unit is abandoned (server will reassign after timeout)
+ *   - Re-register with server on reconnect
+ *   - Report local progress count
+ *
+ * @param client Worker client state
+ * @param cfg Configuration (for hardware re-detection on reconnect)
+ * @return 0 on successful reconnection, -1 if shutdown requested
+ */
+static int attempt_reconnect(dist_worker_client_t *client, wizard_config_t *cfg) {
+    int backoff_sec = RECONNECT_BACKOFF_INITIAL_SEC;
+    int attempt = 0;
+
+    /* Mark that we're reconnecting */
+    g_reconnecting = 1;
+    pause_heartbeat();
+
+    printf("\n[!] Connection lost. Attempting to reconnect...\n");
+
+    /* Disconnect cleanly first */
+    dist_worker_disconnect(client);
+
+    while (g_client_running && !g_shutdown_requested) {
+        attempt++;
+
+        printf("[i] Reconnection attempt %d (next retry in %ds)...\n", attempt, backoff_sec);
+
+        /* Sleep in small increments to allow for clean shutdown */
+        for (int i = 0; i < backoff_sec && g_client_running && !g_shutdown_requested; i++) {
+            sleep(1);
+        }
+
+        /* Check for shutdown during sleep */
+        if (!g_client_running || g_shutdown_requested) {
+            printf("[!] Shutdown requested during reconnection.\n");
+            return -1;
+        }
+
+        /* Detect hardware info for reconnection */
+        system_info_t sysinfo;
+        sysinfo_init(&sysinfo);
+        sysinfo_compute_scores(&sysinfo);
+
+        /* Re-initialize the client with fresh performance score */
+        if (dist_worker_init(client, cfg->server_host, cfg->server_port, sysinfo.cpu_score) != 0) {
+            printf("[-] Failed to initialize worker client\n");
+            goto next_attempt;
+        }
+
+        /* Set hardware info */
+        dist_worker_set_hardware_info(client,
+                                      sysinfo.cpu_physical_cores,
+                                      sysinfo.cpu_logical_cores,
+                                      sysinfo.cpu_model,
+                                      sysinfo.gpu_name,
+                                      (int)sysinfo.gpu_vram_mb);
+
+        /* Set authentication token if configured */
+        if (cfg->auth_token[0] != '\0') {
+            dist_worker_set_auth_token(client, cfg->auth_token);
+        }
+
+        /* Load and report local progress count */
+        int local_count = wizard_load_local_progress_count(cfg->puzzle_number);
+        if (local_count > 0) {
+            dist_worker_set_local_progress(client, local_count);
+        }
+
+        /* Attempt connection */
+        if (dist_worker_connect(client) == 0) {
+            /* Success! */
+            printf("[+] Reconnected successfully! Resuming work...\n");
+
+            /* Update client pointer for heartbeat thread */
+            pthread_mutex_lock(&g_heartbeat_mutex);
+            g_heartbeat_client = client;
+            pthread_mutex_unlock(&g_heartbeat_mutex);
+
+            /* Resume heartbeat */
+            resume_heartbeat();
+
+            return 0;
+        }
+
+    next_attempt:
+        /* Exponential backoff: double the delay, cap at max */
+        if (backoff_sec < RECONNECT_BACKOFF_MAX_SEC) {
+            backoff_sec *= 2;
+            if (backoff_sec > RECONNECT_BACKOFF_MAX_SEC) {
+                backoff_sec = RECONNECT_BACKOFF_MAX_SEC;
+            }
+        }
+    }
+
+    printf("[!] Reconnection aborted due to shutdown.\n");
+    return -1;
 }
 
 /**
@@ -623,6 +770,10 @@ int wizard_client_run(wizard_config_t *cfg) {
     signal(SIGINT, client_signal_handler);
     signal(SIGTERM, client_signal_handler);
 
+    /* Reset reconnection state for fresh start */
+    g_reconnecting = 0;
+    g_heartbeat_failures = 0;
+
     wizard_print_header("KEYHUNT WIZARD - CLIENT MODE");
 
     /* Step 1: Resolve and validate executable path */
@@ -719,21 +870,39 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("    Local progress: %d ranges already completed\n", local_count);
     }
 
-    /* Connection retry loop */
+    /* Initial connection with exponential backoff (limited attempts for first connect) */
+    int backoff_sec = RECONNECT_BACKOFF_INITIAL_SEC;
     int connect_attempts = 0;
-    const int max_attempts = 5;
+    const int max_initial_attempts = 10;  /* Give up on initial connect after 10 tries */
 
-    while (connect_attempts < max_attempts && g_client_running) {
+    while (connect_attempts < max_initial_attempts && g_client_running && !g_shutdown_requested) {
         if (dist_worker_connect(&client) == 0) {
             break;
         }
         connect_attempts++;
-        printf("[-] Connection failed, retrying (%d/%d)...\n", connect_attempts, max_attempts);
-        sleep(2);
+        printf("[i] Connection attempt %d failed (next retry in %ds)...\n",
+               connect_attempts, backoff_sec);
+
+        /* Sleep in small increments for responsive shutdown */
+        for (int i = 0; i < backoff_sec && g_client_running && !g_shutdown_requested; i++) {
+            sleep(1);
+        }
+
+        /* Exponential backoff, cap at max */
+        if (backoff_sec < RECONNECT_BACKOFF_MAX_SEC) {
+            backoff_sec *= 2;
+            if (backoff_sec > RECONNECT_BACKOFF_MAX_SEC) {
+                backoff_sec = RECONNECT_BACKOFF_MAX_SEC;
+            }
+        }
     }
 
     if (!client.connected) {
-        printf("[-] Could not connect to server after %d attempts\n", max_attempts);
+        if (g_shutdown_requested) {
+            printf("[!] Shutdown requested, aborting connection.\n");
+        } else {
+            printf("[-] Could not connect to server after %d attempts\n", connect_attempts);
+        }
         return -1;
     }
 
@@ -786,12 +955,36 @@ int wizard_client_run(wizard_config_t *cfg) {
     /* Step 5: Main work loop */
     uint64_t total_keys = 0;
     int work_count = 0;
-    int error_count = 0;
-    const int max_consecutive_errors = 5;
     time_t start_time = time(NULL);
     int no_work_count = 0;
 
     while (g_client_running) {
+        /* Check if heartbeat thread detected connection loss */
+        if (g_reconnecting) {
+            /* Abandon current work unit - server will reassign after timeout */
+            g_client_last_range_start[0] = '\0';
+            g_client_last_range_end[0] = '\0';
+
+            if (attempt_reconnect(&client, cfg) != 0) {
+                /* Shutdown was requested during reconnection */
+                break;
+            }
+
+            /* Update job config from server after reconnect */
+            char server_target[64], server_mode[32], server_key_type[16];
+            if (dist_worker_get_job_config(&client, server_target, server_mode, server_key_type) == 0) {
+                strncpy(cfg->target_address, server_target, sizeof(cfg->target_address) - 1);
+                strncpy(cfg->mode, server_mode, sizeof(cfg->mode) - 1);
+                strncpy(cfg->key_type, server_key_type, sizeof(cfg->key_type) - 1);
+                cfg->puzzle_number = client.received_puzzle_number;
+                cfg->bits = client.received_bits;
+            }
+
+            /* Reset no_work_count after reconnection */
+            no_work_count = 0;
+            continue;
+        }
+
         /* Request work from coordinator */
         char range_start[65], range_end[65];
         int result = dist_worker_request_work(&client, range_start, range_end);
@@ -812,26 +1005,12 @@ int wizard_client_run(wizard_config_t *cfg) {
         no_work_count = 0;
 
         if (result < 0) {
-            printf("\n[-] Error requesting work, reconnecting...\n");
-            error_count++;
-
-            if (error_count >= max_consecutive_errors) {
-                printf("[-] Too many consecutive errors (%d), exiting\n", error_count);
-                break;
-            }
-
-            sleep(3);
-            dist_worker_disconnect(&client);
-            if (dist_worker_connect(&client) != 0) {
-                printf("[-] Reconnection failed\n");
-                break;
-            }
-            printf("[+] Reconnected\n");
+            /* Work request failed - trigger reconnection with exponential backoff */
+            g_reconnecting = 1;
             continue;
         }
 
         work_count++;
-        error_count = 0;  /* Reset on successful work request */
 
         /* Store current range for graceful shutdown progress saving */
         strncpy(g_client_last_range_start, range_start, sizeof(g_client_last_range_start) - 1);
@@ -860,14 +1039,9 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         /* Handle results */
         if (search_result == -1) {
-            /* Fatal error */
-            error_count++;
-            printf("\n[-] Search error, will retry next unit\n");
-
-            if (error_count >= max_consecutive_errors) {
-                printf("[-] Too many consecutive errors, exiting\n");
-                break;
-            }
+            /* Fatal error - log but continue to try next unit */
+            printf("\n[-] Search error, will try next unit\n");
+            /* Don't trigger reconnection for search errors (local issue) */
             continue;
         }
 
@@ -919,14 +1093,13 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         /* Report completion to server */
         if (dist_worker_report_done(&client, keys_checked, unit_elapsed * 1000) != 0) {
-            printf("\n[-] Failed to report completion, reconnecting...\n");
-            dist_worker_disconnect(&client);
-            sleep(2);
-            if (dist_worker_connect(&client) != 0) {
-                printf("[-] Reconnection failed, exiting\n");
-                break;
-            }
-            printf("[+] Reconnected to server\n");
+            printf("\n[-] Failed to report completion\n");
+            /*
+             * Work unit was completed locally but server doesn't know.
+             * The work is saved locally, and server will timeout/reassign.
+             * Trigger reconnection to resume getting new work.
+             */
+            g_reconnecting = 1;
             continue;
         }
 
