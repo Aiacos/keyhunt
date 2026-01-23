@@ -1172,3 +1172,608 @@ void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token)
         client->auth_token[0] = '\0';
     }
 }
+
+/* ============================================================================
+ * Persistent State Functions
+ * ============================================================================ */
+
+/* State file format version - increment when format changes */
+#define STATE_VERSION 1
+
+void dist_coordinator_get_state_path(const dist_coordinator_t *coordinator,
+                                     char *filepath, size_t filepath_size) {
+    if (!coordinator || !filepath || filepath_size == 0) return;
+
+    /* Generate path based on puzzle number and target */
+    if (coordinator->job_puzzle_number > 0) {
+        snprintf(filepath, filepath_size, "coordinator_state_puzzle%d.json",
+                 coordinator->job_puzzle_number);
+    } else {
+        snprintf(filepath, filepath_size, "coordinator_state.json");
+    }
+}
+
+int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
+                                const char *filepath) {
+    if (!coordinator || !filepath) return -1;
+
+    FILE *f = fopen(filepath, "w");
+    if (!f) {
+        printf(LOG_SERVER LOG_ERR "Failed to save state to %s: %s\n",
+               filepath, strerror(errno));
+        return -1;
+    }
+
+    /* Write header */
+    fprintf(f, "{\n");
+    fprintf(f, "  \"version\": %d,\n", STATE_VERSION);
+    fprintf(f, "  \"save_time\": %llu,\n", (unsigned long long)time(NULL));
+
+    /* Job configuration - for validation on load */
+    fprintf(f, "  \"job_target_address\": \"%s\",\n", coordinator->job_target_address);
+    fprintf(f, "  \"job_mode\": \"%s\",\n", coordinator->job_mode);
+    fprintf(f, "  \"job_key_type\": \"%s\",\n", coordinator->job_key_type);
+    fprintf(f, "  \"job_puzzle_number\": %d,\n", coordinator->job_puzzle_number);
+    fprintf(f, "  \"job_bits\": %d,\n", coordinator->job_bits);
+
+    /* Progress statistics */
+    fprintf(f, "  \"total_keys\": %llu,\n", (unsigned long long)coordinator->total_keys);
+    fprintf(f, "  \"keys_processed\": %llu,\n", (unsigned long long)coordinator->keys_processed);
+    fprintf(f, "  \"work_unit_count\": %d,\n", coordinator->work_unit_count);
+    fprintf(f, "  \"work_units_completed\": %d,\n", coordinator->work_units_completed);
+
+    /* Authentication (if enabled) */
+    if (coordinator->auth_enabled && coordinator->auth_token[0]) {
+        fprintf(f, "  \"auth_token\": \"%s\",\n", coordinator->auth_token);
+    }
+
+    /* Work units array - only save PENDING and COMPLETED status */
+    fprintf(f, "  \"work_units\": [\n");
+    int first_unit = 1;
+    for (int i = 0; i < coordinator->work_unit_count; i++) {
+        const dist_work_unit_t *unit = &coordinator->work_units[i];
+
+        /* Only save completed units (PENDING units will be regenerated) */
+        if (unit->status == WORK_STATUS_COMPLETED) {
+            if (!first_unit) fprintf(f, ",\n");
+            first_unit = 0;
+
+            fprintf(f, "    {\"id\": %d, \"range_start\": \"%s\", \"range_end\": \"%s\", "
+                       "\"status\": %d, \"keys_in_unit\": %llu}",
+                    unit->id, unit->range_start, unit->range_end,
+                    (int)unit->status, (unsigned long long)unit->keys_in_unit);
+        }
+    }
+    fprintf(f, "\n  ],\n");
+
+    /* Results array */
+    fprintf(f, "  \"results\": [\n");
+    for (int i = 0; i < coordinator->result_count; i++) {
+        const dist_result_t *result = &coordinator->results[i];
+        if (i > 0) fprintf(f, ",\n");
+        fprintf(f, "    {\"private_key\": \"%s\", \"address\": \"%s\", "
+                   "\"worker_id\": %d, \"found_time\": %llu}",
+                result->private_key, result->address,
+                result->worker_id, (unsigned long long)result->found_time);
+    }
+    fprintf(f, "\n  ]\n");
+
+    fprintf(f, "}\n");
+    fclose(f);
+
+    printf(LOG_SERVER LOG_OK "State saved to %s (%d/%d units completed)\n",
+           filepath, coordinator->work_units_completed, coordinator->work_unit_count);
+    return 0;
+}
+
+int dist_coordinator_load_state(dist_coordinator_t *coordinator,
+                                const char *filepath) {
+    if (!coordinator || !filepath) return -1;
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) {
+        if (errno == ENOENT) {
+            return 1;  /* File not found - not an error, just no state to restore */
+        }
+        printf(LOG_SERVER LOG_ERR "Failed to open state file %s: %s\n",
+               filepath, strerror(errno));
+        return -1;
+    }
+
+    /* Read entire file */
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (fsize <= 0 || fsize > 100 * 1024 * 1024) {  /* Max 100MB */
+        printf(LOG_SERVER LOG_ERR "Invalid state file size: %ld\n", fsize);
+        fclose(f);
+        return -1;
+    }
+
+    char *json = (char *)malloc((size_t)fsize + 1);
+    if (!json) {
+        fclose(f);
+        return -1;
+    }
+
+    size_t read_bytes = fread(json, 1, (size_t)fsize, f);
+    fclose(f);
+    json[read_bytes] = '\0';
+
+    /* Validate version */
+    int version = (int)json_get_int(json, "version");
+    if (version != STATE_VERSION) {
+        printf(LOG_SERVER LOG_WARN "State file version mismatch (got %d, expected %d)\n",
+               version, STATE_VERSION);
+        free(json);
+        return -1;
+    }
+
+    /* Load job configuration */
+    char saved_target[64] = {0};
+    char saved_mode[32] = {0};
+    json_get_string(json, "job_target_address", saved_target, sizeof(saved_target));
+    json_get_string(json, "job_mode", saved_mode, sizeof(saved_mode));
+    (void)json_get_int(json, "job_puzzle_number");  /* Read for validation, value unused */
+
+    /* Validate job matches current configuration */
+    if (coordinator->job_target_address[0] && saved_target[0]) {
+        if (strcmp(coordinator->job_target_address, saved_target) != 0) {
+            printf(LOG_SERVER LOG_WARN "State file target mismatch - not loading\n");
+            printf(LOG_SERVER LOG_INFO "  Current: %s\n", coordinator->job_target_address);
+            printf(LOG_SERVER LOG_INFO "  Saved:   %s\n", saved_target);
+            free(json);
+            return -1;
+        }
+    }
+
+    /* Load authentication token if present */
+    char saved_auth[DIST_AUTH_TOKEN_MAX] = {0};
+    if (json_get_string(json, "auth_token", saved_auth, sizeof(saved_auth)) == 0) {
+        if (saved_auth[0]) {
+            strncpy(coordinator->auth_token, saved_auth, DIST_AUTH_TOKEN_MAX - 1);
+            coordinator->auth_enabled = true;
+        }
+    }
+
+    /* Load progress statistics */
+    coordinator->keys_processed = (uint64_t)json_get_int(json, "keys_processed");
+    /* Note: work_units_completed is recalculated from work_units array */
+
+    /* Parse completed work units to mark them as done */
+    const char *units_start = strstr(json, "\"work_units\":");
+    if (units_start) {
+        units_start = strchr(units_start, '[');
+        if (units_start) {
+            units_start++;
+
+            int units_restored = 0;
+
+            /* Parse each unit object */
+            const char *unit_ptr = units_start;
+            while ((unit_ptr = strchr(unit_ptr, '{')) != NULL) {
+                const char *unit_end = strchr(unit_ptr, '}');
+                if (!unit_end) break;
+
+                /* Extract unit ID */
+                char unit_json[512];
+                size_t unit_len = (size_t)(unit_end - unit_ptr + 1);
+                if (unit_len >= sizeof(unit_json)) {
+                    unit_ptr = unit_end + 1;
+                    continue;
+                }
+                memcpy(unit_json, unit_ptr, unit_len);
+                unit_json[unit_len] = '\0';
+
+                int unit_id = (int)json_get_int(unit_json, "id");
+                int unit_status = (int)json_get_int(unit_json, "status");
+
+                /* Mark this unit as completed in current work units */
+                if (unit_id >= 0 && unit_id < coordinator->work_unit_count) {
+                    if (unit_status == WORK_STATUS_COMPLETED) {
+                        coordinator->work_units[unit_id].status = WORK_STATUS_COMPLETED;
+                        units_restored++;
+                    }
+                }
+
+                unit_ptr = unit_end + 1;
+            }
+
+            /* Recalculate pending/completed counts */
+            coordinator->work_units_completed = 0;
+            coordinator->work_units_pending = 0;
+            for (int i = 0; i < coordinator->work_unit_count; i++) {
+                if (coordinator->work_units[i].status == WORK_STATUS_COMPLETED) {
+                    coordinator->work_units_completed++;
+                } else {
+                    coordinator->work_units_pending++;
+                }
+            }
+
+            printf(LOG_SERVER LOG_OK "Restored %d completed work units from state file\n",
+                   units_restored);
+        }
+    }
+
+    /* Parse results */
+    const char *results_start = strstr(json, "\"results\":");
+    if (results_start) {
+        results_start = strchr(results_start, '[');
+        if (results_start) {
+            results_start++;
+
+            const char *result_ptr = results_start;
+            while ((result_ptr = strchr(result_ptr, '{')) != NULL) {
+                const char *result_end = strchr(result_ptr, '}');
+                if (!result_end) break;
+
+                char result_json[512];
+                size_t result_len = (size_t)(result_end - result_ptr + 1);
+                if (result_len >= sizeof(result_json)) {
+                    result_ptr = result_end + 1;
+                    continue;
+                }
+                memcpy(result_json, result_ptr, result_len);
+                result_json[result_len] = '\0';
+
+                /* Add to results */
+                if (coordinator->result_count < coordinator->result_capacity) {
+                    dist_result_t *r = &coordinator->results[coordinator->result_count];
+                    json_get_string(result_json, "private_key", r->private_key, sizeof(r->private_key));
+                    json_get_string(result_json, "address", r->address, sizeof(r->address));
+                    r->worker_id = (int)json_get_int(result_json, "worker_id");
+                    r->found_time = (uint64_t)json_get_int(result_json, "found_time");
+
+                    if (r->private_key[0]) {
+                        coordinator->result_count++;
+                        printf(LOG_SERVER LOG_FOUND "Restored found key: %s\n", r->private_key);
+                    }
+                }
+
+                result_ptr = result_end + 1;
+            }
+        }
+    }
+
+    free(json);
+
+    printf(LOG_SERVER LOG_OK "State loaded: %d/%d work units completed, %d results\n",
+           coordinator->work_units_completed, coordinator->work_unit_count,
+           coordinator->result_count);
+
+    return 0;
+}
+
+/* ============================================================================
+ * Multi-Coordinator Federation Implementation
+ * ============================================================================ */
+
+#define LOG_FEDERATION CLR_MAGENTA "[FEDERATION]" CLR_RESET
+
+int dist_federation_init_primary(dist_coordinator_t *coordinator,
+                                 int federation_port) {
+    if (!coordinator) return -1;
+
+    coordinator->federation.role = FEDERATION_PRIMARY;
+    coordinator->federation.peer_count = 0;
+    coordinator->federation.sync_interval_sec = 30;
+    coordinator->federation.results_shared = false;
+    memset(coordinator->federation.peers, 0, sizeof(coordinator->federation.peers));
+
+    printf(LOG_FEDERATION LOG_OK "Initialized as PRIMARY coordinator\n");
+    printf(LOG_FEDERATION LOG_INFO "Federation port: %d (same as worker port)\n",
+           federation_port > 0 ? federation_port : coordinator->port);
+
+    return 0;
+}
+
+int dist_federation_init_secondary(dist_coordinator_t *coordinator,
+                                   const char *primary_host, int primary_port) {
+    if (!coordinator || !primary_host) return -1;
+
+    coordinator->federation.role = FEDERATION_SECONDARY;
+    strncpy(coordinator->federation.primary_host, primary_host,
+            sizeof(coordinator->federation.primary_host) - 1);
+    coordinator->federation.primary_port = primary_port > 0 ? primary_port : DIST_DEFAULT_PORT;
+    coordinator->federation.peer_count = 0;
+    coordinator->federation.sync_interval_sec = 30;
+    coordinator->federation.results_shared = false;
+
+    printf(LOG_FEDERATION LOG_OK "Initialized as SECONDARY coordinator\n");
+    printf(LOG_FEDERATION LOG_INFO "Primary: %s:%d\n",
+           coordinator->federation.primary_host,
+           coordinator->federation.primary_port);
+
+    return 0;
+}
+
+int dist_federation_add_peer(dist_coordinator_t *coordinator,
+                             const char *host, int port) {
+    if (!coordinator || !host) return -1;
+
+    if (coordinator->federation.role != FEDERATION_PRIMARY) {
+        printf(LOG_FEDERATION LOG_ERR "Only primary can add peers\n");
+        return -1;
+    }
+
+    if (coordinator->federation.peer_count >= DIST_MAX_FEDERATION) {
+        printf(LOG_FEDERATION LOG_ERR "Maximum federation peers reached (%d)\n",
+               DIST_MAX_FEDERATION);
+        return -1;
+    }
+
+    int idx = coordinator->federation.peer_count;
+    dist_federation_peer_t *peer = &coordinator->federation.peers[idx];
+
+    strncpy(peer->host, host, sizeof(peer->host) - 1);
+    peer->port = port > 0 ? port : DIST_DEFAULT_PORT;
+    peer->socket_fd = -1;
+    peer->connected = false;
+    peer->is_primary = false;
+    peer->last_heartbeat = 0;
+    peer->work_units_assigned = 0;
+    peer->work_units_completed = 0;
+    peer->keys_processed = 0;
+
+    coordinator->federation.peer_count++;
+
+    printf(LOG_FEDERATION LOG_OK "Added peer: %s:%d (index %d)\n",
+           peer->host, peer->port, idx);
+
+    return idx;
+}
+
+/* Internal: Connect to a federation peer */
+static int federation_connect_peer(dist_federation_peer_t *peer) {
+    if (!peer || peer->connected) return 0;
+
+    struct hostent *server = gethostbyname(peer->host);
+    if (!server) {
+        printf(LOG_FEDERATION LOG_ERR "Cannot resolve %s\n", peer->host);
+        return -1;
+    }
+
+    peer->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (peer->socket_fd < 0) {
+        return -1;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    memcpy(&addr.sin_addr.s_addr, server->h_addr, (size_t)server->h_length);
+    addr.sin_port = htons((uint16_t)peer->port);
+
+    /* Set connection timeout */
+    set_socket_timeout(peer->socket_fd, 10);
+
+    if (connect(peer->socket_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(peer->socket_fd);
+        peer->socket_fd = -1;
+        return -1;
+    }
+
+    peer->connected = true;
+    peer->last_heartbeat = time_ms();
+
+    printf(LOG_FEDERATION LOG_OK "Connected to peer %s:%d\n", peer->host, peer->port);
+    return 0;
+}
+
+int dist_federation_connect(dist_coordinator_t *coordinator) {
+    if (!coordinator) return -1;
+
+    if (coordinator->federation.role != FEDERATION_SECONDARY) {
+        printf(LOG_FEDERATION LOG_ERR "Only secondary can connect to primary\n");
+        return -1;
+    }
+
+    /* Create a peer entry for the primary */
+    if (coordinator->federation.peer_count == 0) {
+        dist_federation_peer_t *primary = &coordinator->federation.peers[0];
+        strncpy(primary->host, coordinator->federation.primary_host, sizeof(primary->host) - 1);
+        primary->port = coordinator->federation.primary_port;
+        primary->is_primary = true;
+        primary->socket_fd = -1;
+        primary->connected = false;
+        coordinator->federation.peer_count = 1;
+    }
+
+    dist_federation_peer_t *primary = &coordinator->federation.peers[0];
+
+    if (federation_connect_peer(primary) != 0) {
+        printf(LOG_FEDERATION LOG_ERR "Failed to connect to primary %s:%d\n",
+               primary->host, primary->port);
+        return -1;
+    }
+
+    /* Send registration message */
+    char msg[DIST_MAX_MSG_SIZE];
+    snprintf(msg, sizeof(msg),
+             "{\"type\":\"federation_register\","
+             "\"role\":\"secondary\","
+             "\"port\":%d,"
+             "\"auth_token\":\"%s\"}",
+             coordinator->port,
+             coordinator->auth_token);
+
+    if (send_msg(primary->socket_fd, msg) != 0) {
+        printf(LOG_FEDERATION LOG_ERR "Failed to send registration\n");
+        close(primary->socket_fd);
+        primary->socket_fd = -1;
+        primary->connected = false;
+        return -1;
+    }
+
+    /* Wait for response with work range assignment */
+    char response[DIST_MAX_MSG_SIZE];
+    if (recv_msg(primary->socket_fd, response, sizeof(response)) <= 0) {
+        printf(LOG_FEDERATION LOG_ERR "No response from primary\n");
+        close(primary->socket_fd);
+        primary->socket_fd = -1;
+        primary->connected = false;
+        return -1;
+    }
+
+    /* Parse assigned range */
+    char resp_type[32] = {0};
+    json_get_string(response, "type", resp_type, sizeof(resp_type));
+
+    if (strcmp(resp_type, "federation_welcome") == 0) {
+        json_get_string(response, "range_start",
+                       coordinator->federation.assigned_range_start,
+                       sizeof(coordinator->federation.assigned_range_start));
+        json_get_string(response, "range_end",
+                       coordinator->federation.assigned_range_end,
+                       sizeof(coordinator->federation.assigned_range_end));
+
+        printf(LOG_FEDERATION LOG_OK "Received range assignment:\n");
+        printf(LOG_FEDERATION LOG_INFO "  Start: %s\n",
+               coordinator->federation.assigned_range_start);
+        printf(LOG_FEDERATION LOG_INFO "  End:   %s\n",
+               coordinator->federation.assigned_range_end);
+
+        return 0;
+    } else if (strcmp(resp_type, "federation_rejected") == 0) {
+        char reason[256] = {0};
+        json_get_string(response, "reason", reason, sizeof(reason));
+        printf(LOG_FEDERATION LOG_ERR "Registration rejected: %s\n", reason);
+        close(primary->socket_fd);
+        primary->socket_fd = -1;
+        primary->connected = false;
+        return -1;
+    }
+
+    return -1;
+}
+
+int dist_federation_process(dist_coordinator_t *coordinator, int timeout_ms) {
+    if (!coordinator) return -1;
+
+    if (coordinator->federation.role == FEDERATION_STANDALONE) {
+        return 0;  /* Nothing to do in standalone mode */
+    }
+
+    uint64_t now = time_ms();
+
+    /* Check peer heartbeats and reconnect if needed */
+    for (int i = 0; i < coordinator->federation.peer_count; i++) {
+        dist_federation_peer_t *peer = &coordinator->federation.peers[i];
+
+        if (!peer->connected) {
+            /* Try to reconnect */
+            if (now - peer->last_heartbeat > 30000) {  /* 30s between reconnect attempts */
+                federation_connect_peer(peer);
+            }
+            continue;
+        }
+
+        /* Check for timeout */
+        if (now - peer->last_heartbeat > 60000) {  /* 60s timeout */
+            printf(LOG_FEDERATION LOG_WARN "Peer %s:%d timed out\n",
+                   peer->host, peer->port);
+            close(peer->socket_fd);
+            peer->socket_fd = -1;
+            peer->connected = false;
+        }
+    }
+
+    /* Send periodic sync (every sync_interval) */
+    if (now - coordinator->federation.last_sync_time >
+        (uint64_t)coordinator->federation.sync_interval_sec * 1000) {
+
+        coordinator->federation.last_sync_time = now;
+
+        /* Send progress update to all peers */
+        char msg[DIST_MAX_MSG_SIZE];
+        snprintf(msg, sizeof(msg),
+                 "{\"type\":\"federation_sync\","
+                 "\"work_completed\":%d,"
+                 "\"keys_processed\":%llu,"
+                 "\"result_count\":%d}",
+                 coordinator->work_units_completed,
+                 (unsigned long long)coordinator->keys_processed,
+                 coordinator->result_count);
+
+        for (int i = 0; i < coordinator->federation.peer_count; i++) {
+            dist_federation_peer_t *peer = &coordinator->federation.peers[i];
+            if (peer->connected && peer->socket_fd >= 0) {
+                send_msg(peer->socket_fd, msg);
+            }
+        }
+    }
+
+    return 0;
+}
+
+int dist_federation_share_result(dist_coordinator_t *coordinator,
+                                 const char *private_key, const char *address) {
+    if (!coordinator || !private_key || !address) return -1;
+
+    if (coordinator->federation.role == FEDERATION_STANDALONE) {
+        return 0;  /* Nothing to share in standalone mode */
+    }
+
+    char msg[DIST_MAX_MSG_SIZE];
+    snprintf(msg, sizeof(msg),
+             "{\"type\":\"federation_found\","
+             "\"private_key\":\"%s\","
+             "\"address\":\"%s\"}",
+             private_key, address);
+
+    int shared = 0;
+    for (int i = 0; i < coordinator->federation.peer_count; i++) {
+        dist_federation_peer_t *peer = &coordinator->federation.peers[i];
+        if (peer->connected && peer->socket_fd >= 0) {
+            if (send_msg(peer->socket_fd, msg) == 0) {
+                shared++;
+                printf(LOG_FEDERATION LOG_OK "Shared result with %s:%d\n",
+                       peer->host, peer->port);
+            }
+        }
+    }
+
+    coordinator->federation.results_shared = (shared > 0);
+    return shared > 0 ? 0 : -1;
+}
+
+void dist_federation_stats(const dist_coordinator_t *coordinator,
+                           int *total_peers, int *total_units, int *total_completed) {
+    if (!coordinator) return;
+
+    int peers = 0;
+    int units = coordinator->work_unit_count;
+    int completed = coordinator->work_units_completed;
+
+    for (int i = 0; i < coordinator->federation.peer_count; i++) {
+        if (coordinator->federation.peers[i].connected) {
+            peers++;
+            completed += coordinator->federation.peers[i].work_units_completed;
+        }
+    }
+
+    if (total_peers) *total_peers = peers;
+    if (total_units) *total_units = units;
+    if (total_completed) *total_completed = completed;
+}
+
+void dist_federation_shutdown(dist_coordinator_t *coordinator) {
+    if (!coordinator) return;
+
+    printf(LOG_FEDERATION LOG_INFO "Shutting down federation connections...\n");
+
+    for (int i = 0; i < coordinator->federation.peer_count; i++) {
+        dist_federation_peer_t *peer = &coordinator->federation.peers[i];
+        if (peer->socket_fd >= 0) {
+            /* Send goodbye message */
+            send_msg(peer->socket_fd, "{\"type\":\"federation_goodbye\"}");
+            close(peer->socket_fd);
+            peer->socket_fd = -1;
+            peer->connected = false;
+        }
+    }
+
+    coordinator->federation.peer_count = 0;
+    coordinator->federation.role = FEDERATION_STANDALONE;
+}

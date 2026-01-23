@@ -205,6 +205,17 @@ int wizard_server_run(wizard_config_t *cfg) {
     printf("[+] Created %d work units (%.2e keys each)\n",
            num_units, (double)cfg->work_unit_size);
 
+    /* Try to load previous state for resume capability */
+    char state_file[256];
+    dist_coordinator_get_state_path(&coord, state_file, sizeof(state_file));
+    int load_result = dist_coordinator_load_state(&coord, state_file);
+    if (load_result == 0) {
+        printf("[+] Resumed from previous state: %d/%d units already completed\n",
+               coord.work_units_completed, num_units);
+    } else if (load_result == 1) {
+        printf("[i] No previous state found, starting fresh\n");
+    }
+
     /* Mark excluded ranges as completed */
     if (cfg->community_excluded > 0) {
         printf("[+] Marking %llu community-scanned ranges as completed...\n",
@@ -338,10 +349,11 @@ int wizard_server_run(wizard_config_t *cfg) {
             }
         }
 
-        /* Checkpoint */
+        /* Checkpoint - save both wizard config and coordinator state */
         if (now - last_checkpoint >= cfg->checkpoint_interval_sec) {
             cfg->local_completed = coord.work_units_completed;
             wizard_config_save(cfg, "keyhunt_wizard.json");
+            dist_coordinator_save_state(&coord, state_file);
             last_checkpoint = now;
         }
     }
@@ -394,7 +406,9 @@ int wizard_server_run(wizard_config_t *cfg) {
     /* Save final state */
     cfg->local_completed = coord.work_units_completed;
     wizard_config_save(cfg, "keyhunt_wizard.json");
+    dist_coordinator_save_state(&coord, state_file);
     printf("\n[+] Configuration saved to keyhunt_wizard.json\n");
+    printf("[+] Coordinator state saved to %s (can resume on restart)\n", state_file);
 
     dist_coordinator_shutdown(&coord);
     return (coord.result_count > 0) ? 1 : 0;

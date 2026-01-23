@@ -34,6 +34,9 @@ extern "C" {
 /* Maximum workers */
 #define DIST_MAX_WORKERS 64
 
+/* Maximum federated coordinators */
+#define DIST_MAX_FEDERATION 8
+
 /* Maximum message size */
 #define DIST_MAX_MSG_SIZE 8192
 
@@ -91,6 +94,51 @@ typedef struct {
     uint64_t found_time;
 } dist_result_t;
 
+/* ============================================================================
+ * Federation Types (defined here for use in coordinator struct)
+ * ============================================================================ */
+
+/* Federation role */
+typedef enum {
+    FEDERATION_STANDALONE = 0,   /* Not federated (default) */
+    FEDERATION_PRIMARY,          /* Primary coordinator (distributes work to secondaries) */
+    FEDERATION_SECONDARY         /* Secondary coordinator (receives work ranges from primary) */
+} federation_role_t;
+
+/* Federation peer info */
+typedef struct {
+    char host[256];
+    int port;
+    int socket_fd;
+    bool connected;
+    bool is_primary;
+    uint64_t last_heartbeat;
+    int work_units_assigned;      /* Work units assigned to this peer */
+    int work_units_completed;     /* Work units completed by this peer */
+    uint64_t keys_processed;
+} dist_federation_peer_t;
+
+/* Federation state */
+typedef struct {
+    federation_role_t role;
+    char primary_host[256];
+    int primary_port;
+
+    dist_federation_peer_t peers[DIST_MAX_FEDERATION];
+    int peer_count;
+
+    /* Range partitioning for this coordinator */
+    char assigned_range_start[68];
+    char assigned_range_end[68];
+
+    /* Sync state */
+    uint64_t last_sync_time;
+    int sync_interval_sec;
+
+    /* Result sharing */
+    bool results_shared;
+} dist_federation_state_t;
+
 /* Coordinator state */
 typedef struct {
     int listen_socket;
@@ -123,6 +171,9 @@ typedef struct {
     char auth_token[DIST_AUTH_TOKEN_MAX];       /* Expected token from workers */
 
     char output_file[256];
+
+    /* Federation state */
+    dist_federation_state_t federation;
 
     /* Job configuration (sent to workers) */
     char job_target_address[64];    /* Target address/hash */
@@ -283,6 +334,38 @@ void dist_coordinator_get_speed_stats(const dist_coordinator_t *coordinator,
 void dist_coordinator_shutdown(dist_coordinator_t *coordinator);
 
 /* ============================================================================
+ * Persistent State Functions
+ * ============================================================================ */
+
+/**
+ * Save coordinator state to file for recovery after restart
+ * @param coordinator Coordinator state
+ * @param filepath Path to save state (e.g., "coordinator_state.json")
+ * @return 0 on success, -1 on error
+ */
+int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
+                                const char *filepath);
+
+/**
+ * Load coordinator state from file
+ * Call this before dist_coordinator_start() to resume previous session
+ * @param coordinator Coordinator state (must be initialized)
+ * @param filepath Path to state file
+ * @return 0 on success, 1 if file not found, -1 on error
+ */
+int dist_coordinator_load_state(dist_coordinator_t *coordinator,
+                                const char *filepath);
+
+/**
+ * Get default state file path based on job configuration
+ * @param coordinator Coordinator state
+ * @param filepath Output buffer for path
+ * @param filepath_size Size of output buffer
+ */
+void dist_coordinator_get_state_path(const dist_coordinator_t *coordinator,
+                                     char *filepath, size_t filepath_size);
+
+/* ============================================================================
  * Worker Client Functions
  * ============================================================================ */
 
@@ -389,6 +472,83 @@ int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client);
  * @param token Authentication token to use
  */
 void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token);
+
+/* ============================================================================
+ * Multi-Coordinator Federation Functions
+ * ============================================================================ */
+
+/**
+ * Initialize federation as primary coordinator
+ * Primary coordinates work distribution to secondary coordinators
+ * @param coordinator Coordinator state
+ * @param federation_port Port for federation connections (can be same as worker port)
+ * @return 0 on success, -1 on error
+ */
+int dist_federation_init_primary(dist_coordinator_t *coordinator,
+                                 int federation_port);
+
+/**
+ * Initialize federation as secondary coordinator
+ * Secondary receives work range assignment from primary
+ * @param coordinator Coordinator state
+ * @param primary_host Primary coordinator hostname/IP
+ * @param primary_port Primary coordinator federation port
+ * @return 0 on success, -1 on error
+ */
+int dist_federation_init_secondary(dist_coordinator_t *coordinator,
+                                   const char *primary_host, int primary_port);
+
+/**
+ * Add a secondary coordinator to federation (primary only)
+ * @param coordinator Primary coordinator state
+ * @param host Secondary coordinator hostname
+ * @param port Secondary coordinator port
+ * @return Peer index on success, -1 on error
+ */
+int dist_federation_add_peer(dist_coordinator_t *coordinator,
+                             const char *host, int port);
+
+/**
+ * Connect to primary coordinator (secondary only)
+ * @param coordinator Secondary coordinator state
+ * @return 0 on success, -1 on error
+ */
+int dist_federation_connect(dist_coordinator_t *coordinator);
+
+/**
+ * Process federation events
+ * Call this periodically to handle peer communication
+ * @param coordinator Coordinator state
+ * @param timeout_ms Timeout for select
+ * @return 0 on normal, 1 if results found by peer, -1 on error
+ */
+int dist_federation_process(dist_coordinator_t *coordinator, int timeout_ms);
+
+/**
+ * Share found result with federation peers
+ * @param coordinator Coordinator state
+ * @param private_key Found private key
+ * @param address Found address
+ * @return 0 on success, -1 on error
+ */
+int dist_federation_share_result(dist_coordinator_t *coordinator,
+                                 const char *private_key, const char *address);
+
+/**
+ * Get federation statistics
+ * @param coordinator Coordinator state
+ * @param total_peers Output: number of connected peers
+ * @param total_units Output: total work units across federation
+ * @param total_completed Output: completed units across federation
+ */
+void dist_federation_stats(const dist_coordinator_t *coordinator,
+                           int *total_peers, int *total_units, int *total_completed);
+
+/**
+ * Shutdown federation connections
+ * @param coordinator Coordinator state
+ */
+void dist_federation_shutdown(dist_coordinator_t *coordinator);
 
 #ifdef __cplusplus
 }
