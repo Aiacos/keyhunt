@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Release - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: keyhunt-linux-x64
+            asset_suffix: linux-x64
+          - os: ubuntu-22.04
+            artifact_name: keyhunt-linux-x64-ubuntu22
+            asset_suffix: linux-x64-ubuntu22
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev libgmp-dev
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag_name }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build standard version
+        run: |
+          make clean
+          make -j$(nproc) COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3"
+          strip keyhunt
+
+      - name: Build with TLS
+        run: |
+          make clean
+          make ENABLE_TLS=1 -j$(nproc) COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3"
+          mv keyhunt keyhunt-tls
+          strip keyhunt-tls
+
+      - name: Build legacy version
+        run: |
+          make clean
+          make legacy -j$(nproc) COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3"
+          strip keyhunt_legacy
+
+      - name: Run tests
+        run: |
+          make clean
+          make run_tests COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3"
+          ./run_tests
+
+      - name: Create release archive
+        run: |
+          mkdir -p release/${{ matrix.artifact_name }}
+          cp keyhunt-tls release/${{ matrix.artifact_name }}/keyhunt
+          cp keyhunt_legacy release/${{ matrix.artifact_name }}/
+          cp README.md release/${{ matrix.artifact_name }}/
+          cp LICENSE release/${{ matrix.artifact_name }}/ 2>/dev/null || echo "No LICENSE file"
+          cp -r tests/ release/${{ matrix.artifact_name }}/
+
+          # Create documentation bundle
+          mkdir -p release/${{ matrix.artifact_name }}/docs
+          cp *.md release/${{ matrix.artifact_name }}/docs/ 2>/dev/null || true
+
+          cd release
+          tar -czvf ${{ matrix.artifact_name }}-${{ steps.version.outputs.version }}.tar.gz ${{ matrix.artifact_name }}
+          sha256sum ${{ matrix.artifact_name }}-${{ steps.version.outputs.version }}.tar.gz > ${{ matrix.artifact_name }}-${{ steps.version.outputs.version }}.tar.gz.sha256
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-${{ steps.version.outputs.version }}
+          path: |
+            release/${{ matrix.artifact_name }}-${{ steps.version.outputs.version }}.tar.gz
+            release/${{ matrix.artifact_name }}-${{ steps.version.outputs.version }}.tar.gz.sha256
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-release
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag_name }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: List downloaded artifacts
+        run: |
+          find release-artifacts -type f -ls
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat << 'EOF' > release_notes.md
+          ## keyhunt ${{ steps.version.outputs.version }}
+
+          High-performance cryptocurrency private key search tool for secp256k1-based cryptocurrencies.
+
+          ### Features
+          - Multiple search modes: address, rmd160, xpoint, bsgs, vanity, pub2rmd
+          - SIMD optimizations (SSE2/AVX2/AVX-512)
+          - Distributed computing support
+          - GPU acceleration (CUDA)
+          - Interactive wizard for easy setup
+
+          ### Downloads
+
+          | Platform | Description |
+          |----------|-------------|
+          | `keyhunt-linux-x64` | Ubuntu latest (24.04) build |
+          | `keyhunt-linux-x64-ubuntu22` | Ubuntu 22.04 LTS build |
+
+          ### Installation
+
+          ```bash
+          # Extract the archive
+          tar -xzvf keyhunt-linux-x64-${{ steps.version.outputs.version }}.tar.gz
+
+          # Make executable
+          chmod +x keyhunt-linux-x64/keyhunt
+
+          # Run
+          ./keyhunt-linux-x64/keyhunt -h
+          ```
+
+          ### Verifying Downloads
+
+          Each release includes SHA256 checksums. Verify with:
+
+          ```bash
+          sha256sum -c keyhunt-linux-x64-${{ steps.version.outputs.version }}.tar.gz.sha256
+          ```
+
+          ### Building from Source
+
+          ```bash
+          git clone https://github.com/albertobsd/keyhunt.git
+          cd keyhunt
+          make
+          ```
+
+          For TLS support: `make ENABLE_TLS=1`
+
+          See README.md for detailed documentation.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: keyhunt ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
+            release-artifacts/**/*.tar.gz
+            release-artifacts/**/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
