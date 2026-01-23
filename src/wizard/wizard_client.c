@@ -13,6 +13,7 @@
 #include "wizard.h"
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
+#include "../gpu/gpu_backend.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -347,11 +348,13 @@ static int search_range_subprocess(const char *start, const char *end,
     fprintf(tf, "%s\n", cfg->target_address);
     fclose(tf);
 
-    /* Build GPU argument if enabled */
+    /* Build GPU argument if enabled - use hybrid mode for CPU+GPU parallel search */
     char gpu_arg[64] = "";
     if (cfg->gpu_percent > 0) {
-        /* Only use GPU if actually available - check will happen in keyhunt */
-        snprintf(gpu_arg, sizeof(gpu_arg), "-G on ");
+        /* Use hybrid mode for CPU+GPU parallel search (maximum throughput).
+         * keyhunt will automatically fall back to CPU-only if GPU backend
+         * is not available (compiled without CUDA). */
+        snprintf(gpu_arg, sizeof(gpu_arg), "-G hybrid ");
     }
 
     /* Build command with absolute path */
@@ -543,14 +546,24 @@ int wizard_client_run(wizard_config_t *cfg) {
      * limit performance on machines with more cores. */
     cfg->threads = sysinfo.cpu_logical_cores;
 
-    /* GPU detection - ALWAYS auto-enable GPU if available */
+    /* GPU detection - check both hardware AND compiled backend */
+    int gpu_backend_ready = gpu_backend_available();
+
     if (sysinfo.gpu_count > 0) {
-        /* Auto-enable GPU at 95% if not explicitly configured */
-        cfg->gpu_percent = 95;
-        printf("    GPU: %s (%llu MB VRAM) - auto-enabled %d%%\n",
-               sysinfo.gpu_name,
-               (unsigned long long)sysinfo.gpu_vram_mb,
-               cfg->gpu_percent);
+        if (gpu_backend_ready) {
+            /* GPU hardware available AND backend compiled - enable hybrid mode */
+            cfg->gpu_percent = 95;
+            printf("    GPU: %s (%llu MB VRAM) - hybrid mode enabled\n",
+                   sysinfo.gpu_name,
+                   (unsigned long long)sysinfo.gpu_vram_mb);
+        } else {
+            /* GPU hardware detected but CUDA backend not compiled */
+            printf("    GPU: %s (%llu MB VRAM) - DETECTED but CUDA backend not compiled\n",
+                   sysinfo.gpu_name,
+                   (unsigned long long)sysinfo.gpu_vram_mb);
+            printf("    [!] To enable GPU: install CUDA toolkit and rebuild with 'make clean && make'\n");
+            cfg->gpu_percent = 0;  /* Disable GPU since backend not available */
+        }
     } else {
         printf("    GPU: None detected\n");
         cfg->gpu_percent = 0;
