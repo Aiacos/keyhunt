@@ -1,0 +1,1 @@
+{"type":"register","id":"worker-123","hostname":"localhost","perf_score":1.5,"cpu_cores":8,"cpu_threads":16,"cpu_name":"AMD Ryzen","gpu_name":"NVIDIA RTX","gpu_memory_mb":8192,"auth_token":"secret123"}

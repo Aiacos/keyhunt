@@ -219,13 +219,69 @@ Response timeline:
 - Status update: 7 days
 - Security patch: Based on severity
 
+## Fuzzing
+
+The project includes fuzzing harnesses to test input validation and parsing code.
+
+### JSON Parser Fuzzing
+
+The JSON parsing functions used in distributed mode can be fuzzed to find potential vulnerabilities.
+
+#### Building the Fuzzer
+
+**libFuzzer (recommended):**
+```bash
+# Requires clang
+make fuzz
+
+# Run with corpus
+./fuzz_json tests/fuzz_corpus/
+```
+
+**AFL:**
+```bash
+# Requires AFL installed
+make fuzz_afl
+
+# Run fuzzer
+afl-fuzz -i tests/fuzz_corpus -o fuzz_out ./fuzz_json_afl @@
+```
+
+#### Fuzzing Targets
+
+The fuzzer tests these functions from `distributed.c`:
+- `json_get_string()` - Extract string values from JSON
+- `json_get_int()` - Extract integer values from JSON
+- `json_get_double()` - Extract double values from JSON
+- `json_add_string()` - Build JSON strings
+- `json_add_int()` - Build JSON integers
+- `json_add_double()` - Build JSON doubles
+- `sanitize_json_string()` - Sanitize untrusted input
+
+#### Seed Corpus
+
+The seed corpus in `tests/fuzz_corpus/` contains example JSON messages:
+- `register.json` - Worker registration message
+- `work_done.json` - Work completion report
+- `found.json` - Key found report
+- `heartbeat.json` - Worker heartbeat
+- `welcome.json` - Server welcome response
+- `work_assignment.json` - Work unit assignment
+
+#### Reporting Fuzzing Bugs
+
+If you find crashes or security issues through fuzzing:
+1. Minimize the test case: `./fuzz_json -minimize_crash=1 crash-input`
+2. Report privately following the vulnerability reporting guidelines below
+
 ## Security Changelog
 
 ### Version X.X.X (Current)
 
+- Added TLS/SSL support with OpenSSL (optional: `make ENABLE_TLS=1`)
+- Added fuzzing harness for JSON parser testing
 - Added rate limiting for DoS protection
 - Added configurable bind address
-- Added optional TLS support
 - Added JSON input sanitization
 - Replaced system() with fork/exec for subprocess execution
 - Fixed path validation for command injection prevention

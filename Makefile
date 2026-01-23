@@ -208,3 +208,35 @@ $(OBJDIR)/bsgs/bsgs_ops.o: $(SRCDIR)/bsgs/bsgs_ops.cpp | directories
 
 $(OBJDIR)/bsgs/bsgs_fast.o: $(SRCDIR)/bsgs/bsgs_fast.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
+# ============================================================================
+# Fuzzing Targets
+# ============================================================================
+# Build JSON parser fuzzer with libFuzzer (requires clang)
+# Usage: make fuzz
+#        ./fuzz_json tests/fuzz_corpus/
+#
+# For AFL: afl-g++ -g -O1 tests/fuzz_json.cpp -o fuzz_json_afl
+#          afl-fuzz -i tests/fuzz_corpus -o fuzz_out ./fuzz_json_afl @@
+# ============================================================================
+
+FUZZ_CXX ?= clang++
+FUZZ_FLAGS = -g -O1 -fno-omit-frame-pointer -fsanitize=fuzzer,address
+
+fuzz_json: tests/fuzz_json.cpp
+	$(FUZZ_CXX) $(FUZZ_FLAGS) $< -o $@
+	@echo ""
+	@echo "Fuzzer built successfully. Run with:"
+	@echo "  ./fuzz_json tests/fuzz_corpus/"
+	@echo ""
+
+fuzz: fuzz_json
+
+fuzz_afl: tests/fuzz_json.cpp
+	afl-g++ -g -O1 -D__AFL_COMPILER $< -o fuzz_json_afl
+	@echo ""
+	@echo "AFL fuzzer built. Run with:"
+	@echo "  afl-fuzz -i tests/fuzz_corpus -o fuzz_out ./fuzz_json_afl @@"
+	@echo ""
+
+.PHONY: fuzz fuzz_afl
