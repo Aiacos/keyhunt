@@ -97,17 +97,18 @@ Point Secp256K1::NextKey(Point &key) {
   return AddDirect(key,G);
 }
 
-uint8_t Secp256K1::GetByte(char *str, int idx) {
+/* GetByte now returns -1 on error instead of calling exit() */
+int Secp256K1::GetByte(char *str, int idx) {
   char tmp[3];
   int  val;
   tmp[0] = str[2 * idx];
   tmp[1] = str[2 * idx + 1];
   tmp[2] = 0;
   if (sscanf(tmp, "%X", &val) != 1) {
-    printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
-    exit(-1);
+    /* Return -1 to indicate error instead of exit() */
+    return -1;
   }
-  return (uint8_t)val;
+  return (int)(uint8_t)val;
 }
 
 Point Secp256K1::Negation(Point &p) {
@@ -128,15 +129,26 @@ bool Secp256K1::ParsePublicKeyHex(char *str,Point &ret,bool &isCompressed) {
     printf("ParsePublicKeyHex: Error invalid public key specified (66 or 130 character length)\n");
     return false;
   }
-  uint8_t type = GetByte(str, 0);
+  int type = GetByte(str, 0);
+  if (type < 0) {
+    printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
+    return false;
+  }
+
   switch (type) {
     case 0x02:
       if (len != 66) {
         printf("ParsePublicKeyHex: Error invalid public key specified (66 character length)\n");
         return false;
       }
-      for (int i = 0; i < 32; i++)
-        ret.x.SetByte(31 - i, GetByte(str, i + 1));
+      for (int i = 0; i < 32; i++) {
+        int b = GetByte(str, i + 1);
+        if (b < 0) {
+          printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
+          return false;
+        }
+        ret.x.SetByte(31 - i, (uint8_t)b);
+      }
       ret.y = GetY(ret.x, true);
       isCompressed = true;
       break;
@@ -146,8 +158,14 @@ bool Secp256K1::ParsePublicKeyHex(char *str,Point &ret,bool &isCompressed) {
         printf("ParsePublicKeyHex: Error invalid public key specified (66 character length)\n");
         return false;
       }
-      for (int i = 0; i < 32; i++)
-        ret.x.SetByte(31 - i, GetByte(str, i + 1));
+      for (int i = 0; i < 32; i++) {
+        int b = GetByte(str, i + 1);
+        if (b < 0) {
+          printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
+          return false;
+        }
+        ret.x.SetByte(31 - i, (uint8_t)b);
+      }
       ret.y = GetY(ret.x, false);
       isCompressed = true;
       break;
@@ -155,12 +173,24 @@ bool Secp256K1::ParsePublicKeyHex(char *str,Point &ret,bool &isCompressed) {
     case 0x04:
       if (len != 130) {
         printf("ParsePublicKeyHex: Error invalid public key specified (130 character length)\n");
-        exit(-1);
+        return false;
       }
-      for (int i = 0; i < 32; i++)
-        ret.x.SetByte(31 - i, GetByte(str, i + 1));
-      for (int i = 0; i < 32; i++)
-        ret.y.SetByte(31 - i, GetByte(str, i + 33));
+      for (int i = 0; i < 32; i++) {
+        int b = GetByte(str, i + 1);
+        if (b < 0) {
+          printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
+          return false;
+        }
+        ret.x.SetByte(31 - i, (uint8_t)b);
+      }
+      for (int i = 0; i < 32; i++) {
+        int b = GetByte(str, i + 33);
+        if (b < 0) {
+          printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
+          return false;
+        }
+        ret.y.SetByte(31 - i, (uint8_t)b);
+      }
       isCompressed = false;
       break;
 
@@ -218,8 +248,8 @@ void Secp256K1::GetPublicKeyHex(bool compressed, Point &pubKey,char *dst){
 char* Secp256K1::GetPublicKeyRaw(bool compressed, Point &pubKey) {
   char *ret = (char*) malloc(65);
   if(ret == NULL) {
-    ::fprintf(stderr,"Can't alloc memory\n");
-    exit(0);
+    /* Return NULL on allocation failure instead of exit() */
+    return NULL;
   }
   if (!compressed) {
     //Uncompressed public key

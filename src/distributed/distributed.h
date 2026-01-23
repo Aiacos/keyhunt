@@ -43,6 +43,11 @@ extern "C" {
 /* Authentication token max length */
 #define DIST_AUTH_TOKEN_MAX 64
 
+/* Rate limiting defaults */
+#define DIST_RATE_LIMIT_WINDOW_SEC 60      /* Rate limit window in seconds */
+#define DIST_RATE_LIMIT_MAX_CONNECTIONS 10 /* Max connections per IP per window */
+#define DIST_RATE_LIMIT_MAX_MESSAGES 100   /* Max messages per connection per window */
+
 /* Work unit status */
 typedef enum {
     WORK_STATUS_PENDING = 0,
@@ -139,10 +144,31 @@ typedef struct {
     bool results_shared;
 } dist_federation_state_t;
 
+/* Rate limiting entry for tracking connection attempts */
+typedef struct {
+    uint32_t ip_addr;               /* IPv4 address */
+    uint64_t window_start;          /* Start of current rate limit window */
+    int connection_count;           /* Connections in current window */
+    int message_count;              /* Messages in current window */
+} rate_limit_entry_t;
+
+/* Rate limiter state */
+typedef struct {
+    rate_limit_entry_t *entries;    /* Array of rate limit entries */
+    int entry_count;                /* Number of entries */
+    int entry_capacity;             /* Capacity of entries array */
+    pthread_mutex_t mutex;          /* Protects entries */
+    int max_connections_per_window; /* Max connections per IP per window */
+    int max_messages_per_window;    /* Max messages per connection per window */
+    int window_sec;                 /* Window duration in seconds */
+    bool enabled;                   /* Whether rate limiting is enabled */
+} rate_limiter_t;
+
 /* Coordinator state */
 typedef struct {
     int listen_socket;
     int port;
+    char bind_address[64];          /* Specific interface to bind to (empty = all) */
 
     dist_worker_t workers[DIST_MAX_WORKERS];
     int worker_count;
@@ -169,6 +195,14 @@ typedef struct {
     /* Authentication */
     bool auth_enabled;                          /* Whether authentication is required */
     char auth_token[DIST_AUTH_TOKEN_MAX];       /* Expected token from workers */
+
+    /* Rate limiting */
+    rate_limiter_t rate_limiter;                /* Rate limiter state */
+
+    /* TLS support (optional) */
+    bool tls_enabled;                           /* Whether TLS is enabled */
+    char tls_cert_file[256];                    /* Path to TLS certificate */
+    char tls_key_file[256];                     /* Path to TLS private key */
 
     char output_file[256];
 
@@ -279,6 +313,41 @@ void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
  */
 void dist_coordinator_set_auth_token(dist_coordinator_t *coordinator,
                                      const char *token);
+
+/**
+ * Set bind address for coordinator
+ * By default, coordinator binds to all interfaces (0.0.0.0).
+ * Use this to bind to a specific interface for security.
+ * @param coordinator Coordinator state
+ * @param address IP address to bind to (e.g., "127.0.0.1", "192.168.1.100")
+ *                NULL or empty string = bind to all interfaces
+ */
+void dist_coordinator_set_bind_address(dist_coordinator_t *coordinator,
+                                       const char *address);
+
+/**
+ * Enable rate limiting to prevent DoS attacks
+ * @param coordinator Coordinator state
+ * @param max_connections Max connections per IP per window (0 = default 10)
+ * @param max_messages Max messages per connection per window (0 = default 100)
+ * @param window_sec Window duration in seconds (0 = default 60)
+ */
+void dist_coordinator_enable_rate_limiting(dist_coordinator_t *coordinator,
+                                           int max_connections,
+                                           int max_messages,
+                                           int window_sec);
+
+/**
+ * Configure TLS for encrypted communication (optional)
+ * Requires OpenSSL to be available at compile time.
+ * @param coordinator Coordinator state
+ * @param cert_file Path to PEM certificate file
+ * @param key_file Path to PEM private key file
+ * @return 0 on success, -1 on error (TLS not available or files not found)
+ */
+int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
+                                const char *cert_file,
+                                const char *key_file);
 
 /**
  * Start coordinator (begins accepting workers)

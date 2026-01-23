@@ -84,7 +84,7 @@ LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(COMMON_OBJS
 # Create obj directory structure
 OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1
 
-.PHONY: all clean legacy bsgsd directories
+.PHONY: all clean legacy bsgsd directories test
 
 all: directories keyhunt
 
@@ -105,8 +105,52 @@ keyhunt_legacy: directories $(LEGACY_OBJS)
 	$(CXX) $(LDFLAGS) $(LEGACY_OBJS) $(LDLIBS) -lcrypto -lgmp -o $@
 
 clean:
-	$(RM) keyhunt keyhunt_legacy bsgsd
+	$(RM) keyhunt keyhunt_legacy bsgsd run_tests
 	$(RM) -r $(OBJDIR)
+
+# ============================================================================
+# Unit Tests
+# ============================================================================
+
+# Test object directory
+TEST_OBJDIR := $(OBJDIR)/tests
+
+# Test object files
+TEST_INT_OBJ := $(TEST_OBJDIR)/test_int.o
+TEST_BLOOM_OBJ := $(TEST_OBJDIR)/test_bloom.o
+TEST_BSGS_OBJ := $(TEST_OBJDIR)/test_bsgs_integration.o
+TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
+
+# Shared objects needed by tests
+# CORE_OBJS includes util.o which has tohex() needed by SECP256K1
+TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
+                    $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
+                    $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS)
+
+# Create test object directory
+$(TEST_OBJDIR):
+	@mkdir -p $@
+
+# Build test object files
+$(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | $(TEST_OBJDIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_BLOOM_OBJ): tests/test_bloom.cpp tests/test_framework.h | $(TEST_OBJDIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_BSGS_OBJ): tests/test_bsgs_integration.cpp tests/test_framework.h | $(TEST_OBJDIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_RUNNER_OBJ): tests/run_tests.cpp | $(TEST_OBJDIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Build test runner
+run_tests: directories $(TEST_OBJDIR) $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_SHARED_OBJS)
+	$(CXX) $(LDFLAGS) $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
+
+# Run all tests
+test: run_tests
+	./run_tests
 
 # Generic rules for building object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | directories

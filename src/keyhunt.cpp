@@ -66,6 +66,39 @@ email: albertobsd@gmail.com
 #endif
 #endif
 
+/* ============================================================================
+ * Thread-Safe Random Number Generation
+ * ============================================================================ */
+
+/*
+ * Thread-safe random number generator using thread-local state.
+ * This replaces rand() which is not thread-safe.
+ */
+static thread_local unsigned int g_thread_rand_state = 0;
+static thread_local bool g_thread_rand_initialized = false;
+
+static inline void thread_rand_init(void) {
+    if (!g_thread_rand_initialized) {
+        /* Seed with time + thread ID for uniqueness */
+        g_thread_rand_state = (unsigned int)(time(NULL) ^ (uintptr_t)pthread_self() ^ clock());
+        g_thread_rand_initialized = true;
+    }
+}
+
+/* Thread-safe replacement for rand() */
+static inline int thread_rand(void) {
+    thread_rand_init();
+    /* Simple LCG (same as glibc rand) */
+    g_thread_rand_state = g_thread_rand_state * 1103515245 + 12345;
+    return (int)((g_thread_rand_state >> 16) & 0x7fff);
+}
+
+/* Thread-safe random in range [0, n) */
+static inline int thread_rand_n(int n) {
+    if (n <= 0) return 0;
+    return thread_rand() % n;
+}
+
 #define CRYPTO_NONE 0
 #define CRYPTO_BTC 1
 #define CRYPTO_ETH 2
@@ -588,7 +621,8 @@ uint64_t FINISHED_THREADS_COUNTER = 0;
 uint64_t FINISHED_THREADS_BP = 0;
 uint64_t THREADCYCLES = 0;
 uint64_t THREADCOUNTER = 0;
-uint64_t FINISHED_ITEMS = 0;
+/* Use atomic for FINISHED_ITEMS since it's updated from multiple threads */
+std::atomic<uint64_t> FINISHED_ITEMS{0};
 uint64_t OLDFINISHED_ITEMS = -1;
 
 uint8_t byte_encode_crypto = 0x00;		/* Bitcoin  */
@@ -1902,7 +1936,7 @@ int main(int argc, char **argv)	{
 	
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	//Any windows secure random source goes here
-	rseed(clock() + time(NULL) + rand());
+	rseed(clock() + time(NULL) + thread_rand());
 #else
 	unsigned long rseedvalue;
 	int bytes_read = getrandom(&rseedvalue, sizeof(unsigned long), GRND_NONBLOCK);
@@ -1919,7 +1953,7 @@ int main(int argc, char **argv)	{
 		 * This can happen in containers, restricted environments, or systems with low entropy
 		 */
 		output_warning("getrandom() failed (bytes_read=%d), using fallback RNG\n", bytes_read);
-		rseed(clock() + time(NULL) + rand()*rand());
+		rseed(clock() + time(NULL) + thread_rand() * thread_rand());
 	}
 #endif
 	// Pre-scan for -q flag to initialize output correctly from the start
@@ -3741,7 +3775,7 @@ int main(int argc, char **argv)	{
 				output_info("We need to recalculate some files, don't worry this is only 3%% of the previous work\n");
 				FINISHED_THREADS_COUNTER = 0;
 				FINISHED_THREADS_BP = 0;
-				FINISHED_ITEMS = 0;
+				FINISHED_ITEMS.store(0, std::memory_order_relaxed);
 				salir = 0;
 				BASE = 0;
 				THREADCOUNTER = 0;
@@ -3754,7 +3788,7 @@ int main(int argc, char **argv)	{
 					THREADCYCLES++;
 				}
 				
-				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m,(int) (((double)FINISHED_ITEMS/(double)bsgs_m)*100));
+				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
 				fflush(stdout);
 				
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -3809,11 +3843,14 @@ int main(int argc, char **argv)	{
 						}
 					}
 
-					if(OLDFINISHED_ITEMS != FINISHED_ITEMS)	{
-						int percent = (bsgs_m2 > 0) ? (int)(((double)FINISHED_ITEMS/(double)bsgs_m2)*100) : 0;
-						printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m2,percent);
-						fflush(stdout);
-						OLDFINISHED_ITEMS = FINISHED_ITEMS;
+					{
+						uint64_t current_items = FINISHED_ITEMS.load(std::memory_order_relaxed);
+						if(OLDFINISHED_ITEMS != current_items)	{
+							int percent = (bsgs_m2 > 0) ? (int)(((double)current_items/(double)bsgs_m2)*100) : 0;
+							printf("\r[+] processing %lu/%lu bP points : %i%%\r",current_items,bsgs_m2,percent);
+							fflush(stdout);
+							OLDFINISHED_ITEMS = current_items;
+						}
 					}
 					
 					for(j = 0 ; j < NTHREADS ; j++)	{
@@ -3830,7 +3867,7 @@ int main(int argc, char **argv)	{
 						if(finished)	{
 							bPload_temp_ptr[j].finished = 0;
 							bPload_threads_available[j] = 1;
-							FINISHED_ITEMS += bPload_temp_ptr[j].workload;
+							FINISHED_ITEMS.fetch_add(bPload_temp_ptr[j].workload, std::memory_order_relaxed);
 							FINISHED_THREADS_COUNTER++;
 						}
 					}
@@ -3851,7 +3888,7 @@ int main(int argc, char **argv)	{
 				*/
 				FINISHED_THREADS_COUNTER = 0;
 				FINISHED_THREADS_BP = 0;
-				FINISHED_ITEMS = 0;
+				FINISHED_ITEMS.store(0, std::memory_order_relaxed);
 				salir = 0;
 				BASE = 0;
 				THREADCOUNTER = 0;
@@ -3866,7 +3903,7 @@ int main(int argc, char **argv)	{
 					//if(FLAGDEBUG) printf("[D] PERTHREAD_R: %lu\n",PERTHREAD_R);
 				}
 				
-				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m,(int) (((double)FINISHED_ITEMS/(double)bsgs_m)*100));
+				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
 				fflush(stdout);
 				
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -3924,10 +3961,13 @@ int main(int argc, char **argv)	{
 							THREADCOUNTER++;
 						}
 					}
-					if(OLDFINISHED_ITEMS != FINISHED_ITEMS)	{
-						printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m,(int) (((double)FINISHED_ITEMS/(double)bsgs_m)*100));
-						fflush(stdout);
-						OLDFINISHED_ITEMS = FINISHED_ITEMS;
+					{
+						uint64_t current_items = FINISHED_ITEMS.load(std::memory_order_relaxed);
+						if(OLDFINISHED_ITEMS != current_items)	{
+							printf("\r[+] processing %lu/%lu bP points : %i%%\r",current_items,bsgs_m,(int) (((double)current_items/(double)bsgs_m)*100));
+							fflush(stdout);
+							OLDFINISHED_ITEMS = current_items;
+						}
 					}
 					
 					for(j = 0 ; j < NTHREADS ; j++)	{
@@ -3944,7 +3984,7 @@ int main(int argc, char **argv)	{
 						if(finished)	{
 							bPload_temp_ptr[j].finished = 0;
 							bPload_threads_available[j] = 1;
-							FINISHED_ITEMS += bPload_temp_ptr[j].workload;
+							FINISHED_ITEMS.fetch_add(bPload_temp_ptr[j].workload, std::memory_order_relaxed);
 							FINISHED_THREADS_COUNTER++;
 						}
 					}
@@ -7553,7 +7593,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 		while base_key is less than n_range_end then:
 	*/
 	do	{
-		r = rand() % 3;
+		r = thread_rand_n(3);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	WaitForSingleObject(bsgs_thread, INFINITE);
 #else
@@ -8057,7 +8097,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	*/
 	do	{
 
-		r = rand() % 2;
+		r = thread_rand_n(2);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		WaitForSingleObject(bsgs_thread, INFINITE);
 #else

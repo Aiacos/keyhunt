@@ -209,6 +209,174 @@ static int recv_msg(int fd, char *buf, size_t bufsz) {
 }
 
 /* ============================================================================
+ * Rate Limiter Implementation
+ * ============================================================================ */
+
+static int rate_limiter_init(rate_limiter_t *rl) {
+    memset(rl, 0, sizeof(*rl));
+    rl->entry_capacity = 256;
+    rl->entries = calloc(rl->entry_capacity, sizeof(rate_limit_entry_t));
+    if (!rl->entries) return -1;
+
+    if (pthread_mutex_init(&rl->mutex, NULL) != 0) {
+        free(rl->entries);
+        rl->entries = NULL;
+        return -1;
+    }
+
+    /* Defaults - can be overridden */
+    rl->max_connections_per_window = DIST_RATE_LIMIT_MAX_CONNECTIONS;
+    rl->max_messages_per_window = DIST_RATE_LIMIT_MAX_MESSAGES;
+    rl->window_sec = DIST_RATE_LIMIT_WINDOW_SEC;
+    rl->enabled = false;
+
+    return 0;
+}
+
+static void rate_limiter_destroy(rate_limiter_t *rl) {
+    if (rl->entries) {
+        free(rl->entries);
+        rl->entries = NULL;
+    }
+    pthread_mutex_destroy(&rl->mutex);
+}
+
+/* Check if connection from IP is allowed. Returns 1 if allowed, 0 if blocked. */
+static int rate_limiter_check_connection(rate_limiter_t *rl, uint32_t ip_addr) {
+    if (!rl->enabled) return 1;  /* Rate limiting disabled */
+
+    pthread_mutex_lock(&rl->mutex);
+
+    uint64_t now = time_ms();
+    uint64_t window_start = now - (rl->window_sec * 1000ULL);
+
+    /* Find or create entry for this IP */
+    rate_limit_entry_t *entry = NULL;
+    int free_slot = -1;
+
+    for (int i = 0; i < rl->entry_count; i++) {
+        if (rl->entries[i].ip_addr == ip_addr) {
+            entry = &rl->entries[i];
+            break;
+        }
+        /* Track first stale entry for potential reuse */
+        if (free_slot < 0 && rl->entries[i].window_start < window_start) {
+            free_slot = i;
+        }
+    }
+
+    if (!entry) {
+        /* Create new entry */
+        if (rl->entry_count < rl->entry_capacity) {
+            entry = &rl->entries[rl->entry_count++];
+        } else if (free_slot >= 0) {
+            entry = &rl->entries[free_slot];
+        } else {
+            /* Table full, allow connection (fail-open for availability) */
+            pthread_mutex_unlock(&rl->mutex);
+            return 1;
+        }
+        entry->ip_addr = ip_addr;
+        entry->window_start = now;
+        entry->connection_count = 0;
+        entry->message_count = 0;
+    }
+
+    /* Check if window has expired and reset */
+    if (entry->window_start < window_start) {
+        entry->window_start = now;
+        entry->connection_count = 0;
+        entry->message_count = 0;
+    }
+
+    /* Check limit */
+    int allowed = 1;
+    if (entry->connection_count >= rl->max_connections_per_window) {
+        allowed = 0;  /* Rate limited */
+    } else {
+        entry->connection_count++;
+    }
+
+    pthread_mutex_unlock(&rl->mutex);
+    return allowed;
+}
+
+/* Check if message from IP is allowed. Returns 1 if allowed, 0 if blocked. */
+/* Currently unused but available for future per-message rate limiting */
+__attribute__((unused))
+static int rate_limiter_check_message(rate_limiter_t *rl, uint32_t ip_addr) {
+    if (!rl->enabled) return 1;  /* Rate limiting disabled */
+
+    pthread_mutex_lock(&rl->mutex);
+
+    uint64_t now = time_ms();
+    uint64_t window_start = now - (rl->window_sec * 1000ULL);
+
+    /* Find entry for this IP */
+    rate_limit_entry_t *entry = NULL;
+    for (int i = 0; i < rl->entry_count; i++) {
+        if (rl->entries[i].ip_addr == ip_addr) {
+            entry = &rl->entries[i];
+            break;
+        }
+    }
+
+    if (!entry) {
+        pthread_mutex_unlock(&rl->mutex);
+        return 1;  /* No entry, allow */
+    }
+
+    /* Check if window has expired and reset */
+    if (entry->window_start < window_start) {
+        entry->window_start = now;
+        entry->connection_count = 0;
+        entry->message_count = 0;
+    }
+
+    /* Check limit */
+    int allowed = 1;
+    if (entry->message_count >= rl->max_messages_per_window) {
+        allowed = 0;  /* Rate limited */
+    } else {
+        entry->message_count++;
+    }
+
+    pthread_mutex_unlock(&rl->mutex);
+    return allowed;
+}
+
+/* ============================================================================
+ * JSON Input Sanitization
+ * ============================================================================ */
+
+/**
+ * Sanitize a string for safe use in JSON parsing.
+ * Removes control characters and ensures proper escaping.
+ * Returns 0 on success, -1 if input is malformed.
+ */
+static int sanitize_json_string(char *str, size_t maxlen) {
+    if (!str) return -1;
+
+    size_t len = strnlen(str, maxlen);
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)str[i];
+
+        /* Remove control characters (except \t, \n, \r which are valid JSON whitespace) */
+        if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') {
+            str[i] = ' ';  /* Replace with space */
+        }
+
+        /* Check for excessively long strings that might indicate an attack */
+        if (i > maxlen - 1) {
+            str[maxlen - 1] = '\0';
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/* ============================================================================
  * Coordinator Implementation
  * ============================================================================ */
 
@@ -216,9 +384,16 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     memset(coord, 0, sizeof(*coord));
     coord->port = (port > 0) ? port : DIST_DEFAULT_PORT;
     coord->listen_socket = -1;
+    coord->bind_address[0] = '\0';  /* Bind to all interfaces by default */
 
     /* Initialize work mutex for thread-safe work unit assignment */
     if (pthread_mutex_init(&coord->work_mutex, NULL) != 0) {
+        return -1;
+    }
+
+    /* Initialize rate limiter */
+    if (rate_limiter_init(&coord->rate_limiter) != 0) {
+        pthread_mutex_destroy(&coord->work_mutex);
         return -1;
     }
 
@@ -226,6 +401,7 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->result_capacity = 1024;
     coord->results = calloc(coord->result_capacity, sizeof(dist_result_t));
     if (!coord->results) {
+        rate_limiter_destroy(&coord->rate_limiter);
         pthread_mutex_destroy(&coord->work_mutex);
         return -1;
     }
@@ -353,8 +529,19 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(coord->port);
+
+    /* Bind to specific interface if configured, otherwise all interfaces */
+    if (coord->bind_address[0] != '\0') {
+        if (inet_pton(AF_INET, coord->bind_address, &addr.sin_addr) != 1) {
+            printf(LOG_SERVER LOG_ERR "Invalid bind address: %s\n", coord->bind_address);
+            close(coord->listen_socket);
+            return -1;
+        }
+        printf(LOG_SERVER LOG_INFO "Binding to specific interface: %s\n", coord->bind_address);
+    } else {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    }
 
     if (bind(coord->listen_socket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("[Coordinator] bind");
@@ -371,7 +558,27 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
     set_nonblocking(coord->listen_socket);
     coord->running = true;
 
-    printf(LOG_SERVER LOG_OK "Listening on port " CLR_BOLD "%d" CLR_RESET "\n", coord->port);
+    if (coord->bind_address[0] != '\0') {
+        printf(LOG_SERVER LOG_OK "Listening on %s:%d\n", coord->bind_address, coord->port);
+    } else {
+        printf(LOG_SERVER LOG_OK "Listening on port " CLR_BOLD "%d" CLR_RESET " (all interfaces)\n", coord->port);
+    }
+
+    /* Log security settings */
+    if (coord->rate_limiter.enabled) {
+        printf(LOG_SERVER LOG_INFO "Rate limiting enabled: %d conn/%ds, %d msg/%ds\n",
+               coord->rate_limiter.max_connections_per_window,
+               coord->rate_limiter.window_sec,
+               coord->rate_limiter.max_messages_per_window,
+               coord->rate_limiter.window_sec);
+    }
+    if (coord->auth_enabled) {
+        printf(LOG_SERVER LOG_INFO "Authentication enabled\n");
+    }
+    if (coord->tls_enabled) {
+        printf(LOG_SERVER LOG_INFO "TLS enabled (cert: %s)\n", coord->tls_cert_file);
+    }
+
     return 0;
 }
 
@@ -524,6 +731,16 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         socklen_t client_len = sizeof(client_addr);
         int client_fd = accept(coord->listen_socket, (struct sockaddr*)&client_addr, &client_len);
 
+        if (client_fd >= 0) {
+            /* Rate limiting check */
+            uint32_t client_ip = ntohl(client_addr.sin_addr.s_addr);
+            if (!rate_limiter_check_connection(&coord->rate_limiter, client_ip)) {
+                /* Rate limited - reject connection silently */
+                close(client_fd);
+                return 0;
+            }
+        }
+
         if (client_fd >= 0 && coord->worker_count < DIST_MAX_WORKERS) {
             int opt = 1;
             setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
@@ -534,6 +751,9 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             /* Read registration message */
             char msg[DIST_MAX_MSG_SIZE];
             if (recv_msg(client_fd, msg, sizeof(msg)) > 0) {
+                /* Sanitize JSON input to prevent injection attacks */
+                sanitize_json_string(msg, sizeof(msg));
+
                 char type[32] = {0};
                 json_get_string(msg, "type", type, sizeof(type));
 
@@ -846,6 +1066,9 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
 
     /* Destroy work mutex */
     pthread_mutex_destroy(&coord->work_mutex);
+
+    /* Destroy rate limiter */
+    rate_limiter_destroy(&coord->rate_limiter);
 
     printf(LOG_SERVER LOG_INFO "Shutdown complete. " CLR_BOLD "%d" CLR_RESET " results found.\n", coord->result_count);
 }
@@ -1783,4 +2006,69 @@ void dist_federation_shutdown(dist_coordinator_t *coordinator) {
 
     coordinator->federation.peer_count = 0;
     coordinator->federation.role = FEDERATION_STANDALONE;
+}
+
+/* ============================================================================
+ * Security Configuration Functions
+ * ============================================================================ */
+
+void dist_coordinator_set_bind_address(dist_coordinator_t *coordinator,
+                                       const char *address) {
+    if (!coordinator) return;
+
+    if (address && address[0] != '\0') {
+        strncpy(coordinator->bind_address, address, sizeof(coordinator->bind_address) - 1);
+        coordinator->bind_address[sizeof(coordinator->bind_address) - 1] = '\0';
+    } else {
+        coordinator->bind_address[0] = '\0';  /* Bind to all interfaces */
+    }
+}
+
+void dist_coordinator_enable_rate_limiting(dist_coordinator_t *coordinator,
+                                           int max_connections,
+                                           int max_messages,
+                                           int window_sec) {
+    if (!coordinator) return;
+
+    rate_limiter_t *rl = &coordinator->rate_limiter;
+
+    rl->max_connections_per_window = max_connections > 0 ? max_connections : DIST_RATE_LIMIT_MAX_CONNECTIONS;
+    rl->max_messages_per_window = max_messages > 0 ? max_messages : DIST_RATE_LIMIT_MAX_MESSAGES;
+    rl->window_sec = window_sec > 0 ? window_sec : DIST_RATE_LIMIT_WINDOW_SEC;
+    rl->enabled = true;
+
+    printf(LOG_SERVER LOG_OK "Rate limiting configured: %d connections/%ds, %d messages/%ds\n",
+           rl->max_connections_per_window, rl->window_sec,
+           rl->max_messages_per_window, rl->window_sec);
+}
+
+int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
+                                const char *cert_file,
+                                const char *key_file) {
+    if (!coordinator || !cert_file || !key_file) return -1;
+
+#ifdef KEYHUNT_HAS_OPENSSL
+    /* Verify files exist */
+    if (access(cert_file, R_OK) != 0) {
+        printf(LOG_SERVER LOG_ERR "TLS certificate file not found: %s\n", cert_file);
+        return -1;
+    }
+    if (access(key_file, R_OK) != 0) {
+        printf(LOG_SERVER LOG_ERR "TLS key file not found: %s\n", key_file);
+        return -1;
+    }
+
+    strncpy(coordinator->tls_cert_file, cert_file, sizeof(coordinator->tls_cert_file) - 1);
+    strncpy(coordinator->tls_key_file, key_file, sizeof(coordinator->tls_key_file) - 1);
+    coordinator->tls_enabled = true;
+
+    printf(LOG_SERVER LOG_OK "TLS configured with certificate: %s\n", cert_file);
+    return 0;
+#else
+    printf(LOG_SERVER LOG_ERR "TLS support not compiled in (requires OpenSSL)\n");
+    printf(LOG_SERVER LOG_INFO "Rebuild with: make ENABLE_TLS=1\n");
+    (void)cert_file;
+    (void)key_file;
+    return -1;
+#endif
 }

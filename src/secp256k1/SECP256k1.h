@@ -139,7 +139,8 @@ public:
 
 private:
 
-  uint8_t GetByte(char *str,int idx);
+  /* GetByte returns -1 on error instead of calling exit() */
+  int GetByte(char *str,int idx);
   Int GetY(Int x, bool isEven);
   Point GTable[256*32];       // Generator table
 

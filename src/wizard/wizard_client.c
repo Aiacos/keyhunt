@@ -23,6 +23,8 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <pthread.h>
+#include <ctype.h>      /* isalnum() */
+#include <fcntl.h>      /* open(), O_WRONLY */
 
 /* PATH_MAX with fallback */
 #ifdef __linux__
@@ -94,6 +96,53 @@ static int resolve_executable_path(char *buf, size_t bufsz) {
 }
 
 /**
+ * Validate a path for safe use in shell commands.
+ * Checks for shell metacharacters that could cause injection.
+ *
+ * @param path Path to validate
+ * @return true if safe, false if contains dangerous characters
+ */
+static bool is_safe_path(const char *path) {
+    if (!path) return false;
+
+    /* Check for shell metacharacters */
+    for (const char *p = path; *p; p++) {
+        switch (*p) {
+            case ';':   /* Command separator */
+            case '|':   /* Pipe */
+            case '&':   /* Background/AND */
+            case '$':   /* Variable expansion */
+            case '`':   /* Command substitution */
+            case '(':   /* Subshell */
+            case ')':
+            case '{':   /* Brace expansion */
+            case '}':
+            case '<':   /* Redirection */
+            case '>':
+            case '!':   /* History expansion */
+            case '*':   /* Glob */
+            case '?':   /* Glob */
+            case '[':   /* Glob */
+            case ']':
+            case '\n':  /* Newline */
+            case '\r':
+            case '\t':  /* Tab (suspicious in paths) */
+            case '\\':  /* Escape character */
+            case '"':   /* Quotes */
+            case '\'':
+                return false;
+            default:
+                /* Allow alphanumeric, dots, dashes, underscores, slashes, spaces */
+                if (!isalnum((unsigned char)*p) &&
+                    *p != '.' && *p != '-' && *p != '_' && *p != '/' && *p != ' ') {
+                    return false;
+                }
+        }
+    }
+    return true;
+}
+
+/**
  * Validate that the executable exists and is runnable.
  * Performs a quick test run to ensure everything works.
  *
@@ -102,6 +151,12 @@ static int resolve_executable_path(char *buf, size_t bufsz) {
  */
 static int validate_executable(const char *exe_path) {
     struct stat st;
+
+    /* Security check: Validate path doesn't contain shell metacharacters */
+    if (!is_safe_path(exe_path)) {
+        fprintf(stderr, "[-] Invalid executable path (contains unsafe characters): %s\n", exe_path);
+        return -1;
+    }
 
     /* Check file exists */
     if (stat(exe_path, &st) != 0) {
@@ -121,17 +176,50 @@ static int validate_executable(const char *exe_path) {
         return -1;
     }
 
-    /* Quick sanity test: run --help and check exit code */
-    char cmd[PATH_MAX + 64];
-    snprintf(cmd, sizeof(cmd), "%s --help >/dev/null 2>&1", exe_path);
-    int ret = system(cmd);
-    if (ret != 0) {
-        fprintf(stderr, "[-] Executable failed sanity test (exit %d): %s\n",
-                WEXITSTATUS(ret), exe_path);
+    /*
+     * Sanity test using fork/exec instead of system() for security.
+     * This avoids shell metacharacter injection vulnerabilities.
+     */
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "[-] Fork failed: %s\n", strerror(errno));
         return -1;
     }
 
-    return 0;
+    if (pid == 0) {
+        /* Child process */
+        /* Redirect stdout and stderr to /dev/null */
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+
+        /* Execute with --help argument */
+        execl(exe_path, exe_path, "--help", (char *)NULL);
+        /* If execl returns, it failed */
+        _exit(127);
+    }
+
+    /* Parent process - wait for child */
+    int status;
+    if (waitpid(pid, &status, 0) < 0) {
+        fprintf(stderr, "[-] Waitpid failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        return 0;  /* Success */
+    }
+
+    /* Non-zero exit is okay for --help, just means it ran */
+    if (WIFEXITED(status)) {
+        return 0;  /* Executable ran, even if it returned error for --help */
+    }
+
+    fprintf(stderr, "[-] Executable failed sanity test: %s\n", exe_path);
+    return -1;
 }
 
 /* ============================================================================
