@@ -15,8 +15,6 @@
  * See search_common.h for shared declarations.
  */
 
-#include "search_common.h"
-
 /*
  * XPOINT Mode Details:
  *

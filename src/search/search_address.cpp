@@ -22,8 +22,6 @@
  * See search_common.h for shared declarations.
  */
 
-#include "search_common.h"
-
 /*
  * NOTE: The actual implementation of thread_process() is currently in
  * keyhunt.cpp. This is because the function has extensive dependencies on:
