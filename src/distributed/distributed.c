@@ -1148,13 +1148,17 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         pthread_mutex_unlock(&coord->stats_mutex);
 
         if (elapsed > 0) {
-            worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
-
             /* Check if worker sent separate CPU/GPU speeds (hybrid mode).
              * If both are present and non-zero, use them directly.
              * Otherwise fall back to the old heuristic. */
             double msg_cpu_speed = json_get_double(msg, "cpu_speed_mkeys");
             double msg_gpu_speed = json_get_double(msg, "gpu_speed_mkeys");
+
+            /* Update speed stats atomically with stats_mutex to ensure
+             * dashboard reads consistent values */
+            pthread_mutex_lock(&coord->stats_mutex);
+
+            worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
 
             if (msg_cpu_speed > 0.0 || msg_gpu_speed > 0.0) {
                 /* Worker sent explicit speeds - use them directly */
@@ -1168,6 +1172,8 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
                     worker->cpu_speed_mkeys = worker->throughput;
                 }
             }
+
+            pthread_mutex_unlock(&coord->stats_mutex);
         }
 
         /* Send ack */
@@ -1533,12 +1539,21 @@ void dist_coordinator_get_speed_stats(const dist_coordinator_t *coord,
     double cpu_sum = 0.0;
     double gpu_sum = 0.0;
 
+    /* Lock stats_mutex to ensure consistent reads with worker updates.
+     * We need to cast away const since we're only reading, but the mutex
+     * requires non-const access. This is safe because we're not modifying
+     * any data, just synchronizing reads. */
+    dist_coordinator_t *mutable_coord = (dist_coordinator_t *)coord;
+    pthread_mutex_lock(&mutable_coord->stats_mutex);
+
     for (int i = 0; i < coord->worker_count; i++) {
         if (coord->workers[i].connected) {
             cpu_sum += coord->workers[i].cpu_speed_mkeys;
             gpu_sum += coord->workers[i].gpu_speed_mkeys;
         }
     }
+
+    pthread_mutex_unlock(&mutable_coord->stats_mutex);
 
     if (total_cpu_speed) *total_cpu_speed = cpu_sum;
     if (total_gpu_speed) *total_gpu_speed = gpu_sum;

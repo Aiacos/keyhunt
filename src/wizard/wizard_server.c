@@ -369,12 +369,34 @@ static void render_dashboard(const wizard_config_t *cfg, const dist_coordinator_
                    "ID", "Host", "CPU", "GPU", "Total", "Keys", "Status");
             printf("\033[36m║\033[0m  \033[2m─── ────────────── ─────── ─────── ─────── ────── ────────\033[0m   \033[36m║\033[0m\n");
 
+            /* Create snapshot of worker speeds under mutex for consistent display.
+             * This ensures the worker row speeds match the aggregated totals. */
+            double worker_cpu_speeds[6] = {0};
+            double worker_gpu_speeds[6] = {0};
+            int snapshot_count = 0;
+
+            dist_coordinator_t *mutable_coord = (dist_coordinator_t *)coord;
+            pthread_mutex_lock(&mutable_coord->stats_mutex);
+            for (int i = 0; i < coord->worker_count && snapshot_count < 6; i++) {
+                const dist_worker_t *w = &coord->workers[i];
+                if (!w->connected && w->keys_processed == 0) continue;
+                worker_cpu_speeds[snapshot_count] = w->cpu_speed_mkeys;
+                worker_gpu_speeds[snapshot_count] = w->gpu_speed_mkeys;
+                snapshot_count++;
+            }
+            pthread_mutex_unlock(&mutable_coord->stats_mutex);
+
             int shown = 0;
+            int speed_idx = 0;
             for (int i = 0; i < coord->worker_count && shown < 6; i++) {
                 const dist_worker_t *w = &coord->workers[i];
                 if (!w->connected && w->keys_processed == 0) continue;
 
-                double worker_total = w->cpu_speed_mkeys + w->gpu_speed_mkeys;
+                /* Use snapshot speeds for consistency with aggregated totals */
+                double w_cpu_speed = worker_cpu_speeds[speed_idx];
+                double w_gpu_speed = worker_gpu_speeds[speed_idx];
+                speed_idx++;
+                double worker_total = w_cpu_speed + w_gpu_speed;
 
                 /* Status indicator */
                 const char *status;
@@ -405,8 +427,8 @@ static void render_dashboard(const wizard_config_t *cfg, const dist_coordinator_
                 printf("\033[36m║\033[0m  %-3d %-14s %6.1f  %6.1f  \033[32m%6.1f\033[0m  %5.1fe %s%-8s\033[0m \033[36m║\033[0m\n",
                        w->id,
                        host_display,
-                       w->cpu_speed_mkeys,
-                       w->gpu_speed_mkeys,
+                       w_cpu_speed,
+                       w_gpu_speed,
                        worker_total,
                        (double)w->keys_processed / 1e9,
                        status_color,
