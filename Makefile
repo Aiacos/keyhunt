@@ -58,6 +58,14 @@ ifneq ($(HAVE_NVCC),)
   LDLIBS += -lcudart
 endif
 
+# Optional TLS support with OpenSSL
+# Usage: make ENABLE_TLS=1
+ifdef ENABLE_TLS
+  CFLAGS += -DHAVE_OPENSSL
+  CXXFLAGS += -DHAVE_OPENSSL
+  LDLIBS += -lssl -lcrypto
+endif
+
 # Object files organized by module (all in obj/ directory)
 BLOOM_OBJS := $(OBJDIR)/oldbloom/bloom.o $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
 HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_shani.o

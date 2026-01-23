@@ -18,6 +18,197 @@
 #include <fcntl.h>
 
 /* ============================================================================
+ * TLS/SSL Support (Optional - requires OpenSSL)
+ * ============================================================================ */
+
+#ifdef HAVE_OPENSSL
+/* OpenSSL is available - implement real TLS support */
+
+static bool g_openssl_initialized = false;
+static pthread_mutex_t g_openssl_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Initialize OpenSSL library (thread-safe, called once) */
+static void tls_init_openssl(void) {
+    pthread_mutex_lock(&g_openssl_init_mutex);
+    if (!g_openssl_initialized) {
+        /* OpenSSL 1.1.0+ auto-initializes, but we call this for compatibility */
+        OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
+        g_openssl_initialized = true;
+    }
+    pthread_mutex_unlock(&g_openssl_init_mutex);
+}
+
+/* Print OpenSSL error and return -1 */
+static int tls_print_error(const char *context) {
+    unsigned long err = ERR_get_error();
+    char buf[256];
+    ERR_error_string_n(err, buf, sizeof(buf));
+    fprintf(stderr, "[TLS ERROR] %s: %s\n", context, buf);
+    return -1;
+}
+
+/* Create SSL context for server */
+static SSL_CTX *tls_create_server_context(const char *cert_file, const char *key_file) {
+    tls_init_openssl();
+
+    /* Create context with TLS 1.2+ only */
+    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
+    if (!ctx) {
+        tls_print_error("SSL_CTX_new");
+        return NULL;
+    }
+
+    /* Set minimum TLS version to 1.2 for security */
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+
+    /* Load certificate */
+    if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) != 1) {
+        tls_print_error("SSL_CTX_use_certificate_file");
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    /* Load private key */
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) != 1) {
+        tls_print_error("SSL_CTX_use_PrivateKey_file");
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    /* Verify private key matches certificate */
+    if (SSL_CTX_check_private_key(ctx) != 1) {
+        tls_print_error("SSL_CTX_check_private_key");
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    return ctx;
+}
+
+/* Create SSL context for client */
+static SSL_CTX *tls_create_client_context(bool verify_server) {
+    tls_init_openssl();
+
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) {
+        tls_print_error("SSL_CTX_new");
+        return NULL;
+    }
+
+    /* Set minimum TLS version to 1.2 */
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+
+    if (verify_server) {
+        /* Load system CA certificates */
+        SSL_CTX_set_default_verify_paths(ctx);
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+    } else {
+        /* Skip server certificate verification (not recommended for production) */
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+    }
+
+    return ctx;
+}
+
+/* Wrap socket with SSL (server side - accept) */
+static SSL *tls_accept(SSL_CTX *ctx, int client_fd) {
+    SSL *ssl = SSL_new(ctx);
+    if (!ssl) {
+        tls_print_error("SSL_new");
+        return NULL;
+    }
+
+    SSL_set_fd(ssl, client_fd);
+
+    int ret = SSL_accept(ssl);
+    if (ret != 1) {
+        int err = SSL_get_error(ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            /* Would block - non-blocking mode */
+            fprintf(stderr, "[TLS] Handshake would block\n");
+        } else {
+            tls_print_error("SSL_accept");
+        }
+        SSL_free(ssl);
+        return NULL;
+    }
+
+    return ssl;
+}
+
+/* Wrap socket with SSL (client side - connect) */
+static SSL *tls_connect(SSL_CTX *ctx, int socket_fd) {
+    SSL *ssl = SSL_new(ctx);
+    if (!ssl) {
+        tls_print_error("SSL_new");
+        return NULL;
+    }
+
+    SSL_set_fd(ssl, socket_fd);
+
+    int ret = SSL_connect(ssl);
+    if (ret != 1) {
+        int err = SSL_get_error(ssl, ret);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            fprintf(stderr, "[TLS] Handshake would block\n");
+        } else {
+            tls_print_error("SSL_connect");
+        }
+        SSL_free(ssl);
+        return NULL;
+    }
+
+    return ssl;
+}
+
+/* Send all data over SSL with retry logic */
+static int tls_send_all(SSL *ssl, const void *data, size_t len) {
+    const char *ptr = (const char *)data;
+    size_t remaining = len;
+
+    while (remaining > 0) {
+        int sent = SSL_write(ssl, ptr, (int)remaining);
+        if (sent <= 0) {
+            int err = SSL_get_error(ssl, sent);
+            if (err == SSL_ERROR_WANT_WRITE) {
+                continue;  /* Retry */
+            }
+            tls_print_error("SSL_write");
+            return -1;
+        }
+        ptr += sent;
+        remaining -= (size_t)sent;
+    }
+    return 0;
+}
+
+/* Receive data over SSL */
+static int tls_recv_all(SSL *ssl, void *buf, size_t len) {
+    char *ptr = (char *)buf;
+    size_t remaining = len;
+
+    while (remaining > 0) {
+        int received = SSL_read(ssl, ptr, (int)remaining);
+        if (received <= 0) {
+            int err = SSL_get_error(ssl, received);
+            if (err == SSL_ERROR_WANT_READ) {
+                continue;  /* Retry */
+            }
+            if (err == SSL_ERROR_ZERO_RETURN) {
+                return -1;  /* Connection closed */
+            }
+            tls_print_error("SSL_read");
+            return -1;
+        }
+        ptr += received;
+        remaining -= (size_t)received;
+    }
+    return 0;
+}
+
+#endif /* HAVE_OPENSSL */
+
+/* ============================================================================
  * Clean Logging System
  * ============================================================================ */
 
@@ -206,6 +397,70 @@ static int recv_msg(int fd, char *buf, size_t bufsz) {
 
     buf[len] = '\0';
     return (int)len;
+}
+
+#ifdef HAVE_OPENSSL
+/* TLS-aware send message with length prefix */
+static int send_msg_tls(SSL *ssl, const char *msg) {
+    if (!ssl || !msg) return -1;
+
+    uint32_t len = (uint32_t)strlen(msg);
+    if (len > DIST_MAX_MSG_SIZE) return -1;  /* Message too large */
+
+    uint32_t net_len = htonl(len);
+
+    if (tls_send_all(ssl, &net_len, 4) != 0) return -1;
+    if (tls_send_all(ssl, msg, len) != 0) return -1;
+    return 0;
+}
+
+/* TLS-aware receive message with length prefix */
+static int recv_msg_tls(SSL *ssl, char *buf, size_t bufsz) {
+    if (!ssl || !buf || bufsz < 2) return -1;
+
+    uint32_t net_len;
+    if (tls_recv_all(ssl, &net_len, 4) != 0) return -1;
+
+    uint32_t len = ntohl(net_len);
+
+    /* Validate message size */
+    if (len == 0) return -1;
+    if (len > DIST_MAX_MSG_SIZE) return -1;
+    if (len >= bufsz) return -1;
+
+    if (tls_recv_all(ssl, buf, len) != 0) return -1;
+
+    buf[len] = '\0';
+    return (int)len;
+}
+#endif /* HAVE_OPENSSL */
+
+/* ============================================================================
+ * Unified Send/Receive Functions (TLS-aware)
+ * ============================================================================ */
+
+/* Send message - uses TLS if ssl is non-NULL, otherwise plain TCP */
+static int send_msg_ex(int fd, void *ssl_ptr, const char *msg) {
+#ifdef HAVE_OPENSSL
+    if (ssl_ptr) {
+        return send_msg_tls((SSL *)ssl_ptr, msg);
+    }
+#else
+    (void)ssl_ptr;  /* Unused when OpenSSL not available */
+#endif
+    return send_msg(fd, msg);
+}
+
+/* Receive message - uses TLS if ssl is non-NULL, otherwise plain TCP */
+static int recv_msg_ex(int fd, void *ssl_ptr, char *buf, size_t bufsz) {
+#ifdef HAVE_OPENSSL
+    if (ssl_ptr) {
+        return recv_msg_tls((SSL *)ssl_ptr, buf, bufsz);
+    }
+#else
+    (void)ssl_ptr;  /* Unused when OpenSSL not available */
+#endif
+    return recv_msg(fd, buf, bufsz);
 }
 
 /* ============================================================================
@@ -631,7 +886,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 
         pthread_mutex_unlock(&coord->work_mutex);
 
-        send_msg(worker->socket_fd, response);
+        send_msg_ex(worker->socket_fd, worker->ssl, response);
 
     } else if (strcmp(type, "work_done") == 0) {
         int work_id = (int)json_get_int(msg, "work_id");
@@ -667,7 +922,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         }
 
         /* Send ack */
-        send_msg(worker->socket_fd, "{\"type\":\"ack\"}");
+        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
 
     } else if (strcmp(type, "found") == 0) {
         char privkey[65] = {0}, address[36] = {0};
@@ -686,11 +941,11 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             printf(LOG_INFO "Address:     " CLR_BOLD "%s" CLR_RESET "\n\n", address);
         }
 
-        send_msg(worker->socket_fd, "{\"type\":\"ack\"}");
+        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
 
     } else if (strcmp(type, "heartbeat") == 0) {
         worker->last_heartbeat = time_ms();
-        send_msg(worker->socket_fd, "{\"type\":\"ack\"}");
+        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
     }
 
     return 0;
@@ -748,9 +1003,22 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             /* Set socket timeout to prevent hanging on malicious/stuck clients */
             set_socket_timeout(client_fd, 60);  /* 60 second timeout */
 
+            /* TLS handshake if enabled */
+            void *client_ssl = NULL;
+#ifdef HAVE_OPENSSL
+            if (coord->tls_enabled && coord->ssl_ctx) {
+                client_ssl = tls_accept(coord->ssl_ctx, client_fd);
+                if (!client_ssl) {
+                    printf(LOG_SERVER LOG_WARN "TLS handshake failed for new connection\n");
+                    close(client_fd);
+                    return 0;  /* Reject connection */
+                }
+            }
+#endif
+
             /* Read registration message */
             char msg[DIST_MAX_MSG_SIZE];
-            if (recv_msg(client_fd, msg, sizeof(msg)) > 0) {
+            if (recv_msg_ex(client_fd, client_ssl, msg, sizeof(msg)) > 0) {
                 /* Sanitize JSON input to prevent injection attacks */
                 sanitize_json_string(msg, sizeof(msg));
 
@@ -783,7 +1051,10 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                             json_get_string(msg, "hostname", hostname, sizeof(hostname));
                             printf(LOG_SERVER LOG_ERR "Authentication failed from %s - invalid token\n",
                                    hostname[0] ? hostname : "unknown");
-                            send_msg(client_fd, "{\"type\":\"auth_failed\",\"message\":\"Invalid authentication token\"}");
+                            send_msg_ex(client_fd, client_ssl, "{\"type\":\"auth_failed\",\"message\":\"Invalid authentication token\"}");
+#ifdef HAVE_OPENSSL
+                            if (client_ssl) SSL_free((SSL *)client_ssl);
+#endif
                             close(client_fd);
                         }
                     }
@@ -792,6 +1063,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     dist_worker_t *worker = &coord->workers[coord->worker_count];
                     worker->id = coord->worker_count;
                     worker->socket_fd = client_fd;
+                    worker->ssl = client_ssl;  /* Store SSL handle (NULL if TLS disabled) */
                     worker->connected = true;
                     worker->last_heartbeat = time_ms();
                     worker->perf_score = json_get_double(msg, "perf_score");
@@ -813,15 +1085,16 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     snprintf(welcome, sizeof(welcome),
                              "{\"type\":\"welcome\",\"worker_id\":%d,\"work_units\":%d,"
                              "\"target_address\":\"%s\",\"mode\":\"%s\",\"key_type\":\"%s\","
-                             "\"puzzle_number\":%d,\"bits\":%d,\"heartbeat_interval\":%d}",
+                             "\"puzzle_number\":%d,\"bits\":%d,\"heartbeat_interval\":%d,\"tls\":%s}",
                              worker->id, coord->work_unit_count,
                              coord->job_target_address,
                              coord->job_mode,
                              coord->job_key_type,
                              coord->job_puzzle_number,
                              coord->job_bits,
-                             coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30);
-                    send_msg(client_fd, welcome);
+                             coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30,
+                             coord->tls_enabled ? "true" : "false");
+                    send_msg_ex(worker->socket_fd, worker->ssl, welcome);
 
                     /* Print connection info with hardware details and speeds */
                     printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
@@ -844,6 +1117,9 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     }  /* end if (auth_passed) */
                 }
             } else {
+#ifdef HAVE_OPENSSL
+                if (client_ssl) SSL_free((SSL *)client_ssl);
+#endif
                 close(client_fd);
             }
         } else if (client_fd >= 0) {
@@ -858,12 +1134,18 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
 
         if (FD_ISSET(worker->socket_fd, &readfds)) {
             char msg[DIST_MAX_MSG_SIZE];
-            int n = recv_msg(worker->socket_fd, msg, sizeof(msg));
+            int n = recv_msg_ex(worker->socket_fd, worker->ssl, msg, sizeof(msg));
             if (n > 0) {
                 handle_worker_msg(coord, i, msg);
             } else {
                 /* Worker disconnected */
                 printf(LOG_SERVER LOG_WARN "Worker " CLR_YELLOW "#%d" CLR_RESET " disconnected\n", worker->id);
+#ifdef HAVE_OPENSSL
+                if (worker->ssl) {
+                    SSL_free((SSL *)worker->ssl);
+                    worker->ssl = NULL;
+                }
+#endif
                 close(worker->socket_fd);
                 worker->socket_fd = -1;
                 worker->connected = false;
@@ -1052,7 +1334,14 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     /* Close worker connections */
     for (int i = 0; i < coord->worker_count; i++) {
         if (coord->workers[i].socket_fd >= 0) {
-            send_msg(coord->workers[i].socket_fd, "{\"type\":\"shutdown\"}");
+            send_msg_ex(coord->workers[i].socket_fd, coord->workers[i].ssl, "{\"type\":\"shutdown\"}");
+#ifdef HAVE_OPENSSL
+            if (coord->workers[i].ssl) {
+                SSL_shutdown((SSL *)coord->workers[i].ssl);
+                SSL_free((SSL *)coord->workers[i].ssl);
+                coord->workers[i].ssl = NULL;
+            }
+#endif
             close(coord->workers[i].socket_fd);
         }
     }
@@ -1060,6 +1349,14 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     if (coord->listen_socket >= 0) {
         close(coord->listen_socket);
     }
+
+#ifdef HAVE_OPENSSL
+    /* Free SSL context */
+    if (coord->ssl_ctx) {
+        SSL_CTX_free(coord->ssl_ctx);
+        coord->ssl_ctx = NULL;
+    }
+#endif
 
     free(coord->work_units);
     free(coord->results);
@@ -1125,6 +1422,20 @@ int dist_worker_connect(dist_worker_client_t *client) {
     int opt = 1;
     setsockopt(client->socket_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
+#ifdef HAVE_OPENSSL
+    /* Perform TLS handshake if enabled */
+    if (client->tls_enabled && client->ssl_ctx) {
+        client->ssl = tls_connect(client->ssl_ctx, client->socket_fd);
+        if (!client->ssl) {
+            printf(LOG_CLIENT LOG_ERR "TLS handshake failed\n");
+            close(client->socket_fd);
+            client->socket_fd = -1;
+            return -1;
+        }
+        printf(LOG_CLIENT LOG_OK "TLS connection established\n");
+    }
+#endif
+
     /* Send registration with hardware info */
     char hostname[64] = {0};
     gethostname(hostname, sizeof(hostname)-1);
@@ -1150,17 +1461,15 @@ int dist_worker_connect(dist_worker_client_t *client) {
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
     strcat(msg, "}");
 
-    if (send_msg(client->socket_fd, msg) != 0) {
-        close(client->socket_fd);
-        client->socket_fd = -1;
+    if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) {
+        dist_worker_disconnect(client);
         return -1;
     }
 
     /* Wait for welcome with job config */
     char response[DIST_MAX_MSG_SIZE];
-    if (recv_msg(client->socket_fd, response, sizeof(response)) <= 0) {
-        close(client->socket_fd);
-        client->socket_fd = -1;
+    if (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) <= 0) {
+        dist_worker_disconnect(client);
         return -1;
     }
 
@@ -1172,8 +1481,7 @@ int dist_worker_connect(dist_worker_client_t *client) {
         json_get_string(response, "message", error_msg, sizeof(error_msg));
         printf(LOG_CLIENT LOG_ERR "Authentication failed: %s\n",
                error_msg[0] ? error_msg : "Invalid token");
-        close(client->socket_fd);
-        client->socket_fd = -1;
+        dist_worker_disconnect(client);
         return -1;
     }
 
@@ -1205,12 +1513,12 @@ int dist_worker_request_work(dist_worker_client_t *client,
                              char *range_start, char *range_end) {
     if (!client->connected) return -1;
 
-    if (send_msg(client->socket_fd, "{\"type\":\"request_work\"}") != 0) {
+    if (send_msg_ex(client->socket_fd, client->ssl, "{\"type\":\"request_work\"}") != 0) {
         return -1;
     }
 
     char response[DIST_MAX_MSG_SIZE];
-    if (recv_msg(client->socket_fd, response, sizeof(response)) <= 0) {
+    if (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) <= 0) {
         return -1;
     }
 
@@ -1247,10 +1555,10 @@ int dist_worker_report_done(dist_worker_client_t *client,
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
     strcat(msg, "}");
 
-    if (send_msg(client->socket_fd, msg) != 0) return -1;
+    if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) return -1;
 
     char response[DIST_MAX_MSG_SIZE];
-    if (recv_msg(client->socket_fd, response, sizeof(response)) <= 0) return -1;
+    if (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) <= 0) return -1;
 
     client->keys_processed += keys_processed;
     client->has_work = false;
@@ -1270,10 +1578,10 @@ int dist_worker_report_found(dist_worker_client_t *client,
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
     strcat(msg, "}");
 
-    if (send_msg(client->socket_fd, msg) != 0) return -1;
+    if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) return -1;
 
     char response[DIST_MAX_MSG_SIZE];
-    return (recv_msg(client->socket_fd, response, sizeof(response)) > 0) ? 0 : -1;
+    return (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) > 0) ? 0 : -1;
 }
 
 int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last) {
@@ -1283,18 +1591,32 @@ int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last
     snprintf(msg, sizeof(msg), "{\"type\":\"heartbeat\",\"keys\":%llu}",
              (unsigned long long)keys_since_last);
 
-    if (send_msg(client->socket_fd, msg) != 0) return -1;
+    if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) return -1;
 
     char response[DIST_MAX_MSG_SIZE];
-    return (recv_msg(client->socket_fd, response, sizeof(response)) > 0) ? 0 : -1;
+    return (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) > 0) ? 0 : -1;
 }
 
 void dist_worker_disconnect(dist_worker_client_t *client) {
+#ifdef HAVE_OPENSSL
+    /* Shutdown and free SSL connection */
+    if (client->ssl) {
+        SSL_shutdown((SSL *)client->ssl);
+        SSL_free((SSL *)client->ssl);
+        client->ssl = NULL;
+    }
+    /* Free SSL context */
+    if (client->ssl_ctx) {
+        SSL_CTX_free(client->ssl_ctx);
+        client->ssl_ctx = NULL;
+    }
+#endif
     if (client->socket_fd >= 0) {
         close(client->socket_fd);
         client->socket_fd = -1;
     }
     client->connected = false;
+    client->tls_enabled = false;
     printf(LOG_CLIENT LOG_INFO "Disconnected\n");
 }
 
@@ -1401,6 +1723,35 @@ void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token)
     } else {
         client->auth_token[0] = '\0';
     }
+}
+
+int dist_worker_enable_tls(dist_worker_client_t *client, bool verify_server) {
+    if (!client) return -1;
+
+#ifdef HAVE_OPENSSL
+    /* Create SSL context for client */
+    SSL_CTX *ctx = tls_create_client_context(verify_server);
+    if (!ctx) {
+        printf(LOG_CLIENT LOG_ERR "Failed to create TLS context\n");
+        return -1;
+    }
+
+    /* Clean up existing context if any */
+    if (client->ssl_ctx) {
+        SSL_CTX_free(client->ssl_ctx);
+    }
+
+    client->ssl_ctx = ctx;
+    client->tls_enabled = true;
+
+    printf(LOG_CLIENT LOG_OK "TLS enabled (verify=%s)\n", verify_server ? "yes" : "no");
+    return 0;
+#else
+    printf(LOG_CLIENT LOG_ERR "TLS support not compiled in (requires OpenSSL)\n");
+    printf(LOG_CLIENT LOG_INFO "Rebuild with: make ENABLE_TLS=1\n");
+    (void)verify_server;
+    return -1;
+#endif
 }
 
 /* ============================================================================
@@ -2047,8 +2398,8 @@ int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
                                 const char *key_file) {
     if (!coordinator || !cert_file || !key_file) return -1;
 
-#ifdef KEYHUNT_HAS_OPENSSL
-    /* Verify files exist */
+#ifdef HAVE_OPENSSL
+    /* Verify files exist and are readable */
     if (access(cert_file, R_OK) != 0) {
         printf(LOG_SERVER LOG_ERR "TLS certificate file not found: %s\n", cert_file);
         return -1;
@@ -2058,11 +2409,25 @@ int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
         return -1;
     }
 
+    /* Create SSL context */
+    SSL_CTX *ctx = tls_create_server_context(cert_file, key_file);
+    if (!ctx) {
+        printf(LOG_SERVER LOG_ERR "Failed to create TLS context\n");
+        return -1;
+    }
+
+    /* Clean up existing context if any */
+    if (coordinator->ssl_ctx) {
+        SSL_CTX_free(coordinator->ssl_ctx);
+    }
+
+    coordinator->ssl_ctx = ctx;
     strncpy(coordinator->tls_cert_file, cert_file, sizeof(coordinator->tls_cert_file) - 1);
     strncpy(coordinator->tls_key_file, key_file, sizeof(coordinator->tls_key_file) - 1);
     coordinator->tls_enabled = true;
 
-    printf(LOG_SERVER LOG_OK "TLS configured with certificate: %s\n", cert_file);
+    printf(LOG_SERVER LOG_OK "TLS enabled with certificate: %s\n", cert_file);
+    printf(LOG_SERVER LOG_INFO "TLS version: TLS 1.2+\n");
     return 0;
 #else
     printf(LOG_SERVER LOG_ERR "TLS support not compiled in (requires OpenSSL)\n");

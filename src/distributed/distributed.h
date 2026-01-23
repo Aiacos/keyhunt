@@ -24,6 +24,22 @@
 #include <stdbool.h>
 #include <pthread.h>
 
+/* ============================================================================
+ * TLS Support (Optional - requires OpenSSL)
+ * ============================================================================
+ *
+ * When HAVE_OPENSSL is defined (via -DHAVE_OPENSSL compiler flag), TLS support
+ * is enabled. Without it, dist_coordinator_enable_tls() returns an error.
+ *
+ * To build with TLS:   make ENABLE_TLS=1
+ * To build without TLS: make (default)
+ */
+#ifdef HAVE_OPENSSL
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/crypto.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -77,6 +93,11 @@ typedef struct {
     bool connected;
     uint64_t last_heartbeat;
     int current_work_id;
+#ifdef HAVE_OPENSSL
+    SSL *ssl;                   /* SSL connection for this worker (NULL if TLS disabled) */
+#else
+    void *ssl;                  /* Placeholder when OpenSSL not available */
+#endif
 } dist_worker_t;
 
 /* Work unit */
@@ -203,6 +224,11 @@ typedef struct {
     bool tls_enabled;                           /* Whether TLS is enabled */
     char tls_cert_file[256];                    /* Path to TLS certificate */
     char tls_key_file[256];                     /* Path to TLS private key */
+#ifdef HAVE_OPENSSL
+    SSL_CTX *ssl_ctx;                           /* OpenSSL context for server */
+#else
+    void *ssl_ctx;                              /* Placeholder when OpenSSL not available */
+#endif
 
     char output_file[256];
 
@@ -255,6 +281,16 @@ typedef struct {
     char received_key_type[16];
     int received_puzzle_number;
     int received_bits;
+
+    /* TLS support (optional) */
+    bool tls_enabled;                           /* Whether TLS is enabled */
+#ifdef HAVE_OPENSSL
+    SSL_CTX *ssl_ctx;                           /* OpenSSL context for client */
+    SSL *ssl;                                   /* SSL connection */
+#else
+    void *ssl_ctx;                              /* Placeholder when OpenSSL not available */
+    void *ssl;                                  /* Placeholder when OpenSSL not available */
+#endif
 } dist_worker_client_t;
 
 /* ============================================================================
@@ -541,6 +577,16 @@ int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client);
  * @param token Authentication token to use
  */
 void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token);
+
+/**
+ * Enable TLS for worker client
+ * Call this before dist_worker_connect() to use encrypted communication.
+ * Requires the server to also have TLS enabled.
+ * @param client Client state
+ * @param verify_server If true, verify server certificate (requires CA or skip verify)
+ * @return 0 on success, -1 on error (TLS not available)
+ */
+int dist_worker_enable_tls(dist_worker_client_t *client, bool verify_server);
 
 /* ============================================================================
  * Multi-Coordinator Federation Functions
