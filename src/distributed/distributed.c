@@ -42,55 +42,78 @@
 #define LOG_ERR     CLR_RED   "  ✗ " CLR_RESET
 #define LOG_FOUND   CLR_MAGENTA CLR_BOLD "  ★ " CLR_RESET
 
-/* Simple JSON helpers (minimal, no external deps) */
+/* Simple JSON helpers (minimal, no external deps) with safe buffer handling */
 static void json_add_string(char *buf, size_t sz, const char *key, const char *val) {
-    char tmp[512];
-    snprintf(tmp, sizeof(tmp), "\"%s\":\"%s\",", key, val);
-    strncat(buf, tmp, sz - strlen(buf) - 1);
+    size_t current_len = strlen(buf);
+    if (current_len >= sz - 1) return;  /* Buffer already full */
+    size_t remaining = sz - current_len;
+    int written = snprintf(buf + current_len, remaining, "\"%s\":\"%s\",", key, val);
+    if (written < 0 || (size_t)written >= remaining) {
+        buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+    }
 }
 
 static void json_add_int(char *buf, size_t sz, const char *key, int64_t val) {
-    char tmp[128];
-    snprintf(tmp, sizeof(tmp), "\"%s\":%lld,", key, (long long)val);
-    strncat(buf, tmp, sz - strlen(buf) - 1);
+    size_t current_len = strlen(buf);
+    if (current_len >= sz - 1) return;  /* Buffer already full */
+    size_t remaining = sz - current_len;
+    int written = snprintf(buf + current_len, remaining, "\"%s\":%lld,", key, (long long)val);
+    if (written < 0 || (size_t)written >= remaining) {
+        buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+    }
 }
 
 static void json_add_double(char *buf, size_t sz, const char *key, double val) {
-    char tmp[128];
-    snprintf(tmp, sizeof(tmp), "\"%s\":%.3f,", key, val);
-    strncat(buf, tmp, sz - strlen(buf) - 1);
+    size_t current_len = strlen(buf);
+    if (current_len >= sz - 1) return;  /* Buffer already full */
+    size_t remaining = sz - current_len;
+    int written = snprintf(buf + current_len, remaining, "\"%s\":%.3f,", key, val);
+    if (written < 0 || (size_t)written >= remaining) {
+        buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+    }
 }
 
 static int json_get_string(const char *json, const char *key, char *out, size_t outsz) {
+    if (!json || !key || !out || outsz == 0) return -1;
+    out[0] = '\0';  /* Initialize output */
+
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
     const char *start = strstr(json, pattern);
     if (!start) return -1;
     start += strlen(pattern);
     const char *end = strchr(start, '"');
-    if (!end) return -1;
+    if (!end || end < start) return -1;  /* Also check for inverted pointers */
     size_t len = (size_t)(end - start);
     if (len >= outsz) len = outsz - 1;
-    strncpy(out, start, len);
+    memcpy(out, start, len);  /* memcpy is safer than strncpy here */
     out[len] = '\0';
     return 0;
 }
 
 static int64_t json_get_int(const char *json, const char *key) {
+    if (!json || !key) return 0;
+
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *start = strstr(json, pattern);
     if (!start) return 0;
     start += strlen(pattern);
+    /* Skip whitespace */
+    while (*start == ' ' || *start == '\t') start++;
     return strtoll(start, NULL, 10);
 }
 
 static double json_get_double(const char *json, const char *key) {
+    if (!json || !key) return 0.0;
+
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *start = strstr(json, pattern);
     if (!start) return 0.0;
     start += strlen(pattern);
+    /* Skip whitespace */
+    while (*start == ' ' || *start == '\t') start++;
     return strtod(start, NULL);
 }
 
@@ -107,27 +130,57 @@ static int set_nonblocking(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-/* Send message with length prefix */
-static int send_msg(int fd, const char *msg) {
-    uint32_t len = (uint32_t)strlen(msg);
-    uint32_t net_len = htonl(len);
+/* Send all data with retry logic for partial sends */
+static int send_all(int fd, const void *data, size_t len) {
+    const char *ptr = (const char *)data;
+    size_t remaining = len;
 
-    if (send(fd, &net_len, 4, 0) != 4) return -1;
-    if (send(fd, msg, len, 0) != (ssize_t)len) return -1;
+    while (remaining > 0) {
+        ssize_t sent = send(fd, ptr, remaining, MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EINTR) continue;  /* Interrupted, retry */
+            return -1;  /* Real error */
+        }
+        if (sent == 0) return -1;  /* Connection closed */
+        ptr += sent;
+        remaining -= (size_t)sent;
+    }
     return 0;
 }
 
-/* Receive message with length prefix */
+/* Send message with length prefix */
+static int send_msg(int fd, const char *msg) {
+    if (!msg) return -1;
+
+    uint32_t len = (uint32_t)strlen(msg);
+    if (len > DIST_MAX_MSG_SIZE) return -1;  /* Message too large */
+
+    uint32_t net_len = htonl(len);
+
+    if (send_all(fd, &net_len, 4) != 0) return -1;
+    if (send_all(fd, msg, len) != 0) return -1;
+    return 0;
+}
+
+/* Receive message with length prefix - with proper bounds checking */
 static int recv_msg(int fd, char *buf, size_t bufsz) {
+    if (!buf || bufsz < 2) return -1;  /* Need at least space for one char + null */
+
     uint32_t net_len;
     ssize_t n = recv(fd, &net_len, 4, MSG_WAITALL);
-    if (n != 4) return -1;
+    if (n <= 0) return -1;  /* Connection closed (0) or error (-1) */
+    if (n != 4) return -1;  /* Partial read */
 
     uint32_t len = ntohl(net_len);
-    if (len >= bufsz) return -1;
+
+    /* Validate message size: must fit with null terminator, and have max limit */
+    if (len == 0) return -1;  /* Empty message invalid */
+    if (len > DIST_MAX_MSG_SIZE) return -1;  /* Prevent DoS with huge messages */
+    if (len >= bufsz) return -1;  /* Must have room for null terminator */
 
     n = recv(fd, buf, len, MSG_WAITALL);
-    if (n != (ssize_t)len) return -1;
+    if (n <= 0) return -1;  /* Connection closed or error */
+    if (n != (ssize_t)len) return -1;  /* Partial read */
 
     buf[len] = '\0';
     return (int)len;

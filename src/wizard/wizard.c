@@ -72,11 +72,14 @@ static int wizard_select_puzzle(wizard_config_t *cfg) {
     int choice = wizard_ask_choice("Select puzzle to solve:", options, n, 0);
     int idx = puzzle_indices[choice];
 
-    /* Copy puzzle info to config */
+    /* Copy puzzle info to config - ensure null termination */
     cfg->puzzle_number = puzzles[idx].number;
     strncpy(cfg->target_address, puzzles[idx].target_address, sizeof(cfg->target_address) - 1);
+    cfg->target_address[sizeof(cfg->target_address) - 1] = '\0';
     strncpy(cfg->range_start, puzzles[idx].range_start, sizeof(cfg->range_start) - 1);
+    cfg->range_start[sizeof(cfg->range_start) - 1] = '\0';
     strncpy(cfg->range_end, puzzles[idx].range_end, sizeof(cfg->range_end) - 1);
+    cfg->range_end[sizeof(cfg->range_end) - 1] = '\0';
     cfg->bits = puzzles[idx].bits;
 
     /* For puzzles with public key, suggest BSGS mode */
@@ -115,6 +118,7 @@ static int wizard_configure_server(wizard_config_t *cfg) {
 
     /* Bind to all interfaces */
     strncpy(cfg->server_host, "0.0.0.0", sizeof(cfg->server_host) - 1);
+    cfg->server_host[sizeof(cfg->server_host) - 1] = '\0';
     printf("  ✓ Bind address: %s (all interfaces)\n", cfg->server_host);
 
     return 0;
@@ -306,6 +310,7 @@ static int wizard_configure_search(wizard_config_t *cfg) {
 
     /* 1. Mode - auto-select based on public key availability */
     strncpy(cfg->mode, rec.recommended_mode, sizeof(cfg->mode) - 1);
+    cfg->mode[sizeof(cfg->mode) - 1] = '\0';
     printf("  ✓ Mode: %s\n", cfg->mode);
 
     /* 2. Work unit size */
@@ -332,6 +337,7 @@ static int wizard_configure_search(wizard_config_t *cfg) {
 
     /* 5. Key type - always compressed (2x faster, standard for puzzles) */
     strncpy(cfg->key_type, rec.recommended_key_type, sizeof(cfg->key_type) - 1);
+    cfg->key_type[sizeof(cfg->key_type) - 1] = '\0';
     printf("  ✓ Key type: %s\n", cfg->key_type);
 
     /* 6. Random mode - based on puzzle analysis */

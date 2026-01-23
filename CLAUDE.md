@@ -4,21 +4,66 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Working Style Guidelines
 
-### Always Use Available Tools
+### MANDATORY: Always Use Available Tools
 
-**MCP Servers**: Always check for and use available MCP (Model Context Protocol) servers. They provide enhanced capabilities for specific tasks like file operations, database access, or external API integrations.
+**CRITICAL**: Before starting ANY task, you MUST check and use available tools in this priority order:
 
-**Plugins**: Use installed plugins proactively. Plugins extend Claude's capabilities with specialized functionality. Check available plugins and use them when relevant to the task.
+#### 1. MCP Servers (Highest Priority)
+MCP (Model Context Protocol) servers provide enhanced capabilities. **Always prefer MCP tools over built-in alternatives**:
 
-**Skills**: Always invoke relevant skills using the Skill tool before starting work. Skills provide structured workflows for common tasks:
-- **brainstorming** - For creative work, new features, design decisions
-- **writing-plans** - For multi-step implementation tasks
-- **executing-plans** - For implementing written plans
-- **subagent-driven-development** - For parallel task execution
-- **systematic-debugging** - For investigating bugs and failures
-- **test-driven-development** - For writing tests before implementation
-- **code-review** - For reviewing completed work
-- **verification-before-completion** - For verifying work before claiming completion
+- **Check available MCP servers** at the start of each session
+- **Use MCP file operations** instead of Bash cat/read when available
+- **Use MCP web fetch** instead of built-in WebFetch when available (fewer restrictions)
+- **Use MCP database tools** for any database operations
+- **Use MCP API tools** for external service integrations
+
+**Common MCP patterns**:
+```
+# If MCP filesystem server is available:
+- Use it for reading/writing files (may have fewer restrictions)
+
+# If MCP fetch server is available:
+- Use it for web requests (often bypasses rate limits)
+
+# If MCP git server is available:
+- Use it for git operations (may provide richer output)
+```
+
+#### 2. Plugins (High Priority)
+Plugins extend Claude's capabilities with specialized functionality:
+
+- **pr-review-toolkit** - Code review, type analysis, silent failure detection
+- **superpowers** - Brainstorming, planning, debugging, TDD workflows
+- **claude-md-management** - CLAUDE.md maintenance and improvements
+
+**Always check plugin availability** and use relevant plugins proactively.
+
+#### 3. Skills (Required for Workflows)
+**MANDATORY**: Invoke relevant skills using the Skill tool BEFORE starting work:
+
+| Skill | When to Use |
+|-------|-------------|
+| **brainstorming** | Creative work, new features, design decisions |
+| **writing-plans** | Multi-step implementation tasks |
+| **executing-plans** | Implementing written plans |
+| **subagent-driven-development** | Parallel task execution with review |
+| **systematic-debugging** | ANY bug, test failure, or unexpected behavior |
+| **test-driven-development** | Writing tests before implementation |
+| **code-review** | Reviewing completed work |
+| **verification-before-completion** | Verifying work before claiming completion |
+| **finishing-a-development-branch** | Completing development work |
+| **receiving-code-review** | When receiving feedback on code |
+
+**If there's even a 1% chance a skill applies, invoke it.**
+
+#### 4. Task Tool and Subagents
+Use specialized subagents for parallel and complex work:
+
+- **Explore** - Codebase exploration and understanding
+- **code-reviewer** - Code quality review
+- **silent-failure-hunter** - Find silent failures in error handling
+- **type-design-analyzer** - Analyze type design quality
+- **pr-test-analyzer** - Review test coverage
 
 ### Work Autonomously with Agents
 

@@ -1922,8 +1922,16 @@ int main(int argc, char **argv)	{
 		rseed(clock() + time(NULL) + rand()*rand());
 	}
 #endif
-	// Initialize output module early (will re-init after parsing -q flag)
-	output_init(OUTPUT_NORMAL);
+	// Pre-scan for -q flag to initialize output correctly from the start
+	// This prevents early messages from being shown in quiet mode
+	bool early_quiet = false;
+	for (int qi = 1; qi < argc; qi++) {
+		if (strcmp(argv[qi], "-q") == 0) {
+			early_quiet = true;
+			break;
+		}
+	}
+	output_init(early_quiet ? OUTPUT_MINIMAL : OUTPUT_NORMAL);
 
 	output_success("Version %s, developed by AlbertoBSD\n",version);
 
@@ -2311,7 +2319,7 @@ int main(int argc, char **argv)	{
 			break;
 			case 'q':
 				FLAGQUIET	= 1;
-				output_success("Quiet thread output\n");
+				/* Message suppressed - quiet mode means minimal output */
 			break;
 			case 'R':
 				output_success("Random mode\n");

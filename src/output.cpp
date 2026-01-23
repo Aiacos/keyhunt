@@ -116,7 +116,9 @@ void output_info(const char *fmt, ...) {
 }
 
 void output_success(const char *fmt, ...) {
-    if (g_output_level < OUTPUT_MINIMAL || !fmt) return;
+    // Success messages only in NORMAL and VERBOSE modes
+    // MINIMAL mode should only show progress and key found
+    if (g_output_level < OUTPUT_NORMAL || !fmt) return;
 
     va_list args;
     va_start(args, fmt);
