@@ -331,6 +331,8 @@ static void update_heartbeat_keys(uint64_t keys) {
  * @param end Range end (hex)
  * @param cfg Configuration
  * @param keys_checked Output: number of keys checked
+ * @param cpu_speed_mkeys Output: CPU speed in Mkeys/s (for hybrid mode)
+ * @param gpu_speed_mkeys Output: GPU speed in Mkeys/s (for hybrid mode)
  * @param stop_flag Flag to check for early termination
  * @param found_key Output: found private key (if any)
  * @param found_addr Output: found address (if any)
@@ -338,10 +340,14 @@ static void update_heartbeat_keys(uint64_t keys) {
  */
 static int search_range_subprocess(const char *start, const char *end,
                                     const wizard_config_t *cfg,
-                                    uint64_t *keys_checked, volatile int *stop_flag,
+                                    uint64_t *keys_checked,
+                                    double *cpu_speed_mkeys, double *gpu_speed_mkeys,
+                                    volatile int *stop_flag,
                                     char *found_key, char *found_addr) {
     char cmd[4096];
     *keys_checked = 0;
+    *cpu_speed_mkeys = 0.0;
+    *gpu_speed_mkeys = 0.0;
     found_key[0] = '\0';
     found_addr[0] = '\0';
 
@@ -423,10 +429,112 @@ static int search_range_subprocess(const char *start, const char *end,
             }
         }
 
-        /* Parse speed for progress tracking */
-        char *speed_ptr = strstr(line, "Mkeys/s");
-        if (speed_ptr) {
-            /* Could extract speed here for real-time updates */
+        /* Parse speed for progress tracking - especially for hybrid mode.
+         * Hybrid mode output format:
+         *   "[+] Total X keys in Y seconds (last Z s): CPU ~61 Mkeys/s (123 keys/s) | GPU ~334 Mkeys/s... | TOTAL ~395 Mkeys/s..."
+         * or for smaller values:
+         *   "[+] Total X keys in Y seconds (last Z s): CPU 61234567 keys/s | GPU 334567890 keys/s | TOTAL ..."
+         *
+         * Non-hybrid mode format:
+         *   "[+] Total X keys in Y seconds: ~50 Mkeys/s (50000000 keys/s)"
+         */
+        char *cpu_marker = strstr(line, "CPU ");
+        char *gpu_marker = strstr(line, "GPU ");
+        if (cpu_marker && gpu_marker) {
+            /* Hybrid mode output - parse both CPU and GPU speeds.
+             * Format can be either:
+             *   "CPU ~61 Mkeys/s (...)" or "CPU 61234567 keys/s"
+             * Try both patterns. */
+            double cpu_val = 0.0, gpu_val = 0.0;
+
+            /* Try format with tilde: "CPU ~61 Mkeys/s" */
+            if (sscanf(cpu_marker, "CPU ~%lf", &cpu_val) == 1) {
+                char *unit = strstr(cpu_marker, "keys/s");
+                if (unit) {
+                    char unit_prefix = *(unit - 1);
+                    if (unit_prefix == 'M') {
+                        *cpu_speed_mkeys = cpu_val;
+                    } else if (unit_prefix == 'G') {
+                        *cpu_speed_mkeys = cpu_val * 1000.0;
+                    } else if (unit_prefix == 'K' || unit_prefix == 'k') {
+                        *cpu_speed_mkeys = cpu_val / 1000.0;
+                    }
+                }
+            }
+            /* Try format without tilde: "CPU 61234567 keys/s" (raw keys/s) */
+            else if (sscanf(cpu_marker, "CPU %lf keys/s", &cpu_val) == 1) {
+                /* Raw keys/s - convert to Mkeys/s */
+                *cpu_speed_mkeys = cpu_val / 1000000.0;
+            }
+            /* Fallback: just try to read the number */
+            else if (sscanf(cpu_marker, "CPU %lf", &cpu_val) == 1 && cpu_val > 0) {
+                char *unit = strstr(cpu_marker, "keys/s");
+                if (unit) {
+                    char unit_prefix = *(unit - 1);
+                    if (unit_prefix == 'M') {
+                        *cpu_speed_mkeys = cpu_val;
+                    } else if (unit_prefix == 'G') {
+                        *cpu_speed_mkeys = cpu_val * 1000.0;
+                    } else if (unit_prefix == ' ' || unit_prefix == '0') {
+                        /* Plain keys/s */
+                        *cpu_speed_mkeys = cpu_val / 1000000.0;
+                    }
+                }
+            }
+
+            /* Try format with tilde: "GPU ~334 Mkeys/s" */
+            if (sscanf(gpu_marker, "GPU ~%lf", &gpu_val) == 1) {
+                char *unit = strstr(gpu_marker, "keys/s");
+                if (unit) {
+                    char unit_prefix = *(unit - 1);
+                    if (unit_prefix == 'M') {
+                        *gpu_speed_mkeys = gpu_val;
+                    } else if (unit_prefix == 'G') {
+                        *gpu_speed_mkeys = gpu_val * 1000.0;
+                    } else if (unit_prefix == 'K' || unit_prefix == 'k') {
+                        *gpu_speed_mkeys = gpu_val / 1000.0;
+                    }
+                }
+            }
+            /* Try format without tilde: "GPU 334567890 keys/s" (raw keys/s) */
+            else if (sscanf(gpu_marker, "GPU %lf keys/s", &gpu_val) == 1) {
+                /* Raw keys/s - convert to Mkeys/s */
+                *gpu_speed_mkeys = gpu_val / 1000000.0;
+            }
+            /* Fallback: just try to read the number */
+            else if (sscanf(gpu_marker, "GPU %lf", &gpu_val) == 1 && gpu_val > 0) {
+                char *unit = strstr(gpu_marker, "keys/s");
+                if (unit) {
+                    char unit_prefix = *(unit - 1);
+                    if (unit_prefix == 'M') {
+                        *gpu_speed_mkeys = gpu_val;
+                    } else if (unit_prefix == 'G') {
+                        *gpu_speed_mkeys = gpu_val * 1000.0;
+                    } else if (unit_prefix == ' ' || unit_prefix == '0') {
+                        /* Plain keys/s */
+                        *gpu_speed_mkeys = gpu_val / 1000000.0;
+                    }
+                }
+            }
+
+            if (debug_subprocess) {
+                fprintf(stderr, "[DEBUG] Parsed speeds: CPU=%.2f GPU=%.2f Mkeys/s\n",
+                        *cpu_speed_mkeys, *gpu_speed_mkeys);
+            }
+        } else {
+            /* Non-hybrid mode - parse single speed and assign to CPU or GPU based on mode.
+             * Format: "~50 Mkeys/s (50000000 keys/s)" */
+            char *mkeys_ptr = strstr(line, "Mkeys/s");
+            if (mkeys_ptr && cfg->gpu_percent == 0) {
+                /* CPU-only mode - find the number before "Mkeys/s" */
+                double speed_val = 0.0;
+                /* Look for "~N Mkeys/s" pattern */
+                char *tilde = mkeys_ptr - 1;
+                while (tilde > line && *tilde != '~') tilde--;
+                if (*tilde == '~' && sscanf(tilde, "~%lf", &speed_val) == 1) {
+                    *cpu_speed_mkeys = speed_val;
+                }
+            }
         }
 
         /* Parse found key */
@@ -735,6 +843,7 @@ int wizard_client_run(wizard_config_t *cfg) {
         fflush(stdout);
 
         uint64_t keys_checked = 0;
+        double unit_cpu_speed = 0.0, unit_gpu_speed = 0.0;
         char found_key[65] = {0};
         char found_addr[36] = {0};
         time_t unit_start = time(NULL);
@@ -742,8 +851,8 @@ int wizard_client_run(wizard_config_t *cfg) {
         /* Run search */
         int search_result = search_range_subprocess(
             range_start, range_end,
-            cfg, &keys_checked, &g_client_running,
-            found_key, found_addr
+            cfg, &keys_checked, &unit_cpu_speed, &unit_gpu_speed,
+            &g_client_running, found_key, found_addr
         );
 
         time_t unit_elapsed = time(NULL) - unit_start;
@@ -771,14 +880,41 @@ int wizard_client_run(wizard_config_t *cfg) {
         update_heartbeat_keys(keys_checked);  /* Track for heartbeat reporting */
         double speed = (double)keys_checked / unit_elapsed / 1000000.0;
 
+        /* Update client speed stats for server reporting.
+         * In hybrid mode, we have separate CPU and GPU speeds from keyhunt output.
+         * If not parsed (non-hybrid), calculate from total throughput. */
+        if (unit_cpu_speed > 0 || unit_gpu_speed > 0) {
+            /* Hybrid mode - use parsed speeds */
+            client.cpu_speed_mkeys = unit_cpu_speed;
+            client.gpu_speed_mkeys = unit_gpu_speed;
+        } else if (cfg->gpu_percent > 0) {
+            /* GPU mode but no parsed speeds - assign all to GPU */
+            client.cpu_speed_mkeys = 0.0;
+            client.gpu_speed_mkeys = speed;
+        } else {
+            /* CPU-only mode */
+            client.cpu_speed_mkeys = speed;
+            client.gpu_speed_mkeys = 0.0;
+        }
+
         /* Show progress */
         time_t elapsed = time(NULL) - start_time;
-        printf("\r[Unit #%d] %.2e keys | %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
-               work_count,
-               (double)keys_checked,
-               speed,
-               (double)total_keys,
-               elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+        if (unit_cpu_speed > 0 && unit_gpu_speed > 0) {
+            /* Hybrid mode - show CPU and GPU separately */
+            printf("\r[Unit #%d] %.2e keys | CPU: %.1f GPU: %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
+                   work_count,
+                   (double)keys_checked,
+                   unit_cpu_speed, unit_gpu_speed,
+                   (double)total_keys,
+                   elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+        } else {
+            printf("\r[Unit #%d] %.2e keys | %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
+                   work_count,
+                   (double)keys_checked,
+                   speed,
+                   (double)total_keys,
+                   elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+        }
         fflush(stdout);
 
         /* Report completion to server */

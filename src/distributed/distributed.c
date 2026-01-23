@@ -993,11 +993,24 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 
         if (elapsed > 0) {
             worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
-            /* Update speed stats for dashboard - use CPU field if no GPU indicated */
-            if (worker->gpu_memory_mb > 0) {
-                worker->gpu_speed_mkeys = worker->throughput;
+
+            /* Check if worker sent separate CPU/GPU speeds (hybrid mode).
+             * If both are present and non-zero, use them directly.
+             * Otherwise fall back to the old heuristic. */
+            double msg_cpu_speed = json_get_double(msg, "cpu_speed_mkeys");
+            double msg_gpu_speed = json_get_double(msg, "gpu_speed_mkeys");
+
+            if (msg_cpu_speed > 0.0 || msg_gpu_speed > 0.0) {
+                /* Worker sent explicit speeds - use them directly */
+                worker->cpu_speed_mkeys = msg_cpu_speed;
+                worker->gpu_speed_mkeys = msg_gpu_speed;
             } else {
-                worker->cpu_speed_mkeys = worker->throughput;
+                /* Fallback: assign total throughput based on hardware presence */
+                if (worker->gpu_memory_mb > 0) {
+                    worker->gpu_speed_mkeys = worker->throughput;
+                } else {
+                    worker->cpu_speed_mkeys = worker->throughput;
+                }
             }
         }
 
@@ -1675,6 +1688,9 @@ int dist_worker_report_done(dist_worker_client_t *client,
     json_add_int(msg, sizeof(msg), "work_id", client->current_work_id);
     json_add_int(msg, sizeof(msg), "keys_processed", keys_processed);
     json_add_int(msg, sizeof(msg), "elapsed_ms", elapsed_ms);
+    /* Include CPU and GPU speeds for hybrid mode dashboard display */
+    json_add_double(msg, sizeof(msg), "cpu_speed_mkeys", client->cpu_speed_mkeys);
+    json_add_double(msg, sizeof(msg), "gpu_speed_mkeys", client->gpu_speed_mkeys);
     size_t len = strlen(msg);
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
     strcat(msg, "}");
