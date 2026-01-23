@@ -347,6 +347,8 @@ int wizard_community_merge_exclusions(const char *exclusion_file,
 }
 
 bool wizard_is_range_excluded(const char *exclusion_file, const char *range_start) {
+    if (!exclusion_file || !range_start) return false;
+
     FILE *f = fopen(exclusion_file, "r");
     if (!f) return false;
 
@@ -358,8 +360,11 @@ bool wizard_is_range_excluded(const char *exclusion_file, const char *range_star
             line[--len] = '\0';
         }
 
-        /* Check if range_start contains or matches this exclusion */
-        if (strstr(range_start, line) != NULL) {
+        if (len == 0) continue;  /* Skip empty lines */
+
+        /* Check if range_start starts with this exclusion prefix (case-insensitive)
+         * This is correct matching: "0x123" matches "0x1234567" but not "0xABC123" */
+        if (strncasecmp(range_start, line, len) == 0) {
             fclose(f);
             return true;
         }

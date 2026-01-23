@@ -23,21 +23,25 @@ static int wizard_select_puzzle(wizard_config_t *cfg) {
     /* Try to load from cache first */
     puzzle_def_t *puzzles = NULL;
     int count = 0;
+    bool puzzles_allocated = false;  /* Track if we need to free puzzles */
 
     if (wizard_load_puzzles_from_txt(PUZZLES_CACHE_FILE, &puzzles, &count) != 0 || count == 0) {
         /* Try to download */
         printf("\n[+] Downloading puzzle database...\n");
         if (wizard_download_puzzles(&puzzles, &count) != 0 || count == 0) {
-            /* Fallback to builtin */
+            /* Fallback to builtin (static, don't free) */
             printf("[i] Using built-in puzzle database\n");
             puzzles = (puzzle_def_t*)wizard_get_builtin_puzzles(&count);
+            puzzles_allocated = false;
         } else {
-            /* Save cache */
+            /* Save cache - puzzles were dynamically allocated */
             wizard_save_puzzles_to_txt(puzzles, count, PUZZLES_CACHE_FILE);
             printf("[+] Saved %d puzzles to %s\n", count, PUZZLES_CACHE_FILE);
+            puzzles_allocated = true;
         }
     } else {
         printf("[+] Loaded %d puzzles from cache\n", count);
+        puzzles_allocated = true;  /* Loaded from file, dynamically allocated */
     }
 
     /* Filter to unsolved puzzles */
@@ -66,6 +70,7 @@ static int wizard_select_puzzle(wizard_config_t *cfg) {
 
     if (n == 0) {
         printf("[-] No unsolved puzzles found!\n");
+        if (puzzles_allocated && puzzles) free(puzzles);
         return -1;
     }
 
@@ -87,6 +92,11 @@ static int wizard_select_puzzle(wizard_config_t *cfg) {
         printf("\n[!] This puzzle has an exposed public key!\n");
         printf("    Consider using BSGS or Kangaroo algorithm for O(sqrt(N)) complexity.\n");
         strcpy(cfg->mode, "bsgs");
+    }
+
+    /* Free dynamically allocated puzzles array */
+    if (puzzles_allocated && puzzles) {
+        free(puzzles);
     }
 
     return 0;

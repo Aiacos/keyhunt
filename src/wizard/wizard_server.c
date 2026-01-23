@@ -22,27 +22,61 @@
 #include <time.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <linux/limits.h>  /* PATH_MAX */
 
-/* Global state for signal handler */
-static volatile int g_server_running = 1;
+/* Fallback if PATH_MAX not defined */
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+/* Global state for signal handler - use sig_atomic_t for signal safety */
+static volatile sig_atomic_t g_server_running = 1;
+static volatile sig_atomic_t g_shutdown_requested = 0;
 static wizard_config_t *g_server_cfg = NULL;
 static dist_coordinator_t *g_server_coord = NULL;
-static pid_t g_local_client_pid = 0;
+static volatile pid_t g_local_client_pid = 0;
 
 static void server_signal_handler(int sig) {
     (void)sig;
     g_server_running = 0;
-    printf("\n\n[!] Shutdown signal received, stopping...\n");
+    g_shutdown_requested = 1;
 
-    /* Forward signal to local client if spawned */
-    if (g_local_client_pid > 0) {
-        kill(g_local_client_pid, SIGTERM);
+    /* Signal handler should be minimal - just set flags
+     * The main loop will handle client termination safely */
+    /* Note: write() is async-signal-safe, printf is not */
+    const char msg[] = "\n\n[!] Shutdown signal received, stopping...\n";
+    (void)write(STDERR_FILENO, msg, sizeof(msg) - 1);
+
+    /* Forward signal to local client if spawned - read PID atomically */
+    pid_t pid = g_local_client_pid;
+    if (pid > 0) {
+        kill(pid, SIGTERM);
     }
 }
 
 /* ============================================================================
  * Local Client Spawning (fork/exec separate process)
  * ============================================================================ */
+
+/**
+ * Get the path to the current executable.
+ * Uses /proc/self/exe on Linux.
+ *
+ * @param buf Output buffer for path
+ * @param bufsz Size of buffer
+ * @return 0 on success, -1 on error
+ */
+static int get_executable_path(char *buf, size_t bufsz) {
+    ssize_t len = readlink("/proc/self/exe", buf, bufsz - 1);
+    if (len < 0) {
+        /* Fallback to ./keyhunt if readlink fails */
+        strncpy(buf, "./keyhunt", bufsz - 1);
+        buf[bufsz - 1] = '\0';
+        return 0;
+    }
+    buf[len] = '\0';
+    return 0;
+}
 
 /**
  * Spawn a local client process that connects back to this server via TCP.
@@ -54,6 +88,13 @@ static void server_signal_handler(int sig) {
 static pid_t spawn_local_client(int port) {
     char host_port[64];
     snprintf(host_port, sizeof(host_port), "127.0.0.1:%d", port);
+
+    /* Get the executable path dynamically */
+    char exe_path[PATH_MAX];
+    if (get_executable_path(exe_path, sizeof(exe_path)) != 0) {
+        fprintf(stderr, "[-] Failed to get executable path\n");
+        return -1;
+    }
 
     pid_t pid = fork();
 
@@ -67,7 +108,7 @@ static pid_t spawn_local_client(int port) {
         /* Small delay to ensure server is ready */
         usleep(500000);  /* 500ms */
 
-        execl("./keyhunt", "keyhunt", "--wizard-client", host_port, (char *)NULL);
+        execl(exe_path, "keyhunt", "--wizard-client", host_port, (char *)NULL);
 
         /* If execl returns, it failed */
         perror("[-] execl failed");

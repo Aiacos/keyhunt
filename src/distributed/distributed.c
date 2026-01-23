@@ -130,6 +130,27 @@ static int set_nonblocking(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+/* Set socket receive/send timeout
+ * @param fd Socket file descriptor
+ * @param timeout_sec Timeout in seconds (0 = no timeout)
+ * @return 0 on success, -1 on error
+ */
+static int set_socket_timeout(int fd, int timeout_sec) {
+    if (fd < 0) return -1;
+
+    struct timeval tv;
+    tv.tv_sec = timeout_sec;
+    tv.tv_usec = 0;
+
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        return -1;
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
 /* Send all data with retry logic for partial sends */
 static int send_all(int fd, const void *data, size_t len) {
     const char *ptr = (const char *)data;
@@ -481,6 +502,9 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             int opt = 1;
             setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
+            /* Set socket timeout to prevent hanging on malicious/stuck clients */
+            set_socket_timeout(client_fd, 60);  /* 60 second timeout */
+
             /* Read registration message */
             char msg[DIST_MAX_MSG_SIZE];
             if (recv_msg(client_fd, msg, sizeof(msg)) > 0) {
@@ -587,20 +611,35 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         dist_work_unit_t *unit = &coord->work_units[i];
         if (unit->status == WORK_STATUS_ASSIGNED) {
             /* Check if assigned worker is still connected and responsive */
-            bool worker_alive = false;
+            bool worker_connected = false;
+            bool worker_responsive = false;
+
             for (int w = 0; w < coord->worker_count; w++) {
-                if (coord->workers[w].id == unit->assigned_worker &&
-                    coord->workers[w].connected) {
-                    /* Worker connected - check heartbeat timeout */
-                    if (now_ms - coord->workers[w].last_heartbeat < stale_timeout_ms) {
-                        worker_alive = true;
+                if (coord->workers[w].id == unit->assigned_worker) {
+                    worker_connected = coord->workers[w].connected;
+                    if (worker_connected) {
+                        /* Check if heartbeat is recent */
+                        worker_responsive = (now_ms - coord->workers[w].last_heartbeat < stale_timeout_ms);
                     }
                     break;
                 }
             }
 
-            /* If worker not alive or unit assigned too long, reassign */
-            if (!worker_alive || (now_ms - unit->assigned_time > stale_timeout_ms)) {
+            /* Reassign if:
+             * 1. Worker is disconnected, OR
+             * 2. Worker connected but unresponsive AND assignment is old
+             * This prevents premature reassignment when worker is still connected
+             * but just has a delayed heartbeat */
+            bool should_reassign = false;
+            if (!worker_connected) {
+                /* Worker disconnected - reassign immediately */
+                should_reassign = true;
+            } else if (!worker_responsive && (now_ms - unit->assigned_time > stale_timeout_ms)) {
+                /* Worker connected but unresponsive and assignment is old */
+                should_reassign = true;
+            }
+
+            if (should_reassign) {
                 printf(LOG_SERVER LOG_WARN "Work unit #%d timed out, reassigning\n", unit->id);
                 unit->status = WORK_STATUS_PENDING;
                 unit->assigned_worker = -1;
