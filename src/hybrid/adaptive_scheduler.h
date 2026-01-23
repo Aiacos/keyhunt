@@ -58,6 +58,7 @@ typedef struct {
 
     /* Thread safety */
     pthread_mutex_t lock;
+    volatile int update_in_progress;  /* Atomic flag to prevent concurrent updates */
 
     /* State */
     bool initialized;

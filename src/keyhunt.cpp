@@ -85,6 +85,26 @@
 #endif
 
 /* ============================================================================
+ * Cache-Line Aligned Allocation
+ * ============================================================================ */
+
+/*
+ * Allocate zero-initialized memory aligned to cache line boundaries (64 bytes).
+ * This prevents false sharing between threads accessing adjacent array elements.
+ * Uses aligned_alloc() which requires size to be a multiple of alignment.
+ */
+static inline void* aligned_calloc(size_t alignment, size_t count, size_t elem_size) {
+    size_t total_size = count * elem_size;
+    // Round up to multiple of alignment
+    total_size = ((total_size + alignment - 1) / alignment) * alignment;
+    void* ptr = aligned_alloc(alignment, total_size);
+    if (ptr) {
+        memset(ptr, 0, total_size);  // Zero-initialize like calloc
+    }
+    return ptr;
+}
+
+/* ============================================================================
  * Thread-Safe Random Number Generation
  * ============================================================================ */
 
@@ -336,73 +356,84 @@ static void append_adaptive_info(char *buffer, size_t bufferSize) {
 // ============================================================================
 	struct WorkPool {
 		std::atomic<uint64_t> next_block;      // Next available block index
-		uint64_t block_size;                    // Keys per block
-		Int range_base;                         // Starting point of range
-		Int range_end;                          // End of range
-		volatile bool enabled;                  // Work pool is active
-		volatile bool exhausted;                // All work has been taken
-	
-		WorkPool() : next_block(0), block_size(0), enabled(false), exhausted(false) {}
+		uint64_t block_size;                    // Keys per block (immutable after init)
+		Int range_base;                         // Starting point of range (IMMUTABLE after init)
+		Int range_end;                          // End of range (IMMUTABLE after init)
+		std::atomic<bool> enabled;              // Work pool is active
+		std::atomic<bool> exhausted;            // All work has been taken
+		std::atomic<bool> initialized;          // Set true after init() completes (barrier for readers)
+
+		WorkPool() : next_block(0), block_size(0), enabled(false), exhausted(false), initialized(false) {}
 	
 		// Initialize work pool with a range
+		// NOTE: range_base, range_end, and block_size are IMMUTABLE after init()
 		void init(Int *start, Int *end, uint64_t blk_size) {
+			// Set immutable fields first (before initialized barrier)
 			range_base.Set(start);
 			range_end.Set(end);
 			block_size = blk_size;
-	
+
 			next_block.store(0, std::memory_order_release);
-			exhausted = false;
-			enabled = true;
+			exhausted.store(false, std::memory_order_release);
+			enabled.store(true, std::memory_order_release);
+			// Memory barrier: initialized must be set AFTER all other fields
+			initialized.store(true, std::memory_order_release);
 		}
 
 	// Get next work block (thread-safe, lock-free)
 	// Returns true if work was assigned, false if no more work
+	// NOTE: range_base, range_end, block_size are IMMUTABLE after init(), safe to read without lock
 		bool get_block(Int &start_out, Int &end_out) {
-			if (!enabled || exhausted) return false;
-	
+			// Check initialized barrier first (acquire to sync with init's release)
+			if (!initialized.load(std::memory_order_acquire)) return false;
+			if (!enabled.load(std::memory_order_acquire) ||
+			    exhausted.load(std::memory_order_acquire)) return false;
+
 			uint64_t block_idx = next_block.fetch_add(1, std::memory_order_acq_rel);
-	
-				// Calculate start = range_base + block_idx * block_size
-				// Use base10 conversion to avoid signed overflow when block_idx > INT64_MAX.
-				char tmp[32];
-				Int offset;
-				snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
-				offset.SetBase10(tmp);
-				Int mult;
-				snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_idx);
-				mult.SetBase10(tmp);
-				offset.Mult(&mult);
-	
+
+			// Calculate start = range_base + block_idx * block_size
+			// Use base10 conversion to avoid signed overflow when block_idx > INT64_MAX.
+			// NOTE: range_base and block_size are immutable after init(), safe to read
+			char tmp[32];
+			Int offset;
+			snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
+			offset.SetBase10(tmp);
+			Int mult;
+			snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_idx);
+			mult.SetBase10(tmp);
+			offset.Mult(&mult);
+
 			start_out.Set(&range_base);
 			start_out.Add(&offset);
+			// NOTE: range_end is immutable after init(), safe to read
 			if (!start_out.IsLower(&range_end)) {
-				exhausted = true;
+				exhausted.store(true, std::memory_order_release);
 				return false;
 			}
-	
+
 			// Calculate end = min(start + block_size, range_end)
 			end_out.Set(&start_out);
-				Int blk;
-				snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
-				blk.SetBase10(tmp);
+			Int blk;
+			snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
+			blk.SetBase10(tmp);
 			end_out.Add(&blk);
 
-		if (end_out.IsGreater(&range_end)) {
-			end_out.Set(&range_end);
-		}
+			if (end_out.IsGreater(&range_end)) {
+				end_out.Set(&range_end);
+			}
 
-		return true;
-	}
+			return true;
+		}
 
 		// Check if pool is exhausted
 		bool is_exhausted() const {
-			return exhausted;
+			return exhausted.load(std::memory_order_acquire);
 		}
 
 		// Disable the pool
 		void disable() {
-			enabled = false;
-			exhausted = true;
+			enabled.store(false, std::memory_order_release);
+			exhausted.store(true, std::memory_order_release);
 		}
 	};
 
@@ -717,7 +748,8 @@ int FLAGGPU = 0;
 // GPU full search mode: 0=off (hash-only), 1=full ECC+hash+match on GPU
 int FLAGGPU_FULL = 0;
 // GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
-int FLAGGPU_HYBRID = 0;
+// Atomic because accessed from multiple threads (CPU workers check this flag)
+std::atomic<int> FLAGGPU_HYBRID{0};
 		// Volatile stats for GPU search
 		volatile uint64_t g_gpu_keys_checked = 0;
 		volatile uint64_t g_gpu_keys_checked_cur = 0;
@@ -1463,7 +1495,7 @@ static thread_local bool cpu_cached_block_valid = false;
 
 static bool acquire_base_key(Int &key) {
 	// Work pool mode for hybrid (work-stealing)
-	if (g_work_pool.enabled) {
+	if (g_work_pool.enabled.load(std::memory_order_acquire)) {
 		// Check if we have a valid cached block with remaining work
 		if (!cpu_cached_block_valid || !cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
 			// Get a new block from the work pool
@@ -1471,6 +1503,13 @@ static bool acquire_base_key(Int &key) {
 				return false;  // No more work available
 			}
 			cpu_cached_block_valid = true;
+		}
+		// IMPORTANT: Check block boundary BEFORE returning the key
+		// This ensures we never return a key outside the assigned block
+		if (!cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
+			// Current position already at or past block end, need new block
+			cpu_cached_block_valid = false;
+			return acquire_base_key(key);  // Retry with new block
 		}
 		// Return next key from cached block
 		key.Set(&cpu_cached_block_start);
@@ -2136,7 +2175,7 @@ int main(int argc, char **argv)	{
 			if (strcasecmp(g_config.mode, "hybrid") == 0) {
 				FLAGGPU = 1;
 				FLAGGPU_FULL = 1;
-				FLAGGPU_HYBRID = 1;
+				FLAGGPU_HYBRID.store(1, std::memory_order_relaxed);
 			} else if (strcasecmp(g_config.mode, "gpu") == 0) {
 				FLAGGPU = 1;
 				FLAGGPU_FULL = 1;
@@ -2280,7 +2319,7 @@ int main(int argc, char **argv)	{
 					} else if (strcasecmp(optarg, "hybrid") == 0) {
 						FLAGGPU = 1;
 						FLAGGPU_FULL = 1;
-						FLAGGPU_HYBRID = 1;  // Hybrid mode: GPU + CPU in parallel
+						FLAGGPU_HYBRID.store(1, std::memory_order_relaxed);  // Hybrid mode: GPU + CPU in parallel
 						output_success("GPU hybrid mode (GPU + CPU in parallel for maximum throughput)\n");
 					} else {
 						output_warning("Invalid -G value '%s', use: off|auto|hash|full|hybrid\n", optarg);
@@ -2688,7 +2727,7 @@ int main(int argc, char **argv)	{
 				output_warning("GPU mode requires stride=1 (-I 1). Falling back to CPU.\n");
 				FLAGGPU = 0;
 				FLAGGPU_FULL = 0;
-				FLAGGPU_HYBRID = 0;
+				FLAGGPU_HYBRID.store(0, std::memory_order_relaxed);
 			}
 
 				// Validate mode support
@@ -4211,10 +4250,10 @@ int main(int argc, char **argv)	{
 			       NTHREADS, g_sysinfo.cpu_physical_cores);
 		}
 
-		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
-		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
-		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));
-		checkpointer((void *)ends,__FILE__,"calloc","ends" ,__LINE__ -1 );
+		steps = (struct thread_counter *) aligned_calloc(64, NTHREADS, sizeof(struct thread_counter));
+		checkpointer((void *)steps,__FILE__,"aligned_calloc","steps" ,__LINE__ -1 );
+		ends = (struct thread_flag *) aligned_calloc(64, NTHREADS, sizeof(struct thread_flag));
+		checkpointer((void *)ends,__FILE__,"aligned_calloc","ends" ,__LINE__ -1 );
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
 #else
@@ -4291,10 +4330,10 @@ int main(int argc, char **argv)	{
 				NTHREADS = OPTIMAL_THREADS;
 				output_info("Using auto-tuned thread count: %d\n", NTHREADS);
 			}
-		steps = (struct thread_counter *) calloc(NTHREADS,sizeof(struct thread_counter));
-		checkpointer((void *)steps,__FILE__,"calloc","steps" ,__LINE__ -1 );
-		ends = (struct thread_flag *) calloc(NTHREADS,sizeof(struct thread_flag));
-		checkpointer((void *)ends,__FILE__,"calloc","ends" ,__LINE__ -1 );
+		steps = (struct thread_counter *) aligned_calloc(64, NTHREADS, sizeof(struct thread_counter));
+		checkpointer((void *)steps,__FILE__,"aligned_calloc","steps" ,__LINE__ -1 );
+		ends = (struct thread_flag *) aligned_calloc(64, NTHREADS, sizeof(struct thread_flag));
+		checkpointer((void *)ends,__FILE__,"aligned_calloc","ends" ,__LINE__ -1 );
 #if defined(_WIN64) && !defined(__CYGWIN__)
 		tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
 #else
@@ -4369,10 +4408,10 @@ int main(int argc, char **argv)	{
 		// GPU Hybrid Mode (GPU + CPU in parallel with STATIC SPLIT)
 		// GPU gets g_gpu_range_percent% of range, CPU uses normal fast algorithm
 		// ============================================================================
-			if (FLAGGPU_HYBRID && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
+			if (FLAGGPU_HYBRID.load(std::memory_order_relaxed) && (FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160)) {
 				if (!gpu_backend_available()) {
 					output_warning("GPU not available for hybrid mode, falling back to CPU-only\n");
-					FLAGGPU_HYBRID = 0;
+					FLAGGPU_HYBRID.store(0, std::memory_order_release);
 					} else {
 						// Initialize adaptive scheduler for throughput tracking
 						// Use sysinfo hybrid ratio for initial CPU/GPU split
@@ -4423,7 +4462,7 @@ int main(int argc, char **argv)	{
 							if (err != 0) {
 								output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 								g_work_pool.disable();
-								FLAGGPU_HYBRID = 0;
+								FLAGGPU_HYBRID.store(0, std::memory_order_release);
 							} else {
 								gpu_hybrid_started = 1;
 								output_success("GPU thread started, CPU uses normal fast algorithm\n");
@@ -4512,7 +4551,7 @@ int main(int argc, char **argv)	{
 			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
 			if (err != 0) {
 				output_warning("Failed to start GPU thread, falling back to CPU-only\n");
-				FLAGGPU_HYBRID = 0;
+				FLAGGPU_HYBRID.store(0, std::memory_order_release);
 					} else {
 						gpu_hybrid_started = 1;
 						// Update n_range_start for CPU threads - they use normal algorithm
