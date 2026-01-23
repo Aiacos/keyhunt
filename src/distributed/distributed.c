@@ -326,6 +326,63 @@ static double json_get_double(const char *json, const char *key) {
     return strtod(start, NULL);
 }
 
+/**
+ * Extract a nested JSON object as a string.
+ * Given {"type":"ack","job":{...}}, extracts the {...} part for "job".
+ *
+ * @param json Input JSON string
+ * @param key Key of the nested object
+ * @param out Output buffer for the nested object
+ * @param outsz Size of output buffer
+ * @return 0 on success, -1 if not found or on error
+ */
+static int json_get_object(const char *json, const char *key, char *out, size_t outsz) {
+    if (!json || !key || !out || outsz == 0) return -1;
+    out[0] = '\0';
+
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char *start = strstr(json, pattern);
+    if (!start) return -1;
+    start += strlen(pattern);
+
+    /* Skip whitespace */
+    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+
+    /* Must start with { */
+    if (*start != '{') return -1;
+
+    /* Find matching closing brace */
+    int depth = 0;
+    const char *end = start;
+    while (*end) {
+        if (*end == '{') depth++;
+        else if (*end == '}') {
+            depth--;
+            if (depth == 0) {
+                end++;  /* Include the closing brace */
+                break;
+            }
+        } else if (*end == '"') {
+            /* Skip string content to avoid counting braces inside strings */
+            end++;
+            while (*end && *end != '"') {
+                if (*end == '\\' && *(end+1)) end++;  /* Skip escaped chars */
+                end++;
+            }
+        }
+        if (*end) end++;
+    }
+
+    if (depth != 0) return -1;  /* Unbalanced braces */
+
+    size_t len = (size_t)(end - start);
+    if (len >= outsz) len = outsz - 1;
+    memcpy(out, start, len);
+    out[len] = '\0';
+    return 0;
+}
+
 static uint64_t time_ms(void) {
     struct timespec ts;
     /* Use CLOCK_REALTIME (Unix epoch) for compatibility with time(NULL) comparisons */
@@ -1503,13 +1560,42 @@ int dist_worker_connect(dist_worker_client_t *client) {
         return -1;
     }
 
-    /* Parse job config from welcome message */
-    json_get_string(response, "target_address", client->received_target_address,
-                    sizeof(client->received_target_address));
-    json_get_string(response, "mode", client->received_mode, sizeof(client->received_mode));
-    json_get_string(response, "key_type", client->received_key_type, sizeof(client->received_key_type));
-    client->received_puzzle_number = (int)json_get_int(response, "puzzle_number");
-    client->received_bits = (int)json_get_int(response, "bits");
+    /* Parse job config from welcome/ack message.
+     * Support both formats:
+     * 1. Flat format: {"type":"welcome","target_address":"...","puzzle_number":66,...}
+     * 2. Nested format: {"type":"ack","job":{"target":"...","puzzle":66,...},...}
+     */
+    char job_object[DIST_MAX_MSG_SIZE] = {0};
+    const char *config_source = response;  /* Default to parsing from response directly */
+
+    /* Check if there's a nested "job" object */
+    if (json_get_object(response, "job", job_object, sizeof(job_object)) == 0) {
+        /* Use the nested job object for parsing config */
+        config_source = job_object;
+
+        /* Nested format uses different field names: "target" instead of "target_address" */
+        json_get_string(config_source, "target", client->received_target_address,
+                        sizeof(client->received_target_address));
+        json_get_string(config_source, "mode", client->received_mode, sizeof(client->received_mode));
+        json_get_string(config_source, "key_type", client->received_key_type, sizeof(client->received_key_type));
+        /* Nested format uses "puzzle" instead of "puzzle_number" */
+        client->received_puzzle_number = (int)json_get_int(config_source, "puzzle");
+        /* Try "bits" first, fall back to calculating from puzzle number if not present */
+        client->received_bits = (int)json_get_int(config_source, "bits");
+        if (client->received_bits == 0 && client->received_puzzle_number > 0) {
+            client->received_bits = client->received_puzzle_number;  /* For puzzles, bits == puzzle number */
+        }
+    } else {
+        /* Flat format with original field names */
+        json_get_string(config_source, "target_address", client->received_target_address,
+                        sizeof(client->received_target_address));
+        json_get_string(config_source, "mode", client->received_mode, sizeof(client->received_mode));
+        json_get_string(config_source, "key_type", client->received_key_type, sizeof(client->received_key_type));
+        client->received_puzzle_number = (int)json_get_int(config_source, "puzzle_number");
+        client->received_bits = (int)json_get_int(config_source, "bits");
+    }
+
+    /* Heartbeat interval is always at the top level */
     client->heartbeat_interval_sec = (int)json_get_int(response, "heartbeat_interval");
     if (client->heartbeat_interval_sec <= 0) client->heartbeat_interval_sec = 30;
 
