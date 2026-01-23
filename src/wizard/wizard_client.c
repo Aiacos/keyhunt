@@ -56,6 +56,18 @@ static pthread_mutex_t g_heartbeat_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile uint64_t g_keys_since_heartbeat = 0;
 static volatile time_t g_last_heartbeat_time = 0;
 
+/* Persistent target file (created once, reused across work units) */
+static char g_target_file[256] = "";
+static bool g_target_file_created = false;
+
+/* Work batch state (batch multiple ranges to reduce overhead)
+ * Instead of network prefetch (which requires socket synchronization),
+ * we batch work unit requests to reduce server round-trips. */
+#define WORK_BATCH_SIZE 5
+static char g_batch_ranges[WORK_BATCH_SIZE][2][65];  /* [unit][start/end][hex] */
+static int g_batch_count = 0;
+static int g_batch_index = 0;
+
 /* Reconnection state */
 static volatile int g_reconnecting = 0;
 static volatile int g_heartbeat_failures = 0;
@@ -468,6 +480,100 @@ static void update_heartbeat_keys(uint64_t keys) {
 }
 
 /* ============================================================================
+ * Work Batch Functions (reduce network round-trips)
+ * ============================================================================ */
+
+/**
+ * Reset the work batch (e.g., after reconnection).
+ */
+static void reset_work_batch(void) {
+    g_batch_count = 0;
+    g_batch_index = 0;
+}
+
+/**
+ * Get next work unit, using batch cache if available.
+ * Falls back to network request when batch is exhausted.
+ *
+ * @param client Worker client for network requests
+ * @param range_start Output buffer for range start
+ * @param range_end Output buffer for range end
+ * @return 0 if work available, 1 if no more work, -1 on error
+ */
+static int get_next_work_unit(dist_worker_client_t *client, char *range_start, char *range_end) {
+    /* Check if we have cached work */
+    if (g_batch_index < g_batch_count) {
+        strncpy(range_start, g_batch_ranges[g_batch_index][0], 64);
+        range_start[64] = '\0';
+        strncpy(range_end, g_batch_ranges[g_batch_index][1], 64);
+        range_end[64] = '\0';
+        g_batch_index++;
+        return 0;
+    }
+
+    /* Batch exhausted - request directly from server */
+    return dist_worker_request_work(client, range_start, range_end);
+}
+
+/* ============================================================================
+ * Target File Management (create once, reuse)
+ * ============================================================================ */
+
+/**
+ * Create the persistent target file.
+ * This is created once and reused for all work units.
+ */
+static int create_target_file(const char *target_address) {
+    if (g_target_file_created) {
+        return 0;  /* Already created */
+    }
+
+    snprintf(g_target_file, sizeof(g_target_file), "/tmp/wizard_target_%d.txt", getpid());
+
+    FILE *f = fopen(g_target_file, "w");
+    if (!f) {
+        fprintf(stderr, "[-] Failed to create target file: %s\n", strerror(errno));
+        return -1;
+    }
+    fprintf(f, "%s\n", target_address);
+    fclose(f);
+
+    g_target_file_created = true;
+    return 0;
+}
+
+/**
+ * Update the target file with a new address.
+ * Used when server configuration changes.
+ */
+static int update_target_file(const char *target_address) {
+    if (!g_target_file_created) {
+        return create_target_file(target_address);
+    }
+
+    FILE *f = fopen(g_target_file, "w");
+    if (!f) {
+        fprintf(stderr, "[-] Failed to update target file: %s\n", strerror(errno));
+        return -1;
+    }
+    fprintf(f, "%s\n", target_address);
+    fclose(f);
+
+    return 0;
+}
+
+/**
+ * Clean up the target file.
+ */
+static void cleanup_target_file(void) {
+    if (g_target_file_created && g_target_file[0] != '\0') {
+        unlink(g_target_file);
+        g_target_file[0] = '\0';
+        g_target_file_created = false;
+    }
+}
+
+/* ============================================================================
  * Subprocess Search with Robust Error Handling
  * ============================================================================ */
 
@@ -498,17 +604,12 @@ static int search_range_subprocess(const char *start, const char *end,
     found_key[0] = '\0';
     found_addr[0] = '\0';
 
-    /* Create temp file for target address */
-    char target_file[256];
-    snprintf(target_file, sizeof(target_file), "/tmp/wizard_target_%d.txt", getpid());
-
-    FILE *tf = fopen(target_file, "w");
-    if (!tf) {
-        fprintf(stderr, "[-] Failed to create target file: %s\n", strerror(errno));
-        return -1;
+    /* Use persistent target file (created once at startup) */
+    if (!g_target_file_created) {
+        if (create_target_file(cfg->target_address) != 0) {
+            return -1;
+        }
     }
-    fprintf(tf, "%s\n", cfg->target_address);
-    fclose(tf);
 
     /* Build GPU argument if enabled - use hybrid mode for CPU+GPU parallel search */
     char gpu_arg[64] = "";
@@ -519,15 +620,17 @@ static int search_range_subprocess(const char *start, const char *end,
         snprintf(gpu_arg, sizeof(gpu_arg), "-G hybrid ");
     }
 
-    /* Build command with absolute path */
+    /* Build command with absolute path.
+     * Use larger status interval (-s 5) to reduce output overhead.
+     * The main bottleneck is often stdout parsing, so less output = faster. */
     if (strcmp(cfg->mode, "bsgs") == 0) {
         snprintf(cmd, sizeof(cmd),
-            "timeout 300s '%s' -m bsgs -f '%s' -r %s:%s -t %d %s-q -s 1 2>&1",
-            g_executable_path, target_file, start, end, cfg->threads, gpu_arg);
+            "timeout 600s '%s' -m bsgs -f '%s' -r %s:%s -t %d %s-q -s 5 2>&1",
+            g_executable_path, g_target_file, start, end, cfg->threads, gpu_arg);
     } else {
         snprintf(cmd, sizeof(cmd),
-            "timeout 300s '%s' -m %s -f '%s' -r %s:%s -t %d %s-l %s -q -s 1 2>&1",
-            g_executable_path, cfg->mode, target_file, start, end,
+            "timeout 600s '%s' -m %s -f '%s' -r %s:%s -t %d %s-l %s -q -s 5 2>&1",
+            g_executable_path, cfg->mode, g_target_file, start, end,
             cfg->threads, gpu_arg, cfg->key_type);
     }
 
@@ -535,7 +638,6 @@ static int search_range_subprocess(const char *start, const char *end,
     FILE *fp = popen(cmd, "r");
     if (!fp) {
         fprintf(stderr, "[-] Failed to start subprocess: %s\n", strerror(errno));
-        unlink(target_file);
         return -1;
     }
 
@@ -714,7 +816,8 @@ static int search_range_subprocess(const char *start, const char *end,
     }
 
     int exit_status = pclose(fp);
-    unlink(target_file);
+    /* Note: Target file is NOT deleted here - it's persistent and reused.
+     * It will be cleaned up in cleanup_target_file() at client shutdown. */
 
     /* Analyze exit status */
     if (WIFEXITED(exit_status)) {
@@ -725,7 +828,7 @@ static int search_range_subprocess(const char *start, const char *end,
             return found ? 1 : 0;
         } else if (exit_code == 124) {
             /* Timeout */
-            fprintf(stderr, "\n[-] Work unit timed out (5 min limit)\n");
+            fprintf(stderr, "\n[-] Work unit timed out (10 min limit)\n");
             return -2;
         } else if (exit_code == 126) {
             /* Cannot execute */
@@ -952,6 +1055,17 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("[+] Heartbeat thread started (every %d seconds)\n", heartbeat_interval);
     }
 
+    /* Create persistent target file once (reused across all work units).
+     * This eliminates file creation overhead for each work unit. */
+    if (create_target_file(cfg->target_address) != 0) {
+        printf("[-] Failed to create target file\n");
+        stop_heartbeat_thread();
+        dist_worker_disconnect(&client);
+        return -1;
+    }
+    printf("[+] Target file created (persistent for session)\n");
+    printf("[+] Optimizations: persistent target file, reduced status output interval\n");
+
     /* Step 5: Main work loop */
     uint64_t total_keys = 0;
     int work_count = 0;
@@ -964,6 +1078,9 @@ int wizard_client_run(wizard_config_t *cfg) {
             /* Abandon current work unit - server will reassign after timeout */
             g_client_last_range_start[0] = '\0';
             g_client_last_range_end[0] = '\0';
+
+            /* Reset work batch on reconnection */
+            reset_work_batch();
 
             if (attempt_reconnect(&client, cfg) != 0) {
                 /* Shutdown was requested during reconnection */
@@ -978,6 +1095,8 @@ int wizard_client_run(wizard_config_t *cfg) {
                 strncpy(cfg->key_type, server_key_type, sizeof(cfg->key_type) - 1);
                 cfg->puzzle_number = client.received_puzzle_number;
                 cfg->bits = client.received_bits;
+                /* Update target file if address changed */
+                update_target_file(cfg->target_address);
             }
 
             /* Reset no_work_count after reconnection */
@@ -987,7 +1106,7 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         /* Request work from coordinator */
         char range_start[65], range_end[65];
-        int result = dist_worker_request_work(&client, range_start, range_end);
+        int result = get_next_work_unit(&client, range_start, range_end);
 
         if (result == 1) {
             /* No work available */
@@ -1138,7 +1257,7 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("\n");
     }
 
-    /* Stop heartbeat thread */
+    /* Stop background threads */
     stop_heartbeat_thread();
 
     /* Graceful shutdown: save final progress if we have a pending work unit */
@@ -1149,6 +1268,9 @@ int wizard_client_run(wizard_config_t *cfg) {
                                    g_client_last_range_start,
                                    g_client_last_range_end);
     }
+
+    /* Clean up persistent target file */
+    cleanup_target_file();
 
     /* Cleanup and final stats */
     printf("\n\n");

@@ -185,8 +185,9 @@ static void calculate_puzzle_recommendation(int bits, bool has_pubkey,
         /* BSGS is O(sqrt(N)), so random doesn't help much */
         rec->recommended_random = false;
 
-        /* Work units for BSGS - larger for continuous execution */
-        rec->recommended_work_unit = 0x40000000ULL;  /* 1G - ~20 seconds per unit */
+        /* Work units for BSGS - larger for continuous execution
+         * Target: ~60+ seconds per unit to minimize subprocess overhead */
+        rec->recommended_work_unit = 0x100000000ULL;  /* 4G - ~60+ seconds per unit */
 
     } else {
         rec->recommended_mode = "address";
@@ -194,15 +195,23 @@ static void calculate_puzzle_recommendation(int bits, bool has_pubkey,
         /* For address mode, random is better for large ranges */
         rec->recommended_random = (bits >= 66);
 
-        /* Work unit size: large for continuous CPU utilization
-         * Target: ~30-60 seconds per work unit at ~50 Mkeys/s
-         * Reduces subprocess spawn overhead significantly */
+        /* Work unit size: LARGE for continuous CPU utilization
+         *
+         * IMPORTANT: Each work unit spawns a subprocess (fork/exec).
+         * The subprocess startup/shutdown overhead is ~0.5-1 second.
+         * To maintain >99% CPU utilization:
+         *   - Target at least 60 seconds per work unit
+         *   - At 50 Mkeys/s: 60s * 50M = 3B keys minimum
+         *   - At 100 Mkeys/s (GPU): need 6B keys minimum
+         *
+         * Larger units = fewer subprocess spawns = more stable CPU usage.
+         * The timeout is 10 minutes so units up to 30B keys are safe. */
         if (bits <= 50) {
-            rec->recommended_work_unit = 0x40000000ULL;   /* 1G - ~20 seconds */
+            rec->recommended_work_unit = 0x100000000ULL;  /* 4G - ~80 seconds @ 50 Mkeys/s */
         } else if (bits <= 75) {
-            rec->recommended_work_unit = 0x80000000ULL;   /* 2G - ~40 seconds */
+            rec->recommended_work_unit = 0x200000000ULL;  /* 8G - ~160 seconds @ 50 Mkeys/s */
         } else {
-            rec->recommended_work_unit = 0x100000000ULL;  /* 4G - ~80 seconds */
+            rec->recommended_work_unit = 0x400000000ULL;  /* 16G - ~320 seconds @ 50 Mkeys/s */
         }
     }
 
