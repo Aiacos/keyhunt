@@ -720,14 +720,26 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->port = (port > 0) ? port : DIST_DEFAULT_PORT;
     coord->listen_socket = -1;
     coord->bind_address[0] = '\0';  /* Bind to all interfaces by default */
+    coord->next_pending_hint = 0;   /* Start searching from beginning */
 
-    /* Initialize work mutex for thread-safe work unit assignment */
+    /* Initialize fine-grained mutexes for thread-safe operations */
     if (pthread_mutex_init(&coord->work_mutex, NULL) != 0) {
+        return -1;
+    }
+    if (pthread_mutex_init(&coord->stats_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&coord->work_mutex);
+        return -1;
+    }
+    if (pthread_mutex_init(&coord->worker_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&coord->stats_mutex);
+        pthread_mutex_destroy(&coord->work_mutex);
         return -1;
     }
 
     /* Initialize rate limiter */
     if (rate_limiter_init(&coord->rate_limiter) != 0) {
+        pthread_mutex_destroy(&coord->worker_mutex);
+        pthread_mutex_destroy(&coord->stats_mutex);
         pthread_mutex_destroy(&coord->work_mutex);
         return -1;
     }
@@ -737,6 +749,8 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->results = calloc(coord->result_capacity, sizeof(dist_result_t));
     if (!coord->results) {
         rate_limiter_destroy(&coord->rate_limiter);
+        pthread_mutex_destroy(&coord->worker_mutex);
+        pthread_mutex_destroy(&coord->stats_mutex);
         pthread_mutex_destroy(&coord->work_mutex);
         return -1;
     }
@@ -917,29 +931,158 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
     return 0;
 }
 
-/* Find next pending work unit */
+/* Find next pending work unit - optimized with hint for O(1) average case
+ * IMPORTANT: Caller must hold work_mutex */
 static dist_work_unit_t* find_pending_work(dist_coordinator_t *coord) {
-    for (int i = 0; i < coord->work_unit_count; i++) {
+    int count = coord->work_unit_count;
+    int hint = coord->next_pending_hint;
+
+    /* Start from hint position for O(1) average case when assigning sequentially */
+    for (int i = hint; i < count; i++) {
         if (coord->work_units[i].status == WORK_STATUS_PENDING) {
+            coord->next_pending_hint = i + 1;  /* Update hint for next call */
             return &coord->work_units[i];
         }
     }
+
+    /* Wrap around from beginning (handles reassigned work units) */
+    for (int i = 0; i < hint; i++) {
+        if (coord->work_units[i].status == WORK_STATUS_PENDING) {
+            coord->next_pending_hint = i + 1;
+            return &coord->work_units[i];
+        }
+    }
+
     return NULL;
 }
 
-/* Handle worker message */
+/* ============================================================================
+ * Per-Worker Handler Thread
+ * ============================================================================
+ *
+ * Each connected worker gets its own dedicated thread for handling messages.
+ * This ensures:
+ * 1. One slow/stuck client doesn't block other clients
+ * 2. Work assignment happens in parallel for multiple clients
+ * 3. Network I/O doesn't block the coordinator's main loop
+ * 4. CPU performance remains constant regardless of client count
+ * ============================================================================ */
+
+/* Forward declaration */
+static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const char *msg);
+
+/**
+ * Worker handler thread function - runs continuously for each connected worker.
+ * Processes messages from the worker without blocking other workers.
+ */
+static void *worker_handler_thread(void *arg) {
+    dist_worker_t *worker = (dist_worker_t *)arg;
+    dist_coordinator_t *coord = (dist_coordinator_t *)worker->coordinator;
+    int worker_idx = worker->id;
+
+    /* Set socket to blocking with reasonable timeout for this thread */
+    set_socket_timeout(worker->socket_fd, 10);  /* 10 second timeout for recv */
+
+    while (worker->handler_running && coord->running && worker->connected) {
+        char msg[DIST_MAX_MSG_SIZE];
+        int n = recv_msg_ex(worker->socket_fd, worker->ssl, msg, sizeof(msg));
+
+        if (n > 0) {
+            /* Process the message - this may take a lock briefly but releases quickly */
+            handle_worker_msg(coord, worker_idx, msg);
+        } else if (n == 0) {
+            /* Connection closed gracefully */
+            break;
+        } else {
+            /* Error or timeout - check if we should continue */
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+                /* Timeout is OK - just means no data yet, keep waiting */
+                continue;
+            }
+            /* Real error - disconnect */
+            break;
+        }
+    }
+
+    /* Mark worker as disconnected */
+    pthread_mutex_lock(&coord->worker_mutex);
+    worker->connected = false;
+    worker->handler_running = false;
+
+    /* Reassign any pending work from this worker */
+    if (worker->current_work_id >= 0 && worker->current_work_id < coord->work_unit_count) {
+        pthread_mutex_lock(&coord->work_mutex);
+        dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
+        if (unit->status == WORK_STATUS_ASSIGNED && unit->assigned_worker == worker->id) {
+            unit->status = WORK_STATUS_PENDING;
+            unit->assigned_worker = -1;
+            coord->work_units_pending++;
+            /* Reset hint to search from this reclaimed unit */
+            if (worker->current_work_id < coord->next_pending_hint) {
+                coord->next_pending_hint = worker->current_work_id;
+            }
+        }
+        pthread_mutex_unlock(&coord->work_mutex);
+        worker->current_work_id = -1;
+    }
+    pthread_mutex_unlock(&coord->worker_mutex);
+
+    printf(LOG_SERVER LOG_WARN "Worker " CLR_YELLOW "#%d" CLR_RESET " (%s) handler thread exited\n",
+           worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+
+    /* Close socket */
+#ifdef HAVE_OPENSSL
+    if (worker->ssl) {
+        SSL_shutdown((SSL *)worker->ssl);
+        SSL_free((SSL *)worker->ssl);
+        worker->ssl = NULL;
+    }
+#endif
+    if (worker->socket_fd >= 0) {
+        close(worker->socket_fd);
+        worker->socket_fd = -1;
+    }
+
+    return NULL;
+}
+
+/**
+ * Start a dedicated handler thread for a worker.
+ * Called after successful registration.
+ */
+static int start_worker_handler_thread(dist_coordinator_t *coord, dist_worker_t *worker) {
+    worker->coordinator = coord;
+    worker->handler_running = true;
+
+    if (pthread_create(&worker->handler_thread, NULL, worker_handler_thread, worker) != 0) {
+        worker->handler_running = false;
+        printf(LOG_SERVER LOG_ERR "Failed to create handler thread for worker #%d\n", worker->id);
+        return -1;
+    }
+
+    /* Detach thread so it cleans up automatically when done */
+    pthread_detach(worker->handler_thread);
+
+    return 0;
+}
+
+/* Handle worker message - called from worker's dedicated handler thread
+ * Uses fine-grained locking for scalability with many clients */
 static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const char *msg) {
     dist_worker_t *worker = &coord->workers[worker_idx];
     char type[32] = {0};
     json_get_string(msg, "type", type, sizeof(type));
 
     if (strcmp(type, "request_work") == 0) {
-        /* Update heartbeat - worker is alive */
+        /* Update heartbeat atomically - no lock needed for single write */
         worker->last_heartbeat = time_ms();
 
         char response[DIST_MAX_MSG_SIZE];
+        int work_id = -1;
+        char range_start[65] = {0};
+        char range_end[65] = {0};
 
-        /* Lock work mutex for thread-safe assignment */
+        /* Brief lock for work assignment only - release before I/O */
         pthread_mutex_lock(&coord->work_mutex);
 
         dist_work_unit_t *unit = find_pending_work(coord);
@@ -951,11 +1094,22 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             worker->current_work_id = unit->id;
             coord->work_units_pending--;
 
+            /* Copy data under lock, build response outside */
+            work_id = unit->id;
+            strncpy(range_start, unit->range_start, sizeof(range_start) - 1);
+            strncpy(range_end, unit->range_end, sizeof(range_end) - 1);
+        }
+
+        pthread_mutex_unlock(&coord->work_mutex);
+        /* Lock released before network I/O - critical for performance */
+
+        /* Build response outside the lock */
+        if (work_id >= 0) {
             snprintf(response, sizeof(response), "{");
             json_add_string(response, sizeof(response), "type", "work_assignment");
-            json_add_int(response, sizeof(response), "work_id", unit->id);
-            json_add_string(response, sizeof(response), "range_start", unit->range_start);
-            json_add_string(response, sizeof(response), "range_end", unit->range_end);
+            json_add_int(response, sizeof(response), "work_id", work_id);
+            json_add_string(response, sizeof(response), "range_start", range_start);
+            json_add_string(response, sizeof(response), "range_end", range_end);
             /* Remove trailing comma */
             size_t len = strlen(response);
             if (len > 0 && response[len-1] == ',') response[len-1] = '\0';
@@ -964,8 +1118,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             snprintf(response, sizeof(response), "{\"type\":\"no_work\"}");
         }
 
-        pthread_mutex_unlock(&coord->work_mutex);
-
+        /* Network I/O happens outside lock */
         send_msg_ex(worker->socket_fd, worker->ssl, response);
 
     } else if (strcmp(type, "work_done") == 0) {
@@ -973,10 +1126,10 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         uint64_t keys = (uint64_t)json_get_int(msg, "keys_processed");
         uint64_t elapsed = (uint64_t)json_get_int(msg, "elapsed_ms");
 
-        /* Update heartbeat - worker is alive */
+        /* Update heartbeat atomically */
         worker->last_heartbeat = time_ms();
 
-        /* Lock work mutex for thread-safe completion */
+        /* Brief lock for work unit status update only */
         pthread_mutex_lock(&coord->work_mutex);
 
         if (work_id >= 0 && work_id < coord->work_unit_count) {
@@ -986,10 +1139,13 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             coord->work_units_completed++;
         }
 
+        pthread_mutex_unlock(&coord->work_mutex);
+
+        /* Update statistics with separate lock - doesn't block work assignment */
+        pthread_mutex_lock(&coord->stats_mutex);
         worker->keys_processed += keys;
         coord->keys_processed += keys;
-
-        pthread_mutex_unlock(&coord->work_mutex);
+        pthread_mutex_unlock(&coord->stats_mutex);
 
         if (elapsed > 0) {
             worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
@@ -1044,24 +1200,34 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
     return 0;
 }
 
+/* ============================================================================
+ * Coordinator Main Processing Loop
+ * ============================================================================
+ *
+ * ARCHITECTURE: Thread-per-client model for non-blocking operation
+ *
+ * The main process loop ONLY handles:
+ * 1. Accepting new connections (fast, non-blocking)
+ * 2. Initial client registration and authentication
+ * 3. Spawning dedicated handler threads for each client
+ * 4. Periodic health checks and statistics updates
+ *
+ * Each client's messages are handled by its own dedicated thread, ensuring:
+ * - One slow client doesn't block others
+ * - Work assignment happens in parallel
+ * - CPU performance remains constant regardless of client count
+ * - Network I/O never blocks the coordinator
+ * ============================================================================ */
+
 int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
     if (!coord->running) return -1;
 
     fd_set readfds;
     FD_ZERO(&readfds);
 
+    /* Only monitor listen socket - worker messages handled by their threads */
     int maxfd = coord->listen_socket;
     FD_SET(coord->listen_socket, &readfds);
-
-    /* Add worker sockets */
-    for (int i = 0; i < coord->worker_count; i++) {
-        if (coord->workers[i].connected && coord->workers[i].socket_fd >= 0) {
-            FD_SET(coord->workers[i].socket_fd, &readfds);
-            if (coord->workers[i].socket_fd > maxfd) {
-                maxfd = coord->workers[i].socket_fd;
-            }
-        }
-    }
 
     struct timeval tv;
     tv.tv_sec = timeout_ms / 1000;
@@ -1073,7 +1239,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         return -1;
     }
 
-    /* Check for new connections */
+    /* Check for new connections - this is the only blocking part now */
     if (FD_ISSET(coord->listen_socket, &readfds)) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
@@ -1089,12 +1255,13 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             }
         }
 
+        pthread_mutex_lock(&coord->worker_mutex);
         if (client_fd >= 0 && coord->worker_count < DIST_MAX_WORKERS) {
             int opt = 1;
             setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 
-            /* Set socket timeout to prevent hanging on malicious/stuck clients */
-            set_socket_timeout(client_fd, 60);  /* 60 second timeout */
+            /* Short timeout for registration - don't let malicious clients hang us */
+            set_socket_timeout(client_fd, 10);  /* 10 second timeout for initial handshake */
 
             /* TLS handshake if enabled */
             void *client_ssl = NULL;
@@ -1104,6 +1271,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 if (!client_ssl) {
                     printf(LOG_SERVER LOG_WARN "TLS handshake failed for new connection\n");
                     close(client_fd);
+                    pthread_mutex_unlock(&coord->worker_mutex);
                     return 0;  /* Reject connection */
                 }
             }
@@ -1153,60 +1321,68 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     }
 
                     if (auth_passed) {
-                    dist_worker_t *worker = &coord->workers[coord->worker_count];
-                    worker->id = coord->worker_count;
-                    worker->socket_fd = client_fd;
-                    worker->ssl = client_ssl;  /* Store SSL handle (NULL if TLS disabled) */
-                    worker->connected = true;
-                    worker->last_heartbeat = time_ms();
-                    worker->perf_score = json_get_double(msg, "perf_score");
-                    json_get_string(msg, "hostname", worker->hostname, sizeof(worker->hostname));
+                        dist_worker_t *worker = &coord->workers[coord->worker_count];
+                        worker->id = coord->worker_count;
+                        worker->socket_fd = client_fd;
+                        worker->ssl = client_ssl;  /* Store SSL handle (NULL if TLS disabled) */
+                        worker->connected = true;
+                        worker->last_heartbeat = time_ms();
+                        worker->current_work_id = -1;
+                        worker->handler_running = false;
+                        worker->perf_score = json_get_double(msg, "perf_score");
+                        json_get_string(msg, "hostname", worker->hostname, sizeof(worker->hostname));
 
-                    /* Parse detailed hardware info */
-                    worker->cpu_cores = (int)json_get_int(msg, "cpu_cores");
-                    worker->cpu_threads = (int)json_get_int(msg, "cpu_threads");
-                    json_get_string(msg, "cpu_name", worker->cpu_name, sizeof(worker->cpu_name));
-                    json_get_string(msg, "gpu_name", worker->gpu_name, sizeof(worker->gpu_name));
-                    worker->gpu_memory_mb = (int)json_get_int(msg, "gpu_memory_mb");
-                    worker->cpu_speed_mkeys = json_get_double(msg, "cpu_speed_mkeys");
-                    worker->gpu_speed_mkeys = json_get_double(msg, "gpu_speed_mkeys");
+                        /* Parse detailed hardware info */
+                        worker->cpu_cores = (int)json_get_int(msg, "cpu_cores");
+                        worker->cpu_threads = (int)json_get_int(msg, "cpu_threads");
+                        json_get_string(msg, "cpu_name", worker->cpu_name, sizeof(worker->cpu_name));
+                        json_get_string(msg, "gpu_name", worker->gpu_name, sizeof(worker->gpu_name));
+                        worker->gpu_memory_mb = (int)json_get_int(msg, "gpu_memory_mb");
+                        worker->cpu_speed_mkeys = json_get_double(msg, "cpu_speed_mkeys");
+                        worker->gpu_speed_mkeys = json_get_double(msg, "gpu_speed_mkeys");
 
-                    coord->worker_count++;
+                        coord->worker_count++;
 
-                    /* Send welcome with job config */
-                    char welcome[DIST_MAX_MSG_SIZE];
-                    snprintf(welcome, sizeof(welcome),
-                             "{\"type\":\"welcome\",\"worker_id\":%d,\"work_units\":%d,"
-                             "\"target_address\":\"%s\",\"mode\":\"%s\",\"key_type\":\"%s\","
-                             "\"puzzle_number\":%d,\"bits\":%d,\"heartbeat_interval\":%d,\"tls\":%s}",
-                             worker->id, coord->work_unit_count,
-                             coord->job_target_address,
-                             coord->job_mode,
-                             coord->job_key_type,
-                             coord->job_puzzle_number,
-                             coord->job_bits,
-                             coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30,
-                             coord->tls_enabled ? "true" : "false");
-                    send_msg_ex(worker->socket_fd, worker->ssl, welcome);
+                        /* Send welcome with job config */
+                        char welcome[DIST_MAX_MSG_SIZE];
+                        snprintf(welcome, sizeof(welcome),
+                                 "{\"type\":\"welcome\",\"worker_id\":%d,\"work_units\":%d,"
+                                 "\"target_address\":\"%s\",\"mode\":\"%s\",\"key_type\":\"%s\","
+                                 "\"puzzle_number\":%d,\"bits\":%d,\"heartbeat_interval\":%d,\"tls\":%s}",
+                                 worker->id, coord->work_unit_count,
+                                 coord->job_target_address,
+                                 coord->job_mode,
+                                 coord->job_key_type,
+                                 coord->job_puzzle_number,
+                                 coord->job_bits,
+                                 coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30,
+                                 coord->tls_enabled ? "true" : "false");
+                        send_msg_ex(worker->socket_fd, worker->ssl, welcome);
 
-                    /* Print connection info with hardware details and speeds */
-                    printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
-                           worker->id, worker->hostname[0] ? worker->hostname : "localhost");
-                    if (worker->cpu_name[0]) {
-                        printf(LOG_SERVER LOG_INFO "  Hardware: %s", worker->cpu_name);
-                        if (worker->gpu_name[0]) {
-                            printf(" + %s", worker->gpu_name);
+                        /* Print connection info with hardware details and speeds */
+                        printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
+                               worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+                        if (worker->cpu_name[0]) {
+                            printf(LOG_SERVER LOG_INFO "  Hardware: %s", worker->cpu_name);
+                            if (worker->gpu_name[0]) {
+                                printf(" + %s", worker->gpu_name);
+                            }
+                            printf("\n");
                         }
-                        printf("\n");
-                    }
-                    /* Show speeds */
-                    double worker_total = worker->cpu_speed_mkeys + worker->gpu_speed_mkeys;
-                    printf(LOG_SERVER LOG_INFO "  Speed: CPU: " CLR_CYAN "%.2f" CLR_RESET " Mkeys/s",
-                           worker->cpu_speed_mkeys);
-                    if (worker->gpu_speed_mkeys > 0) {
-                        printf(" | GPU: " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s", worker->gpu_speed_mkeys);
-                    }
-                    printf(" | Total: " CLR_BOLD CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", worker_total);
+                        /* Show speeds */
+                        double worker_total = worker->cpu_speed_mkeys + worker->gpu_speed_mkeys;
+                        printf(LOG_SERVER LOG_INFO "  Speed: CPU: " CLR_CYAN "%.2f" CLR_RESET " Mkeys/s",
+                               worker->cpu_speed_mkeys);
+                        if (worker->gpu_speed_mkeys > 0) {
+                            printf(" | GPU: " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s", worker->gpu_speed_mkeys);
+                        }
+                        printf(" | Total: " CLR_BOLD CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", worker_total);
+
+                        /* Start dedicated handler thread for this worker */
+                        if (start_worker_handler_thread(coord, worker) != 0) {
+                            printf(LOG_SERVER LOG_ERR "Failed to start handler thread, falling back to polling\n");
+                            /* Worker is still registered, will be handled by fallback in health check */
+                        }
                     }  /* end if (auth_passed) */
                 }
             } else {
@@ -1218,134 +1394,114 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         } else if (client_fd >= 0) {
             close(client_fd);  /* Too many workers */
         }
+        pthread_mutex_unlock(&coord->worker_mutex);
     }
 
-    /* Check worker messages */
-    for (int i = 0; i < coord->worker_count; i++) {
-        dist_worker_t *worker = &coord->workers[i];
-        if (!worker->connected || worker->socket_fd < 0) continue;
+    /* ==========================================================================
+     * Periodic health checks and statistics updates
+     * These run in the main loop but don't block client handling
+     * ========================================================================== */
 
-        if (FD_ISSET(worker->socket_fd, &readfds)) {
-            char msg[DIST_MAX_MSG_SIZE];
-            int n = recv_msg_ex(worker->socket_fd, worker->ssl, msg, sizeof(msg));
-            if (n > 0) {
-                handle_worker_msg(coord, i, msg);
-            } else {
-                /* Worker disconnected */
-                printf(LOG_SERVER LOG_WARN "Worker " CLR_YELLOW "#%d" CLR_RESET " disconnected\n", worker->id);
-#ifdef HAVE_OPENSSL
-                if (worker->ssl) {
-                    SSL_free((SSL *)worker->ssl);
-                    worker->ssl = NULL;
-                }
-#endif
-                close(worker->socket_fd);
-                worker->socket_fd = -1;
-                worker->connected = false;
-
-                /* Reassign work if any */
-                pthread_mutex_lock(&coord->work_mutex);
-                if (worker->current_work_id >= 0 &&
-                    worker->current_work_id < coord->work_unit_count) {
-                    dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
-                    if (unit->status == WORK_STATUS_ASSIGNED) {
-                        unit->status = WORK_STATUS_PENDING;
-                        coord->work_units_pending++;
-                    }
-                }
-                pthread_mutex_unlock(&coord->work_mutex);
-            }
-        }
-    }
-
-    /* Check for stale work units (assigned but worker unresponsive) */
     uint64_t now_ms = time_ms();
-    uint64_t stale_timeout_ms = 5 * 60 * 1000;  /* 5 minutes */
+    static uint64_t last_health_check_ms = 0;
 
-    for (int i = 0; i < coord->work_unit_count; i++) {
-        dist_work_unit_t *unit = &coord->work_units[i];
-        if (unit->status == WORK_STATUS_ASSIGNED) {
-            /* Check if assigned worker is still connected and responsive */
-            bool worker_connected = false;
-            bool worker_responsive = false;
+    /* Only do health checks every 5 seconds to avoid overhead */
+    if (now_ms - last_health_check_ms > 5000) {
+        last_health_check_ms = now_ms;
 
-            for (int w = 0; w < coord->worker_count; w++) {
-                if (coord->workers[w].id == unit->assigned_worker) {
-                    worker_connected = coord->workers[w].connected;
-                    if (worker_connected) {
-                        /* Check if heartbeat is recent */
-                        worker_responsive = (now_ms - coord->workers[w].last_heartbeat < stale_timeout_ms);
-                    }
-                    break;
-                }
-            }
+        uint64_t stale_timeout_ms = 5 * 60 * 1000;  /* 5 minutes */
 
-            /* Reassign if:
-             * 1. Worker is disconnected, OR
-             * 2. Worker connected but unresponsive AND assignment is old
-             * This prevents premature reassignment when worker is still connected
-             * but just has a delayed heartbeat */
-            bool should_reassign = false;
-            if (!worker_connected) {
-                /* Worker disconnected - reassign immediately */
-                should_reassign = true;
-            } else if (!worker_responsive && (now_ms - unit->assigned_time > stale_timeout_ms)) {
-                /* Worker connected but unresponsive and assignment is old */
-                should_reassign = true;
-            }
+        /* Check for stale work units (assigned but worker unresponsive) */
+        pthread_mutex_lock(&coord->work_mutex);
+        for (int i = 0; i < coord->work_unit_count; i++) {
+            dist_work_unit_t *unit = &coord->work_units[i];
+            if (unit->status == WORK_STATUS_ASSIGNED) {
+                /* Check if assigned worker is still connected and responsive */
+                bool worker_connected = false;
+                bool worker_responsive = false;
 
-            if (should_reassign) {
-                printf(LOG_SERVER LOG_WARN "Work unit #%d timed out, reassigning\n", unit->id);
-                pthread_mutex_lock(&coord->work_mutex);
-                unit->status = WORK_STATUS_PENDING;
-                unit->assigned_worker = -1;
-                coord->work_units_pending++;
-                pthread_mutex_unlock(&coord->work_mutex);
-            }
-        }
-    }
-
-    /* Check for stuck workers (connected but no progress for too long) */
-    uint64_t stuck_timeout_ms = 3 * 60 * 1000;  /* 3 minutes no progress */
-
-    for (int i = 0; i < coord->worker_count; i++) {
-        dist_worker_t *worker = &coord->workers[i];
-        if (worker->connected && worker->socket_fd >= 0) {
-            /* Worker is stuck if no heartbeat for 3 minutes */
-            if (now_ms - worker->last_heartbeat > stuck_timeout_ms) {
-                printf(LOG_SERVER LOG_WARN "Worker #%d (%s) stuck for 3+ min, forcing disconnect\n",
-                       worker->id, worker->hostname[0] ? worker->hostname : "localhost");
-
-                /* Force disconnect - this will trigger work reassignment */
-                close(worker->socket_fd);
-                worker->socket_fd = -1;
-                worker->connected = false;
-                worker->throughput = 0.0;
-
-                /* Reassign any work this worker had */
-                pthread_mutex_lock(&coord->work_mutex);
-                if (worker->current_work_id >= 0 &&
-                    worker->current_work_id < coord->work_unit_count) {
-                    dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
-                    if (unit->status == WORK_STATUS_ASSIGNED) {
-                        unit->status = WORK_STATUS_PENDING;
-                        unit->assigned_worker = -1;
-                        coord->work_units_pending++;
-                        printf(LOG_SERVER LOG_INFO "Work unit #%d reassigned to pool\n", unit->id);
+                for (int w = 0; w < coord->worker_count; w++) {
+                    if (coord->workers[w].id == unit->assigned_worker) {
+                        worker_connected = coord->workers[w].connected;
+                        if (worker_connected) {
+                            /* Check if heartbeat is recent */
+                            worker_responsive = (now_ms - coord->workers[w].last_heartbeat < stale_timeout_ms);
+                        }
+                        break;
                     }
                 }
-                pthread_mutex_unlock(&coord->work_mutex);
+
+                /* Reassign if:
+                 * 1. Worker is disconnected, OR
+                 * 2. Worker connected but unresponsive AND assignment is old */
+                bool should_reassign = false;
+                if (!worker_connected) {
+                    should_reassign = true;
+                } else if (!worker_responsive && (now_ms - unit->assigned_time > stale_timeout_ms)) {
+                    should_reassign = true;
+                }
+
+                if (should_reassign) {
+                    printf(LOG_SERVER LOG_WARN "Work unit #%d timed out, reassigning\n", unit->id);
+                    unit->status = WORK_STATUS_PENDING;
+                    unit->assigned_worker = -1;
+                    coord->work_units_pending++;
+                    /* Update hint for faster lookup */
+                    if (unit->id < coord->next_pending_hint) {
+                        coord->next_pending_hint = unit->id;
+                    }
+                }
             }
         }
-    }
+        pthread_mutex_unlock(&coord->work_mutex);
 
-    /* Update total throughput */
-    coord->total_throughput = 0.0;
-    for (int i = 0; i < coord->worker_count; i++) {
-        if (coord->workers[i].connected) {
-            coord->total_throughput += coord->workers[i].throughput;
+        /* Check for stuck workers (connected but no progress for too long) */
+        uint64_t stuck_timeout_ms = 3 * 60 * 1000;  /* 3 minutes no progress */
+
+        pthread_mutex_lock(&coord->worker_mutex);
+        for (int i = 0; i < coord->worker_count; i++) {
+            dist_worker_t *worker = &coord->workers[i];
+            if (worker->connected && worker->socket_fd >= 0) {
+                /* Worker is stuck if no heartbeat for 3 minutes */
+                if (now_ms - worker->last_heartbeat > stuck_timeout_ms) {
+                    printf(LOG_SERVER LOG_WARN "Worker #%d (%s) stuck for 3+ min, forcing disconnect\n",
+                           worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+
+                    /* Stop the handler thread - it will clean up the socket */
+                    worker->handler_running = false;
+                    worker->connected = false;
+                    worker->throughput = 0.0;
+
+                    /* Reassign any work this worker had */
+                    pthread_mutex_lock(&coord->work_mutex);
+                    if (worker->current_work_id >= 0 &&
+                        worker->current_work_id < coord->work_unit_count) {
+                        dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
+                        if (unit->status == WORK_STATUS_ASSIGNED) {
+                            unit->status = WORK_STATUS_PENDING;
+                            unit->assigned_worker = -1;
+                            coord->work_units_pending++;
+                            /* Update hint for faster lookup */
+                            if (unit->id < coord->next_pending_hint) {
+                                coord->next_pending_hint = unit->id;
+                            }
+                            printf(LOG_SERVER LOG_INFO "Work unit #%d reassigned to pool\n", unit->id);
+                        }
+                    }
+                    pthread_mutex_unlock(&coord->work_mutex);
+                }
+            }
         }
-    }
+        pthread_mutex_unlock(&coord->worker_mutex);
+
+        /* Update total throughput - only during health check to avoid overhead */
+        coord->total_throughput = 0.0;
+        for (int i = 0; i < coord->worker_count; i++) {
+            if (coord->workers[i].connected) {
+                coord->total_throughput += coord->workers[i].throughput;
+            }
+        }
+    }  /* end health check block */
 
     /* Check if all done */
     if (coord->work_units_completed >= coord->work_unit_count) {
@@ -1424,6 +1580,14 @@ void dist_coordinator_print_worker_stats(const dist_coordinator_t *coord) {
 void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     coord->running = false;
 
+    /* Stop all worker handler threads first */
+    for (int i = 0; i < coord->worker_count; i++) {
+        coord->workers[i].handler_running = false;
+    }
+
+    /* Give threads a moment to notice the shutdown flag */
+    usleep(100000);  /* 100ms */
+
     /* Close worker connections */
     for (int i = 0; i < coord->worker_count; i++) {
         if (coord->workers[i].socket_fd >= 0) {
@@ -1436,6 +1600,7 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
             }
 #endif
             close(coord->workers[i].socket_fd);
+            coord->workers[i].socket_fd = -1;
         }
     }
 
@@ -1454,8 +1619,10 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     free(coord->work_units);
     free(coord->results);
 
-    /* Destroy work mutex */
+    /* Destroy all mutexes */
     pthread_mutex_destroy(&coord->work_mutex);
+    pthread_mutex_destroy(&coord->stats_mutex);
+    pthread_mutex_destroy(&coord->worker_mutex);
 
     /* Destroy rate limiter */
     rate_limiter_destroy(&coord->rate_limiter);

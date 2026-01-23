@@ -111,6 +111,11 @@ typedef struct {
 #else
     void *ssl;                  /* Placeholder when OpenSSL not available */
 #endif
+
+    /* Per-worker threading for non-blocking client handling */
+    pthread_t handler_thread;   /* Dedicated thread for this worker */
+    bool handler_running;       /* Is the handler thread running? */
+    void *coordinator;          /* Back-reference to coordinator (cast to dist_coordinator_t*) */
 } dist_worker_t;
 
 /* Work unit */
@@ -223,8 +228,13 @@ typedef struct {
     bool running;
     bool all_work_done;
 
-    /* Thread synchronization */
-    pthread_mutex_t work_mutex;     /* Protects work unit assignment */
+    /* Thread synchronization - fine-grained locking for scalability */
+    pthread_mutex_t work_mutex;     /* Protects work unit assignment - hold briefly! */
+    pthread_mutex_t stats_mutex;    /* Protects statistics counters - separate from work */
+    pthread_mutex_t worker_mutex;   /* Protects worker array modifications */
+
+    /* Work distribution optimization */
+    int next_pending_hint;          /* Hint for next pending work unit (optimization) */
 
     /* Authentication */
     bool auth_enabled;                          /* Whether authentication is required */
