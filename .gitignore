@@ -85,3 +85,4 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+coordinator_state_*.json

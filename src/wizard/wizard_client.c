@@ -22,6 +22,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <pthread.h>
 
 /* PATH_MAX with fallback */
 #ifdef __linux__
@@ -37,6 +38,14 @@
 
 static volatile int g_client_running = 1;
 static char g_executable_path[PATH_MAX] = "";  /* Absolute path to keyhunt binary */
+
+/* Heartbeat thread state */
+static pthread_t g_heartbeat_thread;
+static volatile int g_heartbeat_running = 0;
+static dist_worker_client_t *g_heartbeat_client = NULL;
+static pthread_mutex_t g_heartbeat_mutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile uint64_t g_keys_since_heartbeat = 0;
+static volatile time_t g_last_heartbeat_time = 0;
 
 /* ============================================================================
  * Executable Path Resolution
@@ -132,7 +141,85 @@ static int validate_executable(const char *exe_path) {
 static void client_signal_handler(int sig) {
     (void)sig;
     g_client_running = 0;
+    g_heartbeat_running = 0;
     printf("\n\n[!] Shutdown signal received...\n");
+}
+
+/* ============================================================================
+ * Heartbeat Thread
+ * ============================================================================ */
+
+/**
+ * Background thread that sends periodic heartbeats to the server.
+ * This ensures the server knows we're still alive during long searches.
+ */
+static void *heartbeat_thread_func(void *arg) {
+    int interval_sec = *(int *)arg;
+    if (interval_sec <= 0) interval_sec = 30;
+
+    while (g_heartbeat_running && g_client_running) {
+        /* Sleep in small increments to respond quickly to shutdown */
+        for (int i = 0; i < interval_sec && g_heartbeat_running && g_client_running; i++) {
+            sleep(1);
+        }
+
+        if (!g_heartbeat_running || !g_client_running) break;
+
+        /* Send heartbeat */
+        pthread_mutex_lock(&g_heartbeat_mutex);
+        if (g_heartbeat_client && g_heartbeat_client->connected) {
+            uint64_t keys = g_keys_since_heartbeat;
+            g_keys_since_heartbeat = 0;
+
+            int result = dist_worker_heartbeat(g_heartbeat_client, keys);
+            if (result == 0) {
+                g_last_heartbeat_time = time(NULL);
+            }
+        }
+        pthread_mutex_unlock(&g_heartbeat_mutex);
+    }
+
+    return NULL;
+}
+
+/**
+ * Start the heartbeat thread.
+ */
+static int start_heartbeat_thread(dist_worker_client_t *client, int interval_sec) {
+    static int interval;  /* Static to keep value valid for thread */
+    interval = interval_sec;
+
+    g_heartbeat_client = client;
+    g_heartbeat_running = 1;
+    g_keys_since_heartbeat = 0;
+    g_last_heartbeat_time = time(NULL);
+
+    if (pthread_create(&g_heartbeat_thread, NULL, heartbeat_thread_func, &interval) != 0) {
+        g_heartbeat_running = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * Stop the heartbeat thread.
+ */
+static void stop_heartbeat_thread(void) {
+    if (!g_heartbeat_running) return;
+
+    g_heartbeat_running = 0;
+    pthread_join(g_heartbeat_thread, NULL);
+    g_heartbeat_client = NULL;
+}
+
+/**
+ * Update keys processed (called during search to track progress).
+ */
+static void update_heartbeat_keys(uint64_t keys) {
+    pthread_mutex_lock(&g_heartbeat_mutex);
+    g_keys_since_heartbeat += keys;
+    pthread_mutex_unlock(&g_heartbeat_mutex);
 }
 
 /* ============================================================================
@@ -425,6 +512,13 @@ int wizard_client_run(wizard_config_t *cfg) {
     wizard_print_separator();
     printf("\n");
 
+    /* Start heartbeat thread */
+    if (start_heartbeat_thread(&client, heartbeat_interval) != 0) {
+        printf("[!] Warning: Could not start heartbeat thread\n");
+    } else {
+        printf("[+] Heartbeat thread started (every %d seconds)\n", heartbeat_interval);
+    }
+
     /* Step 5: Main work loop */
     uint64_t total_keys = 0;
     int work_count = 0;
@@ -514,6 +608,7 @@ int wizard_client_run(wizard_config_t *cfg) {
         }
 
         total_keys += keys_checked;
+        update_heartbeat_keys(keys_checked);  /* Track for heartbeat reporting */
         double speed = (double)keys_checked / unit_elapsed / 1000000.0;
 
         /* Show progress */
@@ -573,6 +668,9 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         printf("\n");
     }
+
+    /* Stop heartbeat thread */
+    stop_heartbeat_thread();
 
     /* Cleanup and final stats */
     printf("\n\n");

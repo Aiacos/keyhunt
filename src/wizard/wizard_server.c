@@ -149,6 +149,271 @@ static int check_local_client(pid_t pid) {
 }
 
 /* ============================================================================
+ * Worker Health Monitoring
+ * ============================================================================ */
+
+#define WORKER_TIMEOUT_SEC 120  /* Mark worker as stale after 2 minutes without heartbeat */
+#define WORK_UNIT_TIMEOUT_SEC 600  /* Reclaim work unit after 10 minutes */
+
+/**
+ * Check worker health and reclaim work from timed-out workers.
+ * Returns number of work units reclaimed.
+ */
+static int check_worker_health(dist_coordinator_t *coord, time_t now) {
+    int reclaimed = 0;
+
+    pthread_mutex_lock(&coord->work_mutex);
+
+    for (int i = 0; i < coord->worker_count; i++) {
+        dist_worker_t *w = &coord->workers[i];
+        if (!w->connected) continue;
+
+        /* Check if worker has timed out */
+        time_t last_seen = (time_t)w->last_heartbeat;
+        if (last_seen > 0 && (now - last_seen) > WORKER_TIMEOUT_SEC) {
+            /* Worker timed out - mark as disconnected */
+            w->connected = false;
+
+            /* Reclaim any work assigned to this worker */
+            if (w->current_work_id >= 0 && w->current_work_id < coord->work_unit_count) {
+                dist_work_unit_t *unit = &coord->work_units[w->current_work_id];
+                if (unit->status == WORK_STATUS_ASSIGNED && unit->assigned_worker == w->id) {
+                    unit->status = WORK_STATUS_PENDING;
+                    unit->assigned_worker = -1;
+                    coord->work_units_pending++;
+                    reclaimed++;
+                }
+            }
+            w->current_work_id = -1;
+        }
+    }
+
+    /* Also check for long-running work units (in case heartbeat still arriving but work stuck) */
+    for (int i = 0; i < coord->work_unit_count; i++) {
+        dist_work_unit_t *unit = &coord->work_units[i];
+        if (unit->status == WORK_STATUS_ASSIGNED) {
+            time_t assigned_time = (time_t)unit->assigned_time;
+            if (assigned_time > 0 && (now - assigned_time) > WORK_UNIT_TIMEOUT_SEC) {
+                /* Work unit has been assigned too long - reclaim it */
+                unit->status = WORK_STATUS_PENDING;
+                unit->assigned_worker = -1;
+                coord->work_units_pending++;
+                reclaimed++;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&coord->work_mutex);
+
+    return reclaimed;
+}
+
+/**
+ * Count active (healthy) workers
+ */
+static int count_active_workers(dist_coordinator_t *coord, time_t now) {
+    int active = 0;
+    for (int i = 0; i < coord->worker_count; i++) {
+        dist_worker_t *w = &coord->workers[i];
+        if (w->connected) {
+            time_t last_seen = (time_t)w->last_heartbeat;
+            /* Consider worker active if heartbeat within last 60 seconds */
+            if (last_seen == 0 || (now - last_seen) < 60) {
+                active++;
+            }
+        }
+    }
+    return active;
+}
+
+/* ============================================================================
+ * Stable UI Rendering
+ * ============================================================================ */
+
+#define UI_WIDTH 70  /* Fixed width for consistent formatting */
+
+/**
+ * Render the dashboard UI with cursor positioning (no full clear).
+ * This eliminates flicker while maintaining a clean display.
+ */
+static void render_dashboard(const wizard_config_t *cfg, const dist_coordinator_t *coord,
+                             int num_units, time_t start_time, time_t now,
+                             bool full_redraw) {
+    int workers, pending, completed;
+    double throughput;
+    dist_coordinator_stats(coord, &workers, &pending, &completed, &throughput);
+
+    double cpu_speed, gpu_speed, combined_speed;
+    dist_coordinator_get_speed_stats(coord, &cpu_speed, &gpu_speed, &combined_speed);
+
+    double progress = (num_units > 0) ? ((double)completed / (double)num_units * 100.0) : 0.0;
+    if (progress > 100.0) progress = 100.0;
+    time_t elapsed = now - start_time;
+
+    /* Calculate ETA */
+    double keys_done = (double)completed * cfg->work_unit_size;
+    double keys_total = (double)num_units * cfg->work_unit_size;
+    double keys_remaining = keys_total - keys_done;
+    double effective_speed = combined_speed > 0 ? combined_speed : throughput;
+    double eta_sec = (effective_speed > 0) ? (keys_remaining / (effective_speed * 1000000.0)) : 0;
+
+    int eta_days = (int)(eta_sec / 86400);
+    int eta_hours = (int)((eta_sec - eta_days * 86400) / 3600);
+    int eta_mins = (int)((eta_sec - eta_days * 86400 - eta_hours * 3600) / 60);
+
+    char eta_str[32];
+    if (eta_sec <= 0 || eta_sec > 365*86400) {
+        snprintf(eta_str, sizeof(eta_str), "--:--");
+    } else if (eta_days > 0) {
+        snprintf(eta_str, sizeof(eta_str), "%dd %dh %dm", eta_days, eta_hours, eta_mins);
+    } else if (eta_hours > 0) {
+        snprintf(eta_str, sizeof(eta_str), "%dh %dm", eta_hours, eta_mins);
+    } else {
+        snprintf(eta_str, sizeof(eta_str), "%dm", eta_mins);
+    }
+
+    if (full_redraw) {
+        /* Move cursor to home position and clear screen */
+        printf("\033[H\033[J");
+
+        /* Header */
+        printf("\033[36m╔════════════════════════════════════════════════════════════════════╗\033[0m\n");
+        printf("\033[36m║\033[0m\033[1m  KEYHUNT SERVER - Puzzle #%-3d (%d bits)                           \033[0m\033[36m║\033[0m\n",
+               cfg->puzzle_number, cfg->bits);
+        printf("\033[36m╠════════════════════════════════════════════════════════════════════╣\033[0m\n");
+
+        /* Progress bar (50 chars) */
+        const int bar_width = 50;
+        int filled = (int)(progress / 100.0 * bar_width);
+        if (filled < 0) filled = 0;
+        if (filled > bar_width) filled = bar_width;
+
+        printf("\033[36m║\033[0m  Progress: [");
+        for (int i = 0; i < bar_width; i++) {
+            if (i < filled) printf("\033[42m \033[0m");
+            else printf("\033[100m \033[0m");
+        }
+        printf("] %5.1f%% \033[36m║\033[0m\n", progress);
+
+        /* Time stats */
+        printf("\033[36m║\033[0m  Elapsed: \033[1m%02ld:%02ld:%02ld\033[0m    ETA: \033[1m%-12s\033[0m   Units: \033[1m%d/%d\033[0m      \033[36m║\033[0m\n",
+               elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
+               eta_str, completed, num_units);
+
+        /* Speed stats */
+        printf("\033[36m╠════════════════════════════════════════════════════════════════════╣\033[0m\n");
+        printf("\033[36m║\033[0m  \033[33mCPU:\033[0m %8.2f Mk/s  \033[35mGPU:\033[0m %8.2f Mk/s  \033[32mTotal:\033[1m %8.2f Mk/s\033[0m \033[36m║\033[0m\n",
+               cpu_speed, gpu_speed, combined_speed);
+
+        /* Workers header */
+        printf("\033[36m╠════════════════════════════════════════════════════════════════════╣\033[0m\n");
+
+        int active_workers = count_active_workers((dist_coordinator_t*)coord, now);
+        printf("\033[36m║\033[0m  \033[1mWorkers: %d connected (%d active)\033[0m                                \033[36m║\033[0m\n",
+               workers, active_workers);
+        printf("\033[36m╠════════════════════════════════════════════════════════════════════╣\033[0m\n");
+
+        if (workers > 0) {
+            /* Worker table header */
+            printf("\033[36m║\033[0m  \033[2m%-3s %-14s %7s %7s %7s %6s  %-8s\033[0m   \033[36m║\033[0m\n",
+                   "ID", "Host", "CPU", "GPU", "Total", "Keys", "Status");
+            printf("\033[36m║\033[0m  \033[2m─── ────────────── ─────── ─────── ─────── ────── ────────\033[0m   \033[36m║\033[0m\n");
+
+            int shown = 0;
+            for (int i = 0; i < coord->worker_count && shown < 6; i++) {
+                const dist_worker_t *w = &coord->workers[i];
+                if (!w->connected && w->keys_processed == 0) continue;
+
+                double worker_total = w->cpu_speed_mkeys + w->gpu_speed_mkeys;
+
+                /* Status indicator */
+                const char *status;
+                const char *status_color;
+                time_t last_seen = (time_t)w->last_heartbeat;
+
+                if (!w->connected) {
+                    status = "OFFLINE";
+                    status_color = "\033[31m";  /* Red */
+                } else if (last_seen > 0 && (now - last_seen) > 60) {
+                    status = "STALE";
+                    status_color = "\033[33m";  /* Yellow */
+                } else if (w->current_work_id >= 0) {
+                    status = "WORKING";
+                    status_color = "\033[32m";  /* Green */
+                } else {
+                    status = "IDLE";
+                    status_color = "\033[36m";  /* Cyan */
+                }
+
+                /* Truncate hostname for display */
+                char host_display[15];
+                strncpy(host_display, w->hostname[0] ? w->hostname : "localhost", 14);
+                host_display[14] = '\0';
+
+                printf("\033[36m║\033[0m  %-3d %-14s %6.1f  %6.1f  \033[32m%6.1f\033[0m  %5.1fe %s%-8s\033[0m \033[36m║\033[0m\n",
+                       w->id,
+                       host_display,
+                       w->cpu_speed_mkeys,
+                       w->gpu_speed_mkeys,
+                       worker_total,
+                       (double)w->keys_processed / 1e9,
+                       status_color,
+                       status);
+                shown++;
+            }
+
+            if (coord->worker_count > 6) {
+                printf("\033[36m║\033[0m  \033[2m... and %d more workers\033[0m                                         \033[36m║\033[0m\n",
+                       coord->worker_count - 6);
+            }
+        } else {
+            printf("\033[36m║\033[0m  \033[2mWaiting for workers to connect...\033[0m                               \033[36m║\033[0m\n");
+        }
+
+        /* Footer */
+        printf("\033[36m╠════════════════════════════════════════════════════════════════════╣\033[0m\n");
+        printf("\033[36m║\033[0m  Keys checked: \033[1m%.3e\033[0m   Keys/unit: \033[1m%.2e\033[0m               \033[36m║\033[0m\n",
+               keys_done, (double)cfg->work_unit_size);
+        printf("\033[36m╚════════════════════════════════════════════════════════════════════╝\033[0m\n");
+        printf("\n\033[2mPress Ctrl+C to stop\033[0m\n");
+
+    } else {
+        /* Quick update - just update key metrics on a single line */
+        /* Save cursor, move to line 4 (progress line), update, restore */
+        printf("\033[s");  /* Save cursor */
+        printf("\033[4;1H");  /* Move to line 4 */
+
+        /* Redraw progress bar */
+        const int bar_width = 50;
+        int filled = (int)(progress / 100.0 * bar_width);
+        if (filled < 0) filled = 0;
+        if (filled > bar_width) filled = bar_width;
+
+        printf("\033[36m║\033[0m  Progress: [");
+        for (int i = 0; i < bar_width; i++) {
+            if (i < filled) printf("\033[42m \033[0m");
+            else printf("\033[100m \033[0m");
+        }
+        printf("] %5.1f%% \033[36m║\033[0m", progress);
+
+        /* Move to time line */
+        printf("\033[5;1H");
+        printf("\033[36m║\033[0m  Elapsed: \033[1m%02ld:%02ld:%02ld\033[0m    ETA: \033[1m%-12s\033[0m   Units: \033[1m%d/%d\033[0m      \033[36m║\033[0m",
+               elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
+               eta_str, completed, num_units);
+
+        /* Move to speed line */
+        printf("\033[7;1H");
+        printf("\033[36m║\033[0m  \033[33mCPU:\033[0m %8.2f Mk/s  \033[35mGPU:\033[0m %8.2f Mk/s  \033[32mTotal:\033[1m %8.2f Mk/s\033[0m \033[36m║\033[0m",
+               cpu_speed, gpu_speed, combined_speed);
+
+        printf("\033[u");  /* Restore cursor */
+    }
+
+    fflush(stdout);
+}
+
+/* ============================================================================
  * Server Main Loop
  * ============================================================================ */
 
@@ -220,7 +485,6 @@ int wizard_server_run(wizard_config_t *cfg) {
     if (cfg->community_excluded > 0) {
         printf("[+] Marking %llu community-scanned ranges as completed...\n",
                (unsigned long long)cfg->community_excluded);
-        /* In real implementation, would mark matching units as COMPLETED */
     }
 
     /* Start coordinator */
@@ -251,13 +515,15 @@ int wizard_server_run(wizard_config_t *cfg) {
 
     printf("\n[+] Server running. Press Ctrl+C to stop.\n");
     wizard_print_separator();
-    printf("\n");
+
+    /* Wait a moment before starting UI to let workers connect */
+    sleep(2);
 
     /* Main loop */
     time_t start_time = time(NULL);
     time_t last_checkpoint = start_time;
-    time_t last_print = 0;
-    time_t last_worker_stats = start_time;
+    time_t last_full_redraw = 0;
+    time_t last_health_check = start_time;
     int last_worker_count = 0;
 
     while (g_server_running) {
@@ -265,155 +531,52 @@ int wizard_server_run(wizard_config_t *cfg) {
         int status = dist_coordinator_process(&coord, 500);
 
         if (status == 1) {
+            printf("\033[H\033[J");  /* Clear screen */
             printf("\n\n[+] All work completed!\n");
             break;
         }
 
         /* Check if local client is still running */
         if (has_local_client && check_local_client(g_local_client_pid) == 0) {
-            printf("\n\n[!] Local client exited unexpectedly, respawning...\n");
-
-            /* Wait a moment before respawning */
+            /* Log to a less intrusive place - will show on next full redraw */
             sleep(2);
 
             g_local_client_pid = spawn_local_client(cfg->server_port, cfg->auth_token);
             if (g_local_client_pid > 0) {
-                printf("[+] Local client respawned (PID: %d)\n\n", g_local_client_pid);
+                /* Silently respawned */
             } else {
-                printf("[-] Failed to respawn local client\n");
                 has_local_client = false;
                 g_local_client_pid = 0;
             }
         }
 
-        /* Print stats every second */
         time_t now = time(NULL);
-        if (now != last_print) {
-            last_print = now;
 
-            int workers, pending, completed;
-            double throughput;
-            dist_coordinator_stats(&coord, &workers, &pending, &completed, &throughput);
-
-            /* Get detailed CPU/GPU speeds */
-            double cpu_speed, gpu_speed, combined_speed;
-            dist_coordinator_get_speed_stats(&coord, &cpu_speed, &gpu_speed, &combined_speed);
-
-            double progress = (double)completed / (double)num_units * 100.0;
-            time_t elapsed = now - start_time;
-
-            /* Calculate ETA using combined speed */
-            double keys_done = (double)completed * cfg->work_unit_size;
-            double keys_total = (double)num_units * cfg->work_unit_size;
-            double keys_remaining = keys_total - keys_done;
-            double effective_speed = combined_speed > 0 ? combined_speed : throughput;
-            double eta_sec = (effective_speed > 0) ? (keys_remaining / (effective_speed * 1000000.0)) : 0;
-
-            int eta_days = (int)(eta_sec / 86400);
-            int eta_hours = (int)((eta_sec - eta_days * 86400) / 3600);
-            int eta_mins = (int)((eta_sec - eta_days * 86400 - eta_hours * 3600) / 60);
-
-            /* Full dashboard redraw every 5 seconds or on worker change */
-            bool full_redraw = (now - last_worker_stats >= 5) || (workers != last_worker_count);
-
-            if (full_redraw) {
-                last_worker_stats = now;
-                last_worker_count = workers;
-
-                /* Clear screen and move to top */
-                printf("\033[2J\033[H");
-
-                /* Header */
-                printf("\033[36m╔══════════════════════════════════════════════════════════════════╗\033[0m\n");
-                printf("\033[36m║\033[0m\033[1m  KEYHUNT SERVER - Puzzle #%-3d (%d bits)                         \033[0m\033[36m║\033[0m\n",
-                       cfg->puzzle_number, cfg->bits);
-                printf("\033[36m╠══════════════════════════════════════════════════════════════════╣\033[0m\n");
-
-                /* Main progress bar (50 chars) */
-                const int main_bar_width = 50;
-                int main_filled = (int)(progress / 100.0 * main_bar_width);
-                if (main_filled > main_bar_width) main_filled = main_bar_width;
-
-                printf("\033[36m║\033[0m  Progress: [");
-                for (int i = 0; i < main_bar_width; i++) {
-                    if (i < main_filled) printf("\033[42m \033[0m");  /* Green background */
-                    else printf("\033[47m \033[0m");  /* Gray background */
-                }
-                printf("] \033[1m%5.1f%%\033[0m \033[36m║\033[0m\n", progress);
-
-                /* Stats line 1 */
-                char eta_str[32];
-                if (eta_days > 0) snprintf(eta_str, sizeof(eta_str), "%dd %dh %dm", eta_days, eta_hours, eta_mins);
-                else if (eta_hours > 0) snprintf(eta_str, sizeof(eta_str), "%dh %dm", eta_hours, eta_mins);
-                else snprintf(eta_str, sizeof(eta_str), "%dm", eta_mins);
-
-                printf("\033[36m║\033[0m  Elapsed: \033[1m%02ld:%02ld:%02ld\033[0m    ETA: \033[1m%-12s\033[0m    Units: \033[1m%d/%d\033[0m     \033[36m║\033[0m\n",
-                       elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
-                       eta_str, completed, num_units);
-
-                /* Stats line 2 - Speed */
-                printf("\033[36m╠══════════════════════════════════════════════════════════════════╣\033[0m\n");
-                printf("\033[36m║\033[0m  \033[33mCPU:\033[0m %7.1f Mk/s   \033[35mGPU:\033[0m %7.1f Mk/s   \033[32mTotal:\033[1m %7.1f Mk/s\033[0m   \033[36m║\033[0m\n",
-                       cpu_speed, gpu_speed, combined_speed);
-
-                /* Workers section */
-                printf("\033[36m╠══════════════════════════════════════════════════════════════════╣\033[0m\n");
-                printf("\033[36m║\033[0m  \033[1mWorkers: %d connected\033[0m                                            \033[36m║\033[0m\n", workers);
-                printf("\033[36m╠══════════════════════════════════════════════════════════════════╣\033[0m\n");
-
-                if (workers > 0) {
-                    /* Worker table header */
-                    printf("\033[36m║\033[0m  \033[36m%-3s %-16s %8s %8s %8s  %-12s\033[0m \033[36m║\033[0m\n",
-                           "ID", "Host", "CPU", "GPU", "Total", "Progress");
-                    printf("\033[36m║\033[0m  \033[2m─── ──────────────── ──────── ──────── ──────── ────────────\033[0m \033[36m║\033[0m\n");
-
-                    /* Show each worker with mini progress bar */
-                    for (int i = 0; i < coord.worker_count && i < 8; i++) {
-                        dist_worker_t *w = &coord.workers[i];
-                        if (!w->connected) continue;
-
-                        double worker_total = w->cpu_speed_mkeys + w->gpu_speed_mkeys;
-
-                        /* Mini sparkline based on speed (10 chars) */
-                        char sparkline[16];
-                        int spark_filled = (int)(worker_total / (combined_speed > 0 ? combined_speed : 1) * 10);
-                        if (spark_filled > 10) spark_filled = 10;
-                        for (int j = 0; j < 10; j++) {
-                            if (j < spark_filled) sparkline[j] = '|';
-                            else sparkline[j] = ' ';
-                        }
-                        sparkline[10] = '\0';
-
-                        printf("\033[36m║\033[0m  %-3d %-16.16s %7.1f  %7.1f  \033[32m%7.1f\033[0m  [\033[33m%-10s\033[0m] \033[36m║\033[0m\n",
-                               w->id,
-                               w->hostname[0] ? w->hostname : "localhost",
-                               w->cpu_speed_mkeys,
-                               w->gpu_speed_mkeys,
-                               worker_total,
-                               sparkline);
-                    }
-
-                    if (coord.worker_count > 8) {
-                        printf("\033[36m║\033[0m  \033[2m... and %d more workers\033[0m                                       \033[36m║\033[0m\n",
-                               coord.worker_count - 8);
-                    }
-                } else {
-                    printf("\033[36m║\033[0m  \033[2mWaiting for workers to connect...\033[0m                             \033[36m║\033[0m\n");
-                }
-
-                /* Footer */
-                printf("\033[36m╠══════════════════════════════════════════════════════════════════╣\033[0m\n");
-                printf("\033[36m║\033[0m  Keys checked: \033[1m%.2e\033[0m    Keys/unit: \033[1m%.2e\033[0m              \033[36m║\033[0m\n",
-                       keys_done, (double)cfg->work_unit_size);
-                printf("\033[36m╚══════════════════════════════════════════════════════════════════╝\033[0m\n");
-                printf("\n\033[2mPress Ctrl+C to stop\033[0m\n");
-            } else {
-                /* Quick single-line update between full redraws */
-                printf("\r\033[K[%02ld:%02ld:%02ld] %5.1f%% | W:%d | \033[1;32m%.1f\033[0m Mk/s | %d/%d units",
-                       elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
-                       progress, workers, combined_speed, completed, num_units);
+        /* Worker health check every 30 seconds */
+        if (now - last_health_check >= 30) {
+            last_health_check = now;
+            int reclaimed = check_worker_health(&coord, now);
+            if (reclaimed > 0) {
+                /* Work was reclaimed - will show on next update */
             }
-            fflush(stdout);
+        }
+
+        /* Update display */
+        int current_workers = 0;
+        for (int i = 0; i < coord.worker_count; i++) {
+            if (coord.workers[i].connected) current_workers++;
+        }
+
+        /* Full redraw every 3 seconds or on worker count change */
+        bool full_redraw = (now - last_full_redraw >= 3) || (current_workers != last_worker_count);
+
+        if (full_redraw) {
+            last_full_redraw = now;
+            last_worker_count = current_workers;
+            render_dashboard(cfg, &coord, num_units, start_time, now, true);
+        } else {
+            /* Quick update every second */
+            render_dashboard(cfg, &coord, num_units, start_time, now, false);
         }
 
         /* Checkpoint - save both wizard config and coordinator state */
