@@ -289,9 +289,19 @@ static int search_range_subprocess(const char *start, const char *end,
     char line[1024];
     int found = 0;
     int lines_read = 0;
+    static int debug_subprocess = -1;
+
+    /* Check for debug mode on first call */
+    if (debug_subprocess < 0) {
+        debug_subprocess = (getenv("KEYHUNT_DEBUG_SUBPROCESS") != NULL) ? 1 : 0;
+    }
 
     while (fgets(line, sizeof(line), fp) && *stop_flag) {
         lines_read++;
+
+        if (debug_subprocess) {
+            fprintf(stderr, "[DEBUG] LINE %d: %s", lines_read, line);
+        }
 
         /* Parse total keys from various output formats */
         char *total_ptr = strstr(line, "Total ");
@@ -300,10 +310,16 @@ static int search_range_subprocess(const char *start, const char *end,
             /* Format: "[+] Total X keys in Y seconds" */
             if (sscanf(total_ptr, "Total %llu keys", (unsigned long long*)&total) == 1) {
                 *keys_checked = total;
+                if (debug_subprocess) {
+                    fprintf(stderr, "[DEBUG] Parsed keys: %llu\n", (unsigned long long)total);
+                }
             }
             /* Format: "[+] Total keys checked: X" */
             else if (sscanf(total_ptr, "Total keys checked: %llu", (unsigned long long*)&total) == 1) {
                 *keys_checked = total;
+                if (debug_subprocess) {
+                    fprintf(stderr, "[DEBUG] Parsed keys (v2): %llu\n", (unsigned long long)total);
+                }
             }
         }
 
@@ -381,6 +397,11 @@ static int search_range_subprocess(const char *start, const char *end,
         int sig = WTERMSIG(exit_status);
         fprintf(stderr, "\n[-] Subprocess killed by signal %d\n", sig);
         return -1;
+    }
+
+    if (debug_subprocess) {
+        fprintf(stderr, "[DEBUG] Final: lines_read=%d, keys_checked=%llu, found=%d\n",
+                lines_read, (unsigned long long)*keys_checked, found);
     }
 
     return found ? 1 : 0;

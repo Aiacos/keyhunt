@@ -119,7 +119,8 @@ static double json_get_double(const char *json, const char *key) {
 
 static uint64_t time_ms(void) {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    /* Use CLOCK_REALTIME (Unix epoch) for compatibility with time(NULL) comparisons */
+    clock_gettime(CLOCK_REALTIME, &ts);
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
@@ -450,6 +451,12 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 
         if (elapsed > 0) {
             worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
+            /* Update speed stats for dashboard - use CPU field if no GPU indicated */
+            if (worker->gpu_memory_mb > 0) {
+                worker->gpu_speed_mkeys = worker->throughput;
+            } else {
+                worker->cpu_speed_mkeys = worker->throughput;
+            }
         }
 
         /* Send ack */

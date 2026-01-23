@@ -168,9 +168,9 @@ static int check_worker_health(dist_coordinator_t *coord, time_t now) {
         dist_worker_t *w = &coord->workers[i];
         if (!w->connected) continue;
 
-        /* Check if worker has timed out */
-        time_t last_seen = (time_t)w->last_heartbeat;
-        if (last_seen > 0 && (now - last_seen) > WORKER_TIMEOUT_SEC) {
+        /* Check if worker has timed out (last_heartbeat is in milliseconds) */
+        time_t last_seen_sec = (time_t)(w->last_heartbeat / 1000);
+        if (last_seen_sec > 0 && (now - last_seen_sec) > WORKER_TIMEOUT_SEC) {
             /* Worker timed out - mark as disconnected */
             w->connected = false;
 
@@ -189,11 +189,12 @@ static int check_worker_health(dist_coordinator_t *coord, time_t now) {
     }
 
     /* Also check for long-running work units (in case heartbeat still arriving but work stuck) */
+    /* Note: assigned_time is in milliseconds */
     for (int i = 0; i < coord->work_unit_count; i++) {
         dist_work_unit_t *unit = &coord->work_units[i];
         if (unit->status == WORK_STATUS_ASSIGNED) {
-            time_t assigned_time = (time_t)unit->assigned_time;
-            if (assigned_time > 0 && (now - assigned_time) > WORK_UNIT_TIMEOUT_SEC) {
+            time_t assigned_time_sec = (time_t)(unit->assigned_time / 1000);
+            if (assigned_time_sec > 0 && (now - assigned_time_sec) > WORK_UNIT_TIMEOUT_SEC) {
                 /* Work unit has been assigned too long - reclaim it */
                 unit->status = WORK_STATUS_PENDING;
                 unit->assigned_worker = -1;
@@ -329,12 +330,14 @@ static void render_dashboard(const wizard_config_t *cfg, const dist_coordinator_
                 /* Status indicator */
                 const char *status;
                 const char *status_color;
-                time_t last_seen = (time_t)w->last_heartbeat;
+                /* last_heartbeat is in milliseconds, convert to seconds for comparison */
+                time_t last_seen_sec = (time_t)(w->last_heartbeat / 1000);
+                time_t stale_threshold = 60;  /* seconds without heartbeat = stale */
 
                 if (!w->connected) {
                     status = "OFFLINE";
                     status_color = "\033[31m";  /* Red */
-                } else if (last_seen > 0 && (now - last_seen) > 60) {
+                } else if (last_seen_sec > 0 && (now - last_seen_sec) > stale_threshold) {
                     status = "STALE";
                     status_color = "\033[33m";  /* Yellow */
                 } else if (w->current_work_id >= 0) {
