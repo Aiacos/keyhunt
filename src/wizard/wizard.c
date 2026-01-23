@@ -329,20 +329,26 @@ static int wizard_configure_search(wizard_config_t *cfg) {
            (unsigned long long)cfg->work_unit_size,
            (unsigned long long)cfg->work_unit_size);
 
-    /* 3. Threads - use all logical cores */
-    cfg->threads = sysinfo.cpu_logical_cores;
-    printf("  ✓ Threads: %d (all logical cores)\n", cfg->threads);
+    /* 3. Threads - save as "auto" (-1) so worker always uses all available cores
+     * This ensures the saved config works correctly on different machines
+     * or when resuming after hardware changes. */
+    cfg->threads = -1;  /* -1 means "auto-detect at runtime" */
+    printf("  ✓ Threads: auto (%d logical cores detected)\n", sysinfo.cpu_logical_cores);
 
-    /* 4. GPU usage - depends on mode and availability */
+    /* 4. GPU usage - save as 0 to trigger auto-detection at runtime
+     * This allows GPU to be auto-enabled on machines that have one,
+     * even if the config was created on a machine without GPU. */
     if (strcmp(cfg->mode, "bsgs") == 0) {
-        cfg->gpu_percent = 0;  /* BSGS is CPU-optimized */
+        cfg->gpu_percent = 0;  /* BSGS is CPU-optimized, keep disabled */
         printf("  ✓ GPU: disabled (BSGS is CPU-optimized)\n");
-    } else if (sysinfo.has_cuda) {
-        cfg->gpu_percent = sysinfo_get_hybrid_gpu_percent(&sysinfo);
-        printf("  ✓ GPU: %d%% (%s)\n", cfg->gpu_percent, sysinfo.gpu_name);
     } else {
-        cfg->gpu_percent = 0;
-        printf("  ✓ GPU: disabled (no CUDA GPU detected)\n");
+        cfg->gpu_percent = 0;  /* 0 means "auto-detect at runtime" */
+        if (sysinfo.has_cuda) {
+            printf("  ✓ GPU: auto (%d%% detected for %s)\n",
+                   sysinfo_get_hybrid_gpu_percent(&sysinfo), sysinfo.gpu_name);
+        } else {
+            printf("  ✓ GPU: auto (will enable if GPU detected)\n");
+        }
     }
 
     /* 5. Key type - always compressed (2x faster, standard for puzzles) */

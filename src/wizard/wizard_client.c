@@ -537,20 +537,20 @@ int wizard_client_run(wizard_config_t *cfg) {
     sysinfo_compute_scores(&sysinfo);
     printf("    Performance Score: %.2f\n", sysinfo.cpu_score);
 
-    /* Auto-configure based on hardware */
-    if (cfg->threads <= 0) {
-        cfg->threads = sysinfo.cpu_logical_cores;
-    }
+    /* Auto-configure based on hardware - ALWAYS use detected values
+     * This ensures we use all available resources regardless of saved config.
+     * Saved config values like threads=4 from a previous run should not
+     * limit performance on machines with more cores. */
+    cfg->threads = sysinfo.cpu_logical_cores;
 
-    /* GPU detection */
+    /* GPU detection - ALWAYS auto-enable GPU if available */
     if (sysinfo.gpu_count > 0) {
+        /* Auto-enable GPU at 95% if not explicitly configured */
+        cfg->gpu_percent = 95;
         printf("    GPU: %s (%llu MB VRAM) - auto-enabled %d%%\n",
                sysinfo.gpu_name,
                (unsigned long long)sysinfo.gpu_vram_mb,
-               cfg->gpu_percent > 0 ? cfg->gpu_percent : 95);
-        if (cfg->gpu_percent == 0) {
-            cfg->gpu_percent = 95;
-        }
+               cfg->gpu_percent);
     } else {
         printf("    GPU: None detected\n");
         cfg->gpu_percent = 0;
@@ -613,6 +613,13 @@ int wizard_client_run(wizard_config_t *cfg) {
         printf("[+] Received configuration from server:\n");
     } else {
         printf("[+] Using local configuration:\n");
+    }
+
+    /* Adjust GPU settings based on mode
+     * BSGS is CPU-optimized and doesn't benefit from GPU */
+    if (strcmp(cfg->mode, "bsgs") == 0 && cfg->gpu_percent > 0) {
+        printf("[i] BSGS mode detected - disabling GPU (CPU-optimized algorithm)\n");
+        cfg->gpu_percent = 0;
     }
 
     printf("    Puzzle: #%d (%d bits)\n", cfg->puzzle_number, cfg->bits);

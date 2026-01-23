@@ -201,9 +201,16 @@ void wizard_print_config_summary(const wizard_config_t *cfg) {
     printf("  │ " CYAN "Port:" RESET "   %-5d                                       │\n", cfg->server_port);
     printf("  │ " CYAN "Unit:" RESET "   %llu keys/work                         │\n",
            (unsigned long long)cfg->work_unit_size);
-    printf("  │ " CYAN "CPU:" RESET "    %d threads                                   │\n",
-           cfg->threads > 0 ? cfg->threads : 0);
-    printf("  │ " CYAN "GPU:" RESET "    %d%%                                          │\n", cfg->gpu_percent);
+    if (cfg->threads <= 0) {
+        printf("  │ " CYAN "CPU:" RESET "    auto (all cores)                              │\n");
+    } else {
+        printf("  │ " CYAN "CPU:" RESET "    %d threads                                   │\n", cfg->threads);
+    }
+    if (cfg->gpu_percent <= 0) {
+        printf("  │ " CYAN "GPU:" RESET "    auto (if available)                           │\n");
+    } else {
+        printf("  │ " CYAN "GPU:" RESET "    %d%%                                          │\n", cfg->gpu_percent);
+    }
     printf("  │ " CYAN "Type:" RESET "   %-10s                                   │\n", cfg->key_type);
     printf("  │ " CYAN "Community:" RESET " %s                                     │\n",
            cfg->community_enabled ? GREEN "Enabled" RESET : YELLOW "Disabled" RESET);
