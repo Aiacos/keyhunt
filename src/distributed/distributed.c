@@ -19,10 +19,23 @@
 
 /* ============================================================================
  * TLS/SSL Support (Optional - requires OpenSSL)
+ * ============================================================================
+ *
+ * This section implements TLS encryption for distributed mode. All OpenSSL-
+ * dependent code is wrapped in #ifdef HAVE_OPENSSL guards to allow building
+ * without TLS support.
+ *
+ * - When HAVE_OPENSSL is defined: Full TLS support with OpenSSL
+ * - When HAVE_OPENSSL is not defined: Stubs that return errors
+ *
+ * To build with TLS:    make ENABLE_TLS=1
+ * To build without TLS: make (default)
  * ============================================================================ */
 
 #ifdef HAVE_OPENSSL
-/* OpenSSL is available - implement real TLS support */
+/* ============================================================================
+ * OpenSSL Implementation (HAVE_OPENSSL defined)
+ * ============================================================================ */
 
 static bool g_openssl_initialized = false;
 static pthread_mutex_t g_openssl_init_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -207,6 +220,9 @@ static int tls_recv_all(SSL *ssl, void *buf, size_t len) {
 }
 
 #endif /* HAVE_OPENSSL */
+/* ============================================================================
+ * End of OpenSSL Implementation
+ * ============================================================================ */
 
 /* ============================================================================
  * Clean Logging System

@@ -28,17 +28,30 @@
  * TLS Support (Optional - requires OpenSSL)
  * ============================================================================
  *
- * When HAVE_OPENSSL is defined (via -DHAVE_OPENSSL compiler flag), TLS support
- * is enabled. Without it, dist_coordinator_enable_tls() returns an error.
+ * This header conditionally includes OpenSSL headers when HAVE_OPENSSL is
+ * defined via compiler flags (-DHAVE_OPENSSL). All OpenSSL-dependent types
+ * (SSL_CTX, SSL) are only available when this macro is defined.
  *
- * To build with TLS:   make ENABLE_TLS=1
- * To build without TLS: make (default)
- */
+ * When HAVE_OPENSSL is defined:
+ *   - Full TLS encryption support
+ *   - SSL_CTX and SSL types available in structs
+ *   - TLS functions are fully functional
+ *
+ * When HAVE_OPENSSL is NOT defined:
+ *   - No TLS support (stubs return errors)
+ *   - SSL_CTX and SSL fields are excluded from structs
+ *   - Calling TLS functions returns error codes
+ *
+ * Build commands:
+ *   make ENABLE_TLS=1    # With TLS support (requires libssl-dev)
+ *   make                 # Without TLS (default)
+ * ============================================================================ */
 #ifdef HAVE_OPENSSL
+/* OpenSSL headers - only included when HAVE_OPENSSL is defined */
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/crypto.h>
-#endif
+#endif /* HAVE_OPENSSL */
 
 #ifdef __cplusplus
 extern "C" {
