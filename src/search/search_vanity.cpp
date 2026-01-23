@@ -1,43 +1,50 @@
 /*
  * search_vanity.cpp - Vanity address generation mode
  *
- * This file is a placeholder for future refactoring. Currently, the
- * thread_process_vanity() function resides in keyhunt.cpp.
+ * This file documents the VANITY mode search implementation.
  *
- * When fully extracted, this file will contain:
- * - void *thread_process_vanity(void *vargp) - Vanity address generator
- * - Helper functions for prefix matching
+ * IMPLEMENTATION LOCATION: keyhunt.cpp (thread_process_vanity function)
+ *
+ * The implementation remains in keyhunt.cpp due to tight coupling with:
+ * - Static work pool (g_work_pool) for thread-safe work distribution
+ * - Thread-local caching (cpu_cached_block_start/end/valid)
+ * - Generator points (Gn, _2Gn) initialized at startup
+ * - Endomorphism constants (lambda, lambda2, beta, beta2)
  *
  * Vanity addresses are Bitcoin addresses with custom prefixes, e.g.:
  * - 1LOVE...
  * - 1Pizza...
  * - 1BTC...
  *
- * The search generates random private keys and checks if the resulting
- * address starts with the desired prefix.
+ * Algorithm Overview:
+ * 1. Acquire base key from work pool or sequential range
+ * 2. Compute batch of CPU_GRP_SIZE public keys using EC group operations
+ * 3. Hash all public keys to addresses (SHA256 + RIPEMD160)
+ * 4. Check for prefix matches using bloom filter
+ * 5. Write matching keys to VANITYKEYFOUND.txt
  *
- * See search_common.h for shared declarations.
- */
-
-/*
- * Vanity Address Generation Details:
+ * Optimization Features:
+ * - Batch EC point computation with Montgomery's trick for batch inversion
+ * - SIMD-optimized hashing (AVX512 16-way, AVX2 8-way, SSE 4-way)
+ * - Endomorphism: check 6 related keys per EC operation
+ *   - Q, -Q, Q*lambda, -Q*lambda, Q*lambda^2, -Q*lambda^2
+ *   - For secp256k1: Q*lambda = (x*beta, y) where beta^3 = 1 mod p
+ * - Bloom filter for fast multi-prefix matching
  *
- * Vanity addresses are created by:
- * 1. Generate random private key
- * 2. Compute public key
- * 3. Generate address (HASH160 + Base58Check)
- * 4. Check if address starts with target prefix
- * 5. Repeat until match found
- *
- * Difficulty scales exponentially with prefix length:
- * - 1 character: ~58 attempts average
+ * Difficulty Scaling (average attempts for random prefix):
+ * - 1 character: ~58 attempts
  * - 2 characters: ~3,364 attempts
  * - 3 characters: ~195,112 attempts
- * - etc.
+ * - 4 characters: ~11,316,496 attempts
+ * - 5 characters: ~656,356,768 attempts
  *
- * Optimization: Use bloom filter for multi-prefix search
+ * Performance depends on:
+ * - CPU features (AVX512 > AVX2 > SSE > scalar)
+ * - Endomorphism enabled (-e flag): 6x effective throughput
+ * - Number of threads (-t flag)
+ * - Batch size (CPU_GRP_SIZE, default 1024)
  *
- * NOTE: Implementation currently in keyhunt.cpp thread_process_vanity()
+ * See search_common.h for shared declarations and keyhunt.cpp for implementation.
  */
 
-/* Placeholder - actual implementation in keyhunt.cpp */
+/* Placeholder - actual implementation in keyhunt.cpp thread_process_vanity() */

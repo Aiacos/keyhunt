@@ -5802,6 +5802,18 @@ void *thread_process(void *vargp)	{
 	}
 
 
+/*
+ * thread_process_vanity - VANITY mode search thread
+ *
+ * Generates vanity addresses with custom prefixes (e.g., 1LOVE..., 1Pizza...).
+ * Uses batch EC operations with SIMD-optimized hashing for high throughput.
+ *
+ * Optimization features:
+ * - Batch public key computation (CPU_GRP_SIZE points at a time)
+ * - SIMD hash functions (AVX512/AVX2/SSE)
+ * - Endomorphism for 6x key checking per EC operation
+ * - Bloom filter for multi-prefix matching
+ */
 #if defined(_WIN64) && !defined(__CYGWIN__)
 DWORD WINAPI thread_process_vanity(LPVOID vargp) {
 #else
