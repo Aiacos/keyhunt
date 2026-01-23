@@ -21,6 +21,17 @@ Work for Ethereum
 - **[Hardware Auto-Detection](#hardware-auto-detection)**: Automatic CPU/GPU detection with optimized parameters
 - **[GPU Acceleration](#gpu-modes)**: CUDA-based GPU support with multi-GPU scheduling and async pipelines
 
+## Documentation
+
+For comprehensive documentation, see the **[Documentation Wiki](docs/wiki/README.md)** which includes:
+
+- [Getting Started Guide](docs/wiki/getting-started/installation.md) - Installation and quick start
+- [Search Modes Reference](docs/wiki/modes/address-mode.md) - ADDRESS, BSGS, XPOINT, and more
+- [Distributed Computing Guide](docs/wiki/distributed/overview.md) - Multi-machine setup
+- [Interactive Wizard Guide](docs/wiki/wizard/wizard-guide.md) - Guided configuration
+- [Performance Optimization](docs/wiki/optimization/cpu-tuning.md) - CPU, GPU, and memory tuning
+- [Developer Documentation](docs/wiki/development/architecture.md) - Architecture and contributing
+
 # TL:DR
 
 - Download and build
