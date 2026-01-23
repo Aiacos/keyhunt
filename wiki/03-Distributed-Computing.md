@@ -466,6 +466,154 @@ When setting up a server through the wizard, you can set an authentication token
    - Use a strong, random token (at least 32 characters)
    - Share token securely with authorized workers only
 
+---
+
+## Persistent State (Restart Recovery)
+
+The coordinator now supports persistent state, allowing it to resume after restart without losing progress.
+
+### How It Works
+
+- State is automatically saved to `coordinator_state_puzzleN.json` (where N is the puzzle number)
+- State is saved:
+  - Periodically during checkpoints (every 60 seconds by default)
+  - When the coordinator shuts down gracefully
+- On restart, the coordinator automatically loads the state file and resumes
+
+### State File Contents
+
+The state file contains:
+- Work unit completion status
+- Keys processed count
+- Found results (if any)
+- Job configuration (for validation)
+- Authentication token
+
+### Resuming a Session
+
+Simply restart the coordinator with the same configuration:
+
+```bash
+./keyhunt --wizard
+```
+
+The coordinator will detect the state file and resume:
+```
+[+] Resumed from previous state: 1234/10000 units already completed
+```
+
+### Clearing State
+
+To start fresh, delete the state file:
+```bash
+rm coordinator_state_puzzle71.json
+```
+
+---
+
+## Automatic Worker Deployment
+
+The `scripts/` directory contains tools for deploying workers to multiple machines.
+
+### Deploy Workers Script
+
+```bash
+# Deploy and start workers on all hosts
+./scripts/deploy_workers.sh deploy workers.txt 192.168.1.1:7777 [auth_token]
+
+# Start workers (assumes keyhunt already deployed)
+./scripts/deploy_workers.sh start workers.txt 192.168.1.1:7777 [auth_token]
+
+# Stop all workers
+./scripts/deploy_workers.sh stop workers.txt
+
+# Check worker status
+./scripts/deploy_workers.sh status workers.txt
+```
+
+### Hosts File Format
+
+Create a `workers.txt` file with one host per line:
+```
+user@192.168.1.100
+user@192.168.1.101
+root@worker1.example.com
+# Comments are ignored
+```
+
+### Prerequisites
+
+- SSH key authentication configured for all hosts
+- Run `ssh-copy-id user@hostname` for each host
+
+### Systemd Services
+
+For persistent worker operation, use the systemd service templates:
+
+```bash
+# Install coordinator service
+sudo ./scripts/install_service.sh coordinator
+
+# Install worker service
+sudo ./scripts/install_service.sh worker 192.168.1.1:7777 [auth_token]
+
+# Uninstall services
+sudo ./scripts/install_service.sh uninstall
+```
+
+---
+
+## Multi-Coordinator Federation
+
+Federation allows multiple coordinators to work together on the same puzzle, enabling:
+- Larger scale deployments
+- Geographic distribution
+- Fault tolerance
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PRIMARY COORDINATOR                       │
+│                    (distributes ranges)                      │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+         ┌────────────┴────────────┐
+         │                         │
+         ▼                         ▼
+┌─────────────────┐       ┌─────────────────┐
+│   SECONDARY 1   │       │   SECONDARY 2   │
+│  (range A-B)    │       │  (range B-C)    │
+└────────┬────────┘       └────────┬────────┘
+         │                         │
+    ┌────┴────┐               ┌────┴────┐
+    ▼         ▼               ▼         ▼
+ Workers   Workers         Workers   Workers
+```
+
+### Setting Up Federation
+
+**Primary coordinator:**
+```c
+dist_federation_init_primary(&coord, 7777);
+dist_federation_add_peer(&coord, "192.168.1.10", 7778);
+dist_federation_add_peer(&coord, "192.168.1.11", 7779);
+```
+
+**Secondary coordinator:**
+```c
+dist_federation_init_secondary(&coord, "192.168.1.1", 7777);
+dist_federation_connect(&coord);
+// Receives assigned range from primary
+```
+
+### Federation Protocol
+
+- Coordinators exchange progress updates every 30 seconds
+- Found results are immediately shared with all peers
+- Primary assigns work ranges to secondaries
+- Secondaries manage their own workers
+
 ### Result Validation
 
 The coordinator should verify found keys:
@@ -737,10 +885,10 @@ done
 
 Planned features for distributed mode:
 
-- [ ] Persistent state (coordinator can restart)
+- [x] Persistent state (coordinator can restart) - implemented
 - [ ] TLS encryption for secure communication
-- [x] Authentication tokens for workers (implemented)
+- [x] Authentication tokens for workers - implemented
 - [ ] Web-based monitoring dashboard
-- [ ] Automatic worker deployment scripts
-- [ ] Multi-coordinator federation
+- [x] Automatic worker deployment scripts - implemented (`scripts/deploy_workers.sh`)
+- [x] Multi-coordinator federation - implemented
 - [ ] GPU worker support
