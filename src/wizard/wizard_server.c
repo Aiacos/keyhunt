@@ -85,7 +85,7 @@ static int get_executable_path(char *buf, size_t bufsz) {
  * @param port Server port to connect to
  * @return PID of spawned process, or -1 on error
  */
-static pid_t spawn_local_client(int port) {
+static pid_t spawn_local_client(int port, const char *auth_token) {
     char host_port[64];
     snprintf(host_port, sizeof(host_port), "127.0.0.1:%d", port);
 
@@ -107,6 +107,11 @@ static pid_t spawn_local_client(int port) {
         /* Child process: exec keyhunt in client mode */
         /* Small delay to ensure server is ready */
         usleep(500000);  /* 500ms */
+
+        /* Pass auth token via environment variable if set */
+        if (auth_token && auth_token[0] != '\0') {
+            setenv("KEYHUNT_AUTH_TOKEN", auth_token, 1);
+        }
 
         execl(exe_path, "keyhunt", "--wizard-client", host_port, (char *)NULL);
 
@@ -177,6 +182,11 @@ int wizard_server_run(wizard_config_t *cfg) {
         cfg->bits);
     dist_coordinator_set_heartbeat_interval(&coord, 30);  /* 30 second heartbeats */
 
+    /* Set authentication token if configured */
+    if (cfg->auth_token[0] != '\0') {
+        dist_coordinator_set_auth_token(&coord, cfg->auth_token);
+    }
+
     /* Configure work range */
     printf("[+] Setting up puzzle #%d...\n", cfg->puzzle_number);
     printf("    Range: %s - %s\n", cfg->range_start, cfg->range_end);
@@ -217,7 +227,7 @@ int wizard_server_run(wizard_config_t *cfg) {
     if (cfg->server_also_worker) {
         printf("[+] Spawning local client process...\n");
 
-        g_local_client_pid = spawn_local_client(cfg->server_port);
+        g_local_client_pid = spawn_local_client(cfg->server_port, cfg->auth_token);
 
         if (g_local_client_pid > 0) {
             has_local_client = true;
@@ -255,7 +265,7 @@ int wizard_server_run(wizard_config_t *cfg) {
             /* Wait a moment before respawning */
             sleep(2);
 
-            g_local_client_pid = spawn_local_client(cfg->server_port);
+            g_local_client_pid = spawn_local_client(cfg->server_port, cfg->auth_token);
             if (g_local_client_pid > 0) {
                 printf("[+] Local client respawned (PID: %d)\n\n", g_local_client_pid);
             } else {

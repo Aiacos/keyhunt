@@ -183,6 +183,11 @@ int wizard_client_run(wizard_config_t *cfg) {
         sysinfo.gpu_name[0] ? sysinfo.gpu_name : NULL,
         (int)sysinfo.gpu_vram_mb);
 
+    /* Set authentication token if configured */
+    if (cfg->auth_token[0] != '\0') {
+        dist_worker_set_auth_token(&client, cfg->auth_token);
+    }
+
     /* Connect to coordinator */
     int retry = 0;
     while (g_client_running && retry < 5) {
@@ -413,6 +418,13 @@ int wizard_client_run_auto(const char *host_port) {
     strncpy(cfg.server_host, host, sizeof(cfg.server_host) - 1);
     cfg.server_port = port;
     cfg.is_server = false;
+
+    /* Check for auth token from environment (passed by server when spawning) */
+    const char *env_token = getenv("KEYHUNT_AUTH_TOKEN");
+    if (env_token && env_token[0] != '\0') {
+        strncpy(cfg.auth_token, env_token, sizeof(cfg.auth_token) - 1);
+        cfg.auth_token[sizeof(cfg.auth_token) - 1] = '\0';
+    }
 
     printf("[Auto-Client] Connecting to %s:%d\n", cfg.server_host, cfg.server_port);
 

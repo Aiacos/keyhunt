@@ -143,7 +143,8 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     fprintf(f, "    \"port\": %d,\n", cfg->server_port);
     fprintf(f, "    \"work_unit_size\": \"%llx\",\n", (unsigned long long)cfg->work_unit_size);
     fprintf(f, "    \"checkpoint_interval\": %d,\n", cfg->checkpoint_interval_sec);
-    fprintf(f, "    \"also_worker\": %s\n", cfg->server_also_worker ? "true" : "false");
+    fprintf(f, "    \"also_worker\": %s,\n", cfg->server_also_worker ? "true" : "false");
+    fprintf(f, "    \"auth_token\": \"%s\"\n", cfg->auth_token);
     fprintf(f, "  },\n");
 
     fprintf(f, "  \"search\": {\n");
@@ -283,6 +284,7 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     cfg->work_unit_size = json_get_hex(json, "work_unit_size", 0x100000000ULL);
     cfg->checkpoint_interval_sec = json_get_int(json, "checkpoint_interval", 300);
     cfg->server_also_worker = json_get_bool(json, "also_worker", true);
+    json_get_string(json, "auth_token", cfg->auth_token, sizeof(cfg->auth_token), "");
 
     json_get_string(json, "mode", cfg->mode, sizeof(cfg->mode), "address");
     json_get_string(json, "key_type", cfg->key_type, sizeof(cfg->key_type), "compress");

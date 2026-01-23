@@ -66,6 +66,7 @@ typedef struct {
     int server_port;
     uint64_t work_unit_size;
     int checkpoint_interval_sec;
+    char auth_token[64];            /* Authentication token for workers */
 
     /* Search settings */
     char mode[32];           /* "address", "bsgs", "xpoint" */

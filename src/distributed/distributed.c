@@ -531,6 +531,37 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 json_get_string(msg, "type", type, sizeof(type));
 
                 if (strcmp(type, "register") == 0) {
+                    /* Validate authentication token if enabled */
+                    bool auth_passed = true;
+                    if (coord->auth_enabled) {
+                        char provided_token[DIST_AUTH_TOKEN_MAX] = {0};
+                        json_get_string(msg, "auth_token", provided_token, sizeof(provided_token));
+
+                        /* Constant-time comparison to prevent timing attacks */
+                        size_t expected_len = strlen(coord->auth_token);
+                        size_t provided_len = strlen(provided_token);
+
+                        if (expected_len != provided_len) {
+                            auth_passed = false;
+                        } else {
+                            volatile int diff = 0;
+                            for (size_t i = 0; i < expected_len; i++) {
+                                diff |= coord->auth_token[i] ^ provided_token[i];
+                            }
+                            auth_passed = (diff == 0);
+                        }
+
+                        if (!auth_passed) {
+                            char hostname[64] = {0};
+                            json_get_string(msg, "hostname", hostname, sizeof(hostname));
+                            printf(LOG_SERVER LOG_ERR "Authentication failed from %s - invalid token\n",
+                                   hostname[0] ? hostname : "unknown");
+                            send_msg(client_fd, "{\"type\":\"auth_failed\",\"message\":\"Invalid authentication token\"}");
+                            close(client_fd);
+                        }
+                    }
+
+                    if (auth_passed) {
                     dist_worker_t *worker = &coord->workers[coord->worker_count];
                     worker->id = coord->worker_count;
                     worker->socket_fd = client_fd;
@@ -583,6 +614,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         printf(" | GPU: " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s", worker->gpu_speed_mkeys);
                     }
                     printf(" | Total: " CLR_BOLD CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", worker_total);
+                    }  /* end if (auth_passed) */
                 }
             } else {
                 close(client_fd);
@@ -880,6 +912,10 @@ int dist_worker_connect(dist_worker_client_t *client) {
     json_add_int(msg, sizeof(msg), "gpu_memory_mb", client->gpu_memory_mb);
     json_add_double(msg, sizeof(msg), "cpu_speed_mkeys", client->cpu_speed_mkeys);
     json_add_double(msg, sizeof(msg), "gpu_speed_mkeys", client->gpu_speed_mkeys);
+    /* Include auth token if set */
+    if (client->auth_token[0] != '\0') {
+        json_add_string(msg, sizeof(msg), "auth_token", client->auth_token);
+    }
     size_t len = strlen(msg);
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
     strcat(msg, "}");
@@ -893,6 +929,19 @@ int dist_worker_connect(dist_worker_client_t *client) {
     /* Wait for welcome with job config */
     char response[DIST_MAX_MSG_SIZE];
     if (recv_msg(client->socket_fd, response, sizeof(response)) <= 0) {
+        close(client->socket_fd);
+        client->socket_fd = -1;
+        return -1;
+    }
+
+    /* Check for authentication failure */
+    char resp_type[32] = {0};
+    json_get_string(response, "type", resp_type, sizeof(resp_type));
+    if (strcmp(resp_type, "auth_failed") == 0) {
+        char error_msg[256] = {0};
+        json_get_string(response, "message", error_msg, sizeof(error_msg));
+        printf(LOG_CLIENT LOG_ERR "Authentication failed: %s\n",
+               error_msg[0] ? error_msg : "Invalid token");
         close(client->socket_fd);
         client->socket_fd = -1;
         return -1;
@@ -1054,6 +1103,21 @@ void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
     coordinator->heartbeat_interval_sec = interval_sec > 0 ? interval_sec : 30;
 }
 
+void dist_coordinator_set_auth_token(dist_coordinator_t *coordinator,
+                                     const char *token) {
+    if (!coordinator) return;
+
+    if (token && token[0] != '\0') {
+        strncpy(coordinator->auth_token, token, DIST_AUTH_TOKEN_MAX - 1);
+        coordinator->auth_token[DIST_AUTH_TOKEN_MAX - 1] = '\0';
+        coordinator->auth_enabled = true;
+        printf(LOG_SERVER LOG_INFO "Authentication enabled (token required)\n");
+    } else {
+        coordinator->auth_token[0] = '\0';
+        coordinator->auth_enabled = false;
+    }
+}
+
 void dist_worker_set_hardware_info(dist_worker_client_t *client,
                                    int cpu_cores, int cpu_threads,
                                    const char *cpu_name,
@@ -1096,4 +1160,15 @@ int dist_worker_get_job_config(const dist_worker_client_t *client,
 int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client) {
     if (!client) return 30;
     return client->heartbeat_interval_sec > 0 ? client->heartbeat_interval_sec : 30;
+}
+
+void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token) {
+    if (!client) return;
+
+    if (token && token[0] != '\0') {
+        strncpy(client->auth_token, token, DIST_AUTH_TOKEN_MAX - 1);
+        client->auth_token[DIST_AUTH_TOKEN_MAX - 1] = '\0';
+    } else {
+        client->auth_token[0] = '\0';
+    }
 }

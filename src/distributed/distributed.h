@@ -37,6 +37,9 @@ extern "C" {
 /* Maximum message size */
 #define DIST_MAX_MSG_SIZE 8192
 
+/* Authentication token max length */
+#define DIST_AUTH_TOKEN_MAX 64
+
 /* Work unit status */
 typedef enum {
     WORK_STATUS_PENDING = 0,
@@ -115,6 +118,10 @@ typedef struct {
     /* Thread synchronization */
     pthread_mutex_t work_mutex;     /* Protects work unit assignment */
 
+    /* Authentication */
+    bool auth_enabled;                          /* Whether authentication is required */
+    char auth_token[DIST_AUTH_TOKEN_MAX];       /* Expected token from workers */
+
     char output_file[256];
 
     /* Job configuration (sent to workers) */
@@ -153,6 +160,9 @@ typedef struct {
 
     /* Server-configured settings */
     int heartbeat_interval_sec;
+
+    /* Authentication */
+    char auth_token[DIST_AUTH_TOKEN_MAX];       /* Token to send to coordinator */
 
     /* Received job config from server */
     char received_target_address[64];
@@ -209,6 +219,15 @@ void dist_coordinator_set_job_config(dist_coordinator_t *coordinator,
  */
 void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
                                              int interval_sec);
+
+/**
+ * Enable authentication and set the expected token
+ * Workers must provide this token to connect
+ * @param coordinator Coordinator state
+ * @param token Authentication token (NULL or empty to disable)
+ */
+void dist_coordinator_set_auth_token(dist_coordinator_t *coordinator,
+                                     const char *token);
 
 /**
  * Start coordinator (begins accepting workers)
@@ -363,6 +382,13 @@ int dist_worker_get_job_config(const dist_worker_client_t *client,
  * @return Interval in seconds, or 30 as default
  */
 int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client);
+
+/**
+ * Set authentication token for connecting to coordinator
+ * @param client Client state
+ * @param token Authentication token to use
+ */
+void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token);
 
 #ifdef __cplusplus
 }
