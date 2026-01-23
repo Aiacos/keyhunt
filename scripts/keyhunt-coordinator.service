@@ -1,0 +1,37 @@
+[Unit]
+Description=Keyhunt Distributed Coordinator (Wizard Server Mode)
+Documentation=https://github.com/albertobsd/keyhunt
+After=network.target
+
+[Service]
+Type=simple
+User=keyhunt
+Group=keyhunt
+WorkingDirectory=/opt/keyhunt
+
+# Configuration file (optional, created by wizard)
+EnvironmentFile=-/etc/keyhunt/coordinator.env
+
+# Start command - runs the wizard in server mode
+# Expects keyhunt_wizard.json to exist in WorkingDirectory
+ExecStart=/opt/keyhunt/keyhunt --wizard
+
+# Restart on failure with backoff
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+# Logging
+StandardOutput=append:/var/log/keyhunt/coordinator.log
+StandardError=append:/var/log/keyhunt/coordinator.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/opt/keyhunt
+
+[Install]
+WantedBy=multi-user.target

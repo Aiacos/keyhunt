@@ -1,0 +1,21 @@
+# Keyhunt Worker Hosts File
+# Format: user@hostname (one per line)
+# Lines starting with # are comments
+#
+# Example entries:
+# user@192.168.1.100
+# user@192.168.1.101
+# root@worker1.example.com
+# keyhunt@worker2.local
+#
+# Note: SSH key authentication must be configured for these hosts
+# Run: ssh-copy-id user@hostname
+
+# Local network workers
+# user@192.168.1.10
+# user@192.168.1.11
+# user@192.168.1.12
+
+# Cloud workers
+# ubuntu@ec2-xxx.compute.amazonaws.com
+# root@vps1.example.com

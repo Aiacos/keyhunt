@@ -1,0 +1,39 @@
+[Unit]
+Description=Keyhunt Distributed Worker
+Documentation=https://github.com/albertobsd/keyhunt
+After=network.target
+
+[Service]
+Type=simple
+User=keyhunt
+Group=keyhunt
+WorkingDirectory=/opt/keyhunt
+# Environment variables for authentication (optional)
+# Create /etc/keyhunt/worker.env with: KEYHUNT_AUTH_TOKEN=your-token
+EnvironmentFile=-/etc/keyhunt/worker.env
+
+# Coordinator connection - UPDATE THESE VALUES
+Environment="COORDINATOR_HOST=192.168.1.1"
+Environment="COORDINATOR_PORT=7777"
+
+# Start command
+ExecStart=/opt/keyhunt/keyhunt --wizard-client ${COORDINATOR_HOST}:${COORDINATOR_PORT}
+
+# Restart on failure with backoff
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=append:/var/log/keyhunt/worker.log
+StandardError=append:/var/log/keyhunt/worker.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
