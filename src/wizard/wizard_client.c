@@ -568,6 +568,14 @@ int wizard_client_run(wizard_config_t *cfg) {
         return -1;
     }
 
+    /* Set hardware info from detected values - must be before connect */
+    dist_worker_set_hardware_info(&client,
+                                  sysinfo.cpu_physical_cores,
+                                  sysinfo.cpu_logical_cores,
+                                  sysinfo.cpu_model,
+                                  sysinfo.gpu_name,
+                                  (int)sysinfo.gpu_vram_mb);
+
     /* Set authentication token if configured */
     if (cfg->auth_token[0] != '\0') {
         dist_worker_set_auth_token(&client, cfg->auth_token);
@@ -812,26 +820,63 @@ int wizard_client_run_auto(const char *host_port) {
     wizard_config_t cfg;
     wizard_config_init(&cfg);
 
-    /* Parse host:port */
-    char host[256] = "localhost";
-    int port = 7777;
+    /* Validate input */
+    if (!host_port || host_port[0] == '\0') {
+        fprintf(stderr, "[-] Error: host:port argument is required\n");
+        fprintf(stderr, "    Usage: --wizard-client host:port\n");
+        fprintf(stderr, "    Example: --wizard-client 192.168.1.100:7777\n");
+        return -1;
+    }
 
-    if (host_port) {
-        const char *colon = strchr(host_port, ':');
-        if (colon) {
-            size_t host_len = colon - host_port;
-            if (host_len > 0 && host_len < sizeof(host)) {
-                strncpy(host, host_port, host_len);
-                host[host_len] = '\0';
-            }
-            port = atoi(colon + 1);
-            if (port <= 0 || port > 65535) {
-                port = 7777;
-            }
-        } else {
-            /* Just host, use default port */
-            strncpy(host, host_port, sizeof(host) - 1);
+    /* Parse host:port */
+    char host[256] = {0};
+    int port = 0;
+
+    const char *colon = strchr(host_port, ':');
+    if (colon) {
+        /* Format: host:port */
+        size_t host_len = colon - host_port;
+
+        /* Validate host is not empty */
+        if (host_len == 0) {
+            fprintf(stderr, "[-] Error: hostname cannot be empty\n");
+            fprintf(stderr, "    Usage: --wizard-client host:port\n");
+            fprintf(stderr, "    Example: --wizard-client 192.168.1.100:7777\n");
+            return -1;
         }
+
+        if (host_len >= sizeof(host)) {
+            fprintf(stderr, "[-] Error: hostname too long (max %zu characters)\n", sizeof(host) - 1);
+            return -1;
+        }
+
+        strncpy(host, host_port, host_len);
+        host[host_len] = '\0';
+
+        /* Parse and validate port */
+        const char *port_str = colon + 1;
+        if (port_str[0] == '\0') {
+            fprintf(stderr, "[-] Error: port number is required after ':'\n");
+            fprintf(stderr, "    Usage: --wizard-client host:port\n");
+            fprintf(stderr, "    Example: --wizard-client 192.168.1.100:7777\n");
+            return -1;
+        }
+
+        port = atoi(port_str);
+        if (port <= 0 || port > 65535) {
+            fprintf(stderr, "[-] Error: invalid port number '%s' (must be 1-65535)\n", port_str);
+            return -1;
+        }
+    } else {
+        /* Just host, use default port */
+        if (strlen(host_port) >= sizeof(host)) {
+            fprintf(stderr, "[-] Error: hostname too long (max %zu characters)\n", sizeof(host) - 1);
+            return -1;
+        }
+        strncpy(host, host_port, sizeof(host) - 1);
+        host[sizeof(host) - 1] = '\0';
+        port = 7777;  /* Default port */
+        fprintf(stderr, "[i] No port specified, using default port %d\n", port);
     }
 
     /* Configure as client */

@@ -246,7 +246,9 @@ static int tls_recv_all(SSL *ssl, void *buf, size_t len) {
 #define LOG_OK      CLR_GREEN "  ✓ " CLR_RESET
 #define LOG_INFO    CLR_CYAN  "  ℹ " CLR_RESET
 #define LOG_WARN    CLR_YELLOW"  ⚠ " CLR_RESET
+#define LOG_WARNING CLR_YELLOW"  ⚠ " CLR_RESET
 #define LOG_ERR     CLR_RED   "  ✗ " CLR_RESET
+#define LOG_DEBUG   CLR_CYAN  "  ⋯ " CLR_RESET
 #define LOG_FOUND   CLR_MAGENTA CLR_BOLD "  ★ " CLR_RESET
 
 /* Simple JSON helpers (minimal, no external deps) with safe buffer handling */
@@ -1534,14 +1536,21 @@ int dist_worker_request_work(dist_worker_client_t *client,
     }
 
     char response[DIST_MAX_MSG_SIZE];
-    if (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) <= 0) {
+    int recv_len = recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response));
+    if (recv_len <= 0) {
         return -1;
     }
 
     char type[32] = {0};
     json_get_string(response, "type", type, sizeof(type));
 
-    if (strcmp(type, "work_assignment") == 0) {
+    /* Debug: log received response type if KEYHUNT_DEBUG is set */
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf(LOG_CLIENT " [DEBUG] Request work response type='%s'\n", type);
+    }
+
+    /* Accept both "work_assignment" (canonical) and "work" (alternative) */
+    if (strcmp(type, "work_assignment") == 0 || strcmp(type, "work") == 0) {
         client->current_work_id = (int)json_get_int(response, "work_id");
         json_get_string(response, "range_start", range_start, 65);
         json_get_string(response, "range_end", range_end, 65);
@@ -1552,6 +1561,12 @@ int dist_worker_request_work(dist_worker_client_t *client,
     } else if (strcmp(type, "no_work") == 0) {
         client->has_work = false;
         return 1;  /* No more work */
+    }
+
+    /* Unknown response type - log it for debugging */
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf(LOG_CLIENT LOG_WARN "Unknown work response type '%s', raw: %.100s\n",
+               type, response);
     }
 
     return -1;
