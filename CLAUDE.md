@@ -99,11 +99,33 @@ make legacy       # Build legacy version (requires libssl-dev, libgmp-dev)
 make bsgsd        # Build BSGS daemon variant
 ```
 
+### CUDA/GPU Build
+```bash
+./build_cuda.sh              # Auto-detect CUDA, GPU arch, and GCC compatibility
+./build_cuda.sh --arch sm_86 # Specify GPU architecture (RTX 3000)
+./build_cuda.sh --arch sm_89 # Specify GPU architecture (RTX 4000)
+./build_cuda.sh --help       # Show all options
+```
+
+The `build_cuda.sh` script:
+- Auto-detects CUDA toolkit location
+- Auto-detects GPU architecture from nvidia-smi
+- Finds compatible GCC version (or uses `-allow-unsupported-compiler` for GCC 14+)
+- Handles all nvcc flags automatically
+
+Manual CUDA build:
+```bash
+make NVCC=/usr/local/cuda/bin/nvcc \
+     CUDA_HOME=/usr/local/cuda \
+     NVCCFLAGS='-O3 -std=c++17 -arch=sm_75 -allow-unsupported-compiler'
+```
+
 ### Compilation Notes
 - Main version uses custom secp256k1 implementation (no external crypto libs)
 - Legacy version requires OpenSSL and GMP libraries
 - AVX2/AVX-512 optimizations compile with specific flags (`-mavx2`, `-mavx512f`)
 - Optimization level: `-O2` (changed from `-Ofast` to fix Ubuntu freeze issues)
+- CUDA builds require CUDA 11.0+ and compatible GCC (13 recommended, 14+ works with flags)
 
 ## Testing
 

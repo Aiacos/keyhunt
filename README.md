@@ -144,28 +144,39 @@ Example with hybrid mode:
 
 ### Build with CUDA
 
-For newer systems (GCC 15+), you may need an older GCC as host compiler:
+**Recommended: Use the build script** (auto-detects everything):
 
 ```bash
-# Install GCC 13 via Homebrew
-brew install gcc@13
-mkdir -p /tmp/ccbin-gcc13
-ln -sf $(brew --prefix)/bin/gcc-13 /tmp/ccbin-gcc13/gcc
-ln -sf $(brew --prefix)/bin/g++-13 /tmp/ccbin-gcc13/g++
-
-# Build with CUDA
-make NVCC=/path/to/cuda/bin/nvcc \
-     CUDA_HOME=/path/to/cuda \
-     NVCCFLAGS='-O3 -std=c++17 -arch=sm_75 -allow-unsupported-compiler --compiler-bindir=/tmp/ccbin-gcc13'
+./build_cuda.sh
 ```
 
-For standard builds where nvcc is in PATH and GCC is compatible:
+The script automatically:
+- Detects CUDA installation location
+- Detects your GPU architecture
+- Finds compatible GCC version (or uses flags for GCC 14+)
+- Builds with optimal settings
 
-```
-make CUDA_ARCH=sm_75
+For specific GPU architecture:
+
+```bash
+./build_cuda.sh --arch sm_86    # RTX 3000 series
+./build_cuda.sh --arch sm_89    # RTX 4000 series
+./build_cuda.sh --help          # Show all options
 ```
 
-See [GPU_BACKEND.md](GPU_BACKEND.md) for detailed documentation.
+**Manual build** (if you prefer):
+
+```bash
+# Standard build (if GCC is compatible)
+make NVCC=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda CUDA_ARCH=sm_75
+
+# For GCC 14+ (add -allow-unsupported-compiler)
+make NVCC=/usr/local/cuda/bin/nvcc \
+     CUDA_HOME=/usr/local/cuda \
+     NVCCFLAGS='-O3 -std=c++17 -arch=sm_75 -allow-unsupported-compiler'
+```
+
+See [GPU_BACKEND.md](docs/GPU_BACKEND.md) for detailed documentation.
 
 if you have problems compiling the `main` version you can compile the `legacy` version
 

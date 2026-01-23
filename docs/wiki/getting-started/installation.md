@@ -29,10 +29,15 @@ This guide covers system requirements and build instructions for keyhunt.
 | XPOINT | 2 GB | 4 GB |
 | Distributed Server | 4 GB | 16 GB |
 
-### Optional: GPU Support
-- NVIDIA GPU with CUDA 11.0+
-- Compute Capability 5.0+ (Maxwell or newer)
-- NVIDIA driver 450.0+
+### Optional: GPU Support (CUDA)
+- NVIDIA GPU with Compute Capability 5.0+ (Maxwell or newer)
+- CUDA Toolkit 11.0+ (12.x recommended)
+- NVIDIA driver 450.0+ (525+ recommended)
+
+Supported GPUs:
+- GTX 900 series (Maxwell) and newer
+- RTX 2000/3000/4000 series (recommended)
+- Data center: V100, A100, H100
 
 ## Building from Source
 
@@ -67,6 +72,48 @@ make bsgsd
 # Clean build artifacts
 make clean
 ```
+
+### GPU Build (CUDA)
+
+If you have an NVIDIA GPU and want GPU acceleration:
+
+```bash
+# Install CUDA toolkit first (see below)
+# Then use the automatic build script
+./build_cuda.sh
+```
+
+The script auto-detects CUDA and GPU architecture. For manual control:
+
+```bash
+./build_cuda.sh --arch sm_86    # RTX 3000 series
+./build_cuda.sh --arch sm_89    # RTX 4000 series
+./build_cuda.sh --help          # Show all options
+```
+
+#### Installing CUDA
+
+Ubuntu/Debian:
+```bash
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
+sudo dpkg -i cuda-keyring_1.0-1_all.deb
+sudo apt update
+sudo apt install cuda-toolkit-12-6
+```
+
+Fedora:
+```bash
+sudo dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/fedora39/x86_64/cuda-fedora39.repo
+sudo dnf install cuda-toolkit-12-6
+```
+
+After installation, add to PATH:
+```bash
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+```
+
+See [GPU Setup Guide](../optimization/gpu-setup.md) for detailed instructions.
 
 ### Legacy Build Dependencies
 

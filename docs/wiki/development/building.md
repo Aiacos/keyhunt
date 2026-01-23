@@ -150,39 +150,128 @@ make legacy
 | Performance | Slightly faster | Slightly slower |
 | Portability | High | Requires libs |
 
-## GPU Build
+## GPU Build (CUDA)
 
 ### Prerequisites
 
+1. **NVIDIA GPU** with Compute Capability 5.0+ (Maxwell or newer)
+2. **CUDA Toolkit** 11.0 or later (12.x recommended)
+3. **NVIDIA Driver** 450.0+ (525+ recommended)
+
+Install CUDA:
+
 ```bash
-# Install CUDA Toolkit
+# Ubuntu/Debian
 sudo apt install nvidia-cuda-toolkit
 
-# Or from NVIDIA
-wget https://developer.download.nvidia.com/compute/cuda/repos/...
+# Fedora
+sudo dnf install cuda-toolkit
+
+# Or from NVIDIA directly
+# https://developer.nvidia.com/cuda-downloads
 ```
 
-### Build with CUDA
+### Automatic Build (Recommended)
+
+Use the `build_cuda.sh` script which handles everything:
 
 ```bash
-make gpu CUDA_PATH=/usr/local/cuda
+./build_cuda.sh
+```
+
+This script:
+- Auto-detects CUDA installation location
+- Auto-detects your GPU architecture
+- Finds a compatible GCC version (or uses flags for newer GCC)
+- Builds with optimal settings
+- Verifies the build succeeded
+
+Options:
+```bash
+./build_cuda.sh --help              # Show all options
+./build_cuda.sh --arch sm_86        # Specify GPU architecture
+./build_cuda.sh --cuda-home /path   # Specify CUDA path
+./build_cuda.sh --list-arch         # List GPU architectures
+```
+
+### Manual Build with CUDA
+
+```bash
+make clean
+make NVCC=/usr/local/cuda/bin/nvcc \
+     CUDA_HOME=/usr/local/cuda \
+     NVCCFLAGS='-O3 -std=c++17 -arch=sm_75 -allow-unsupported-compiler'
+```
+
+### GCC Compatibility
+
+CUDA has host compiler version requirements:
+
+| CUDA Version | Max Supported GCC |
+|--------------|-------------------|
+| CUDA 12.6    | GCC 13 (14 with flag) |
+| CUDA 12.4    | GCC 13 |
+| CUDA 11.8    | GCC 11 |
+
+For newer GCC (14+), the `-allow-unsupported-compiler` flag is added automatically.
+
+If you have GCC 15+ and want better compatibility:
+
+```bash
+# Install GCC 13
+brew install gcc@13          # Homebrew (any Linux)
+sudo apt install gcc-13      # Ubuntu/Debian
+sudo dnf install gcc13       # Fedora
+
+# build_cuda.sh will use it automatically
+./build_cuda.sh
 ```
 
 ### GPU Build Variables
 
-```makefile
-CUDA_PATH = /usr/local/cuda
-NVCC = $(CUDA_PATH)/bin/nvcc
-CUDA_FLAGS = -arch=sm_50 -O2
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NVCC` | Path to nvcc compiler | Auto-detect |
+| `CUDA_HOME` | CUDA toolkit directory | `/usr/local/cuda` |
+| `CUDA_ARCH` | GPU architecture | Auto-detect from GPU |
+| `NVCCFLAGS` | nvcc compiler flags | `-O3 -std=c++17 -arch=$(CUDA_ARCH)` |
+| `CUDA_CC_BINDIR` | Host compiler directory | None |
+
+### GPU Architecture Reference
+
+| Architecture | GPUs | Code |
+|--------------|------|------|
+| Maxwell | GTX 900 series | `sm_50` |
+| Pascal | GTX 1000 series | `sm_60`/`sm_61` |
+| Volta | V100, Titan V | `sm_70` |
+| Turing | RTX 2000 series, GTX 1660 | `sm_75` |
+| Ampere | RTX 3000 series | `sm_86` |
+| Ampere | A100 | `sm_80` |
+| Ada | RTX 4000 series | `sm_89` |
+| Hopper | H100 | `sm_90` |
+
+### Verify CUDA Build
+
+```bash
+# Check CUDA is linked
+ldd keyhunt | grep cuda
+# Should show: libcudart.so.12 => /usr/local/cuda/lib64/libcudart.so.12
+
+# Test GPU detection
+./keyhunt -m address -f tests/1to32.txt -r 1:FF -G auto
+# Should show GPU info in output
 ```
 
-Adjust `sm_50` for your GPU architecture:
-- sm_50: Maxwell (GTX 900)
-- sm_60: Pascal (GTX 1000)
-- sm_70: Volta (V100)
-- sm_75: Turing (RTX 2000)
-- sm_80: Ampere (RTX 3000)
-- sm_90: Hopper (H100)
+### Build Without CUDA
+
+If you don't have CUDA or want CPU-only:
+
+```bash
+make clean
+make
+```
+
+The Makefile auto-detects nvcc and builds without GPU support if unavailable.
 
 ## Debug Build
 
