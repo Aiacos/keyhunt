@@ -216,10 +216,18 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->port = (port > 0) ? port : DIST_DEFAULT_PORT;
     coord->listen_socket = -1;
 
+    /* Initialize work mutex for thread-safe work unit assignment */
+    if (pthread_mutex_init(&coord->work_mutex, NULL) != 0) {
+        return -1;
+    }
+
     /* Allocate results array */
     coord->result_capacity = 1024;
     coord->results = calloc(coord->result_capacity, sizeof(dist_result_t));
-    if (!coord->results) return -1;
+    if (!coord->results) {
+        pthread_mutex_destroy(&coord->work_mutex);
+        return -1;
+    }
 
     return 0;
 }
@@ -386,8 +394,12 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         /* Update heartbeat - worker is alive */
         worker->last_heartbeat = time_ms();
 
-        dist_work_unit_t *unit = find_pending_work(coord);
         char response[DIST_MAX_MSG_SIZE];
+
+        /* Lock work mutex for thread-safe assignment */
+        pthread_mutex_lock(&coord->work_mutex);
+
+        dist_work_unit_t *unit = find_pending_work(coord);
 
         if (unit) {
             unit->status = WORK_STATUS_ASSIGNED;
@@ -409,6 +421,8 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             snprintf(response, sizeof(response), "{\"type\":\"no_work\"}");
         }
 
+        pthread_mutex_unlock(&coord->work_mutex);
+
         send_msg(worker->socket_fd, response);
 
     } else if (strcmp(type, "work_done") == 0) {
@@ -419,6 +433,9 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         /* Update heartbeat - worker is alive */
         worker->last_heartbeat = time_ms();
 
+        /* Lock work mutex for thread-safe completion */
+        pthread_mutex_lock(&coord->work_mutex);
+
         if (work_id >= 0 && work_id < coord->work_unit_count) {
             dist_work_unit_t *unit = &coord->work_units[work_id];
             unit->status = WORK_STATUS_COMPLETED;
@@ -428,6 +445,8 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 
         worker->keys_processed += keys;
         coord->keys_processed += keys;
+
+        pthread_mutex_unlock(&coord->work_mutex);
 
         if (elapsed > 0) {
             worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
@@ -591,6 +610,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 worker->connected = false;
 
                 /* Reassign work if any */
+                pthread_mutex_lock(&coord->work_mutex);
                 if (worker->current_work_id >= 0 &&
                     worker->current_work_id < coord->work_unit_count) {
                     dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
@@ -599,6 +619,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         coord->work_units_pending++;
                     }
                 }
+                pthread_mutex_unlock(&coord->work_mutex);
             }
         }
     }
@@ -641,9 +662,11 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
 
             if (should_reassign) {
                 printf(LOG_SERVER LOG_WARN "Work unit #%d timed out, reassigning\n", unit->id);
+                pthread_mutex_lock(&coord->work_mutex);
                 unit->status = WORK_STATUS_PENDING;
                 unit->assigned_worker = -1;
                 coord->work_units_pending++;
+                pthread_mutex_unlock(&coord->work_mutex);
             }
         }
     }
@@ -666,6 +689,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 worker->throughput = 0.0;
 
                 /* Reassign any work this worker had */
+                pthread_mutex_lock(&coord->work_mutex);
                 if (worker->current_work_id >= 0 &&
                     worker->current_work_id < coord->work_unit_count) {
                     dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
@@ -676,6 +700,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         printf(LOG_SERVER LOG_INFO "Work unit #%d reassigned to pool\n", unit->id);
                     }
                 }
+                pthread_mutex_unlock(&coord->work_mutex);
             }
         }
     }
@@ -779,6 +804,9 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
 
     free(coord->work_units);
     free(coord->results);
+
+    /* Destroy work mutex */
+    pthread_mutex_destroy(&coord->work_mutex);
 
     printf(LOG_SERVER LOG_INFO "Shutdown complete. " CLR_BOLD "%d" CLR_RESET " results found.\n", coord->result_count);
 }

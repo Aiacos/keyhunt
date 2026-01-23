@@ -8,6 +8,8 @@
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
+#include <sys/file.h>  /* flock() */
+#include <unistd.h>    /* close() */
 
 /* ============================================================================
  * Built-in Puzzle Database (fallback when offline)
@@ -113,6 +115,14 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     FILE *f = fopen(filepath, "w");
     if (!f) {
         fprintf(stderr, "[-] Cannot save config to %s: %s\n", filepath, strerror(errno));
+        return -1;
+    }
+
+    /* Acquire exclusive lock for writing */
+    int fd = fileno(f);
+    if (flock(fd, LOCK_EX) != 0) {
+        fprintf(stderr, "[-] Cannot lock config file %s: %s\n", filepath, strerror(errno));
+        fclose(f);
         return -1;
     }
 
@@ -235,6 +245,13 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     FILE *f = fopen(filepath, "r");
     if (!f) return -1;
 
+    /* Acquire shared lock for reading */
+    int fd = fileno(f);
+    if (flock(fd, LOCK_SH) != 0) {
+        fclose(f);
+        return -1;
+    }
+
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -249,7 +266,7 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
 
     size_t read_size = fread(json, 1, size, f);
     json[read_size] = '\0';
-    fclose(f);
+    fclose(f);  /* Releases lock */
 
     wizard_config_init(cfg);
 
@@ -298,6 +315,13 @@ int wizard_save_puzzles_cache(const puzzle_def_t *puzzles, int count, const char
     FILE *f = fopen(filepath, "w");
     if (!f) return -1;
 
+    /* Acquire exclusive lock for writing */
+    int fd = fileno(f);
+    if (flock(fd, LOCK_EX) != 0) {
+        fclose(f);
+        return -1;
+    }
+
     fprintf(f, "[\n");
     for (int i = 0; i < count; i++) {
         const puzzle_def_t *p = &puzzles[i];
@@ -325,6 +349,13 @@ int wizard_load_puzzles_cache(puzzle_def_t **puzzles, int *count, const char *fi
     FILE *f = fopen(filepath, "r");
     if (!f) return -1;
 
+    /* Acquire shared lock for reading */
+    int fd = fileno(f);
+    if (flock(fd, LOCK_SH) != 0) {
+        fclose(f);
+        return -1;
+    }
+
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -339,7 +370,7 @@ int wizard_load_puzzles_cache(puzzle_def_t **puzzles, int *count, const char *fi
 
     size_t read_size = fread(json, 1, size, f);
     json[read_size] = '\0';
-    fclose(f);
+    fclose(f);  /* Releases lock */
 
     /* Count puzzles by counting "number": */
     int n = 0;

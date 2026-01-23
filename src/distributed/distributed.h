@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -110,6 +111,9 @@ typedef struct {
 
     bool running;
     bool all_work_done;
+
+    /* Thread synchronization */
+    pthread_mutex_t work_mutex;     /* Protects work unit assignment */
 
     char output_file[256];
 

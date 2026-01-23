@@ -3534,7 +3534,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_3_%" PRIu64 ".blm",bsgs_m);
 				fd_aux1 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux1 != NULL)	{
-					printf("[W] Unused file detected %s you can delete it without worry\n",buffer_bloom_file);
+					output_warning("Unused file detected %s you can delete it without worry\n", buffer_bloom_file);
 					fclose(fd_aux1);
 				}
 				FLAGREADEDFILE1 = 1;
@@ -3611,14 +3611,14 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_5_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					printf("[W] Unused file detected %s you can delete it without worry\n",buffer_bloom_file);
+					output_warning("Unused file detected %s you can delete it without worry\n", buffer_bloom_file);
 					fclose(fd_aux2);
 				}
 				memset(buffer_bloom_file,0,1024);
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_1_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					printf("[W] Unused file detected %s you can delete it without worry\n",buffer_bloom_file);
+					output_warning("Unused file detected %s you can delete it without worry\n", buffer_bloom_file);
 					fclose(fd_aux2);
 				}
 				FLAGREADEDFILE2 = 1;
@@ -4002,7 +4002,7 @@ int main(int argc, char **argv)	{
 					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_11_%" PRIu64 ".blm",bsgs_m);
 					
 					if(FLAGUPDATEFILE1)	{
-						printf("[W] Updating old file into a new one\n");
+						output_warning("Updating old file into a new one\n");
 					}
 				
 				/* Writing file for 1st bloom filter */
