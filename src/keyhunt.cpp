@@ -1,7 +1,25 @@
 /*
-Develop by Alberto
-email: albertobsd@gmail.com
-*/
+ * keyhunt.cpp - High-performance cryptocurrency private key search tool
+ *
+ * Develop by Alberto
+ * email: albertobsd@gmail.com
+ *
+ * Search Modes:
+ *   - MODE_ADDRESS (1): Search for Bitcoin addresses using bloom filters
+ *   - MODE_RMD160 (3): Search for RIPEMD160 hashes directly
+ *   - MODE_XPOINT (0): Search for public key X-coordinates (fastest)
+ *   - MODE_BSGS (2): Baby Step Giant Step for known public keys
+ *   - MODE_VANITY (6): Generate vanity addresses with specific prefixes
+ *   - MODE_MINIKEYS (5): Search minikey format private keys
+ *
+ * Architecture:
+ *   - Multi-threaded with SIMD optimizations (SSE2/AVX2/AVX-512)
+ *   - Bloom filters for fast target lookup
+ *   - Support for GPU acceleration (CUDA)
+ *   - Distributed mode for multi-machine coordination
+ *
+ * See src/search/search_common.h for modular search declarations.
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
