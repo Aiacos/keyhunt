@@ -311,14 +311,42 @@ int wizard_server_run(wizard_config_t *cfg) {
 
             int eta_days = (int)(eta_sec / 86400);
             int eta_hours = (int)((eta_sec - eta_days * 86400) / 3600);
+            int eta_mins = (int)((eta_sec - eta_days * 86400 - eta_hours * 3600) / 60);
 
-            printf("\r[%02ld:%02ld:%02ld] Workers: %d | %d/%d (%.2f%%) | "
-                   "CPU: %.1f | GPU: %.1f | Total: \033[1;32m%.1f\033[0m Mkeys/s | ETA: %dd %dh     ",
+            /* Build progress bar (30 chars wide) */
+            const int bar_width = 30;
+            int filled = (int)(progress / 100.0 * bar_width);
+            if (filled > bar_width) filled = bar_width;
+
+            char bar[64];
+            int bar_idx = 0;
+            for (int i = 0; i < bar_width; i++) {
+                if (i < filled) {
+                    bar[bar_idx++] = '#';
+                } else {
+                    bar[bar_idx++] = '-';
+                }
+            }
+            bar[bar_idx] = '\0';
+
+            /* Format ETA string */
+            char eta_str[32];
+            if (eta_days > 0) {
+                snprintf(eta_str, sizeof(eta_str), "%dd %dh", eta_days, eta_hours);
+            } else if (eta_hours > 0) {
+                snprintf(eta_str, sizeof(eta_str), "%dh %dm", eta_hours, eta_mins);
+            } else {
+                snprintf(eta_str, sizeof(eta_str), "%dm", eta_mins);
+            }
+
+            printf("\r\033[K");  /* Clear line */
+            printf("[%02ld:%02ld:%02ld] [\033[32m%s\033[0m] %.1f%% | "
+                   "W:%d | CPU:%.1f GPU:%.1f \033[1;32m%.1f\033[0m Mk/s | ETA:%s",
                    elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60,
+                   bar, progress,
                    workers,
-                   completed, num_units, progress,
                    cpu_speed, gpu_speed, combined_speed,
-                   eta_days, eta_hours);
+                   eta_str);
             fflush(stdout);
 
             /* Print per-worker stats every 30 seconds or when worker count changes */
