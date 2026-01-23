@@ -172,7 +172,7 @@ All messages are prefixed with a 4-byte network-order length, followed by the JS
 
 ### Worker Registration
 
-When a worker connects, it sends detailed hardware information:
+When a worker connects, it sends detailed hardware information. If authentication is enabled, the worker must also include the auth token:
 
 ```json
 {
@@ -186,7 +186,17 @@ When a worker connects, it sends detailed hardware information:
   "gpu_name": "NVIDIA GeForce RTX 3080",
   "gpu_memory_mb": 10240,
   "cpu_speed_mkeys": 5.0,
-  "gpu_speed_mkeys": 325.0
+  "gpu_speed_mkeys": 325.0,
+  "auth_token": "your-secret-token"
+}
+```
+
+If the token is invalid, the coordinator responds with:
+
+```json
+{
+  "type": "auth_failed",
+  "message": "Invalid authentication token"
 }
 ```
 
@@ -418,6 +428,26 @@ sudo ufw allow 7777/tcp
 
 ## Security Considerations
 
+### Authentication
+
+Token-based authentication is now supported to prevent unauthorized workers from connecting:
+
+**Configuring authentication in the wizard:**
+
+When setting up a server through the wizard, you can set an authentication token in the configuration file (`keyhunt_wizard.json`):
+
+```json
+{
+  "auth_token": "your-secret-token-here"
+}
+```
+
+**How it works:**
+- Coordinator validates tokens using constant-time comparison (prevents timing attacks)
+- Workers must provide the correct token during registration
+- Invalid tokens result in immediate disconnection with `auth_failed` response
+- Local clients spawned by the server receive the token via the `KEYHUNT_AUTH_TOKEN` environment variable
+
 ### Network Security
 
 1. **Use VPN for public deployments**
@@ -432,9 +462,9 @@ sudo ufw allow 7777/tcp
    sudo iptables -A INPUT -p tcp --dport 7777 -j DROP
    ```
 
-3. **No authentication**: Current protocol has no authentication
-   - Only run in trusted networks
-   - Future versions may add TLS
+3. **Enable authentication**: Set `auth_token` in your configuration to require workers to authenticate
+   - Use a strong, random token (at least 32 characters)
+   - Share token securely with authorized workers only
 
 ### Result Validation
 
@@ -709,7 +739,7 @@ Planned features for distributed mode:
 
 - [ ] Persistent state (coordinator can restart)
 - [ ] TLS encryption for secure communication
-- [ ] Authentication tokens for workers
+- [x] Authentication tokens for workers (implemented)
 - [ ] Web-based monitoring dashboard
 - [ ] Automatic worker deployment scripts
 - [ ] Multi-coordinator federation
