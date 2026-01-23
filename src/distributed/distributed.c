@@ -287,10 +287,15 @@ static int json_get_string(const char *json, const char *key, char *out, size_t 
     out[0] = '\0';  /* Initialize output */
 
     char pattern[128];
-    snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *start = strstr(json, pattern);
     if (!start) return -1;
     start += strlen(pattern);
+    /* Skip whitespace after the colon (handles both "key":"value" and "key": "value") */
+    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
+    /* Must start with opening quote */
+    if (*start != '"') return -1;
+    start++;  /* Skip the opening quote */
     const char *end = strchr(start, '"');
     if (!end || end < start) return -1;  /* Also check for inverted pointers */
     size_t len = (size_t)(end - start);
