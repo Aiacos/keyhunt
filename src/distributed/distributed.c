@@ -715,6 +715,50 @@ static int sanitize_json_string(char *str, size_t maxlen) {
  * Coordinator Implementation
  * ============================================================================ */
 
+int dist_coordinator_check_port(int port, const char *bind_address) {
+    int actual_port = (port > 0) ? port : DIST_DEFAULT_PORT;
+
+    /* Create a test socket */
+    int test_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (test_sock < 0) {
+        return -1;  /* Cannot create socket */
+    }
+
+    /* Set SO_REUSEADDR to match actual bind behavior */
+    int opt = 1;
+    setsockopt(test_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    setsockopt(test_sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(actual_port);
+
+    if (bind_address && bind_address[0] != '\0') {
+        if (inet_pton(AF_INET, bind_address, &addr.sin_addr) != 1) {
+            close(test_sock);
+            return -2;  /* Invalid bind address */
+        }
+    } else {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    }
+
+    int result = bind(test_sock, (struct sockaddr*)&addr, sizeof(addr));
+    int bind_errno = errno;
+    close(test_sock);
+
+    if (result < 0) {
+        if (bind_errno == EADDRINUSE) {
+            return 1;  /* Port in use */
+        }
+        return -1;  /* Other bind error */
+    }
+
+    return 0;  /* Port available */
+}
+
 int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     memset(coord, 0, sizeof(*coord));
     coord->port = (port > 0) ? port : DIST_DEFAULT_PORT;
@@ -872,8 +916,24 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
         return -1;
     }
 
+    /* Set socket options for immediate port reuse after restart.
+     * SO_REUSEADDR allows binding to a port in TIME_WAIT state (e.g., after
+     * previous process exited but TCP connections not fully closed).
+     * SO_REUSEPORT (Linux 3.9+) allows multiple sockets to bind to the same
+     * port, which is useful for graceful restarts. */
     int opt = 1;
-    setsockopt(coord->listen_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (setsockopt(coord->listen_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        /* Non-fatal, but log it */
+        perror("[Coordinator] setsockopt SO_REUSEADDR");
+    }
+
+#ifdef SO_REUSEPORT
+    /* SO_REUSEPORT provides better behavior on Linux for rapid restarts */
+    if (setsockopt(coord->listen_socket, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
+        /* Non-fatal on systems where it's not supported */
+        /* Don't log - may not be available on all systems */
+    }
+#endif
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -885,6 +945,7 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
         if (inet_pton(AF_INET, coord->bind_address, &addr.sin_addr) != 1) {
             printf(LOG_SERVER LOG_ERR "Invalid bind address: %s\n", coord->bind_address);
             close(coord->listen_socket);
+            coord->listen_socket = -1;
             return -1;
         }
         printf(LOG_SERVER LOG_INFO "Binding to specific interface: %s\n", coord->bind_address);
@@ -893,14 +954,30 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
     }
 
     if (bind(coord->listen_socket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("[Coordinator] bind");
+        int bind_errno = errno;
         close(coord->listen_socket);
+        coord->listen_socket = -1;
+
+        if (bind_errno == EADDRINUSE) {
+            printf(LOG_SERVER LOG_ERR "Port %d is already in use.\n", coord->port);
+            printf(LOG_SERVER LOG_INFO "This usually means:\n");
+            printf("    1. Another keyhunt server is already running on this port\n");
+            printf("    2. A previous instance didn't shut down cleanly\n");
+            printf("\n  To fix this:\n");
+            printf("    - Check for running instances: lsof -i :%d\n", coord->port);
+            printf("    - Kill the process: kill <PID>\n");
+            printf("    - Or wait ~60 seconds for the port to be released\n");
+            printf("    - Or use a different port with --port <N>\n");
+        } else {
+            printf(LOG_SERVER LOG_ERR "bind() failed: %s\n", strerror(bind_errno));
+        }
         return -1;
     }
 
     if (listen(coord->listen_socket, 16) < 0) {
         perror("[Coordinator] listen");
         close(coord->listen_socket);
+        coord->listen_socket = -1;
         return -1;
     }
 

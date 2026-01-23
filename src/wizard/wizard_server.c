@@ -501,6 +501,26 @@ int wizard_server_run(wizard_config_t *cfg) {
     printf("[i] Architecture: Server handles orchestration only\n");
     printf("[i] Computation is handled by separate client process(es)\n\n");
 
+    /* Early port availability check - fail fast before expensive setup */
+    printf("[i] Checking port %d availability...\n", cfg->server_port);
+    int port_check = dist_coordinator_check_port(cfg->server_port, NULL);
+    if (port_check == 1) {
+        printf("[-] Port %d is already in use.\n", cfg->server_port);
+        printf("[i] This usually means:\n");
+        printf("    1. Another keyhunt server is already running on this port\n");
+        printf("    2. A previous instance didn't shut down cleanly\n");
+        printf("\n  To fix this:\n");
+        printf("    - Check for running instances: lsof -i :%d\n", cfg->server_port);
+        printf("    - Kill the process: kill <PID>\n");
+        printf("    - Or wait ~60 seconds for the port to be released\n");
+        printf("    - Or use a different port in the wizard configuration\n");
+        return -1;
+    } else if (port_check < 0) {
+        printf("[-] Failed to check port availability (error %d)\n", port_check);
+        return -1;
+    }
+    printf("[+] Port %d is available\n", cfg->server_port);
+
     /* Initialize coordinator */
     dist_coordinator_t coord;
     memset(&coord, 0, sizeof(coord));

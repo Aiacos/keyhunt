@@ -324,6 +324,15 @@ typedef struct {
  * ============================================================================ */
 
 /**
+ * Check if a port is available for binding (early check before setup)
+ * Use this to fail fast before loading state, creating work units, etc.
+ * @param port Port to check (0 = default 7777)
+ * @param bind_address Specific interface to bind (NULL = all interfaces)
+ * @return 0 if available, 1 if port in use, -1 on error, -2 if invalid address
+ */
+int dist_coordinator_check_port(int port, const char *bind_address);
+
+/**
  * Initialize coordinator
  * @param coordinator Output coordinator state
  * @param port Port to listen on (0 = default)
