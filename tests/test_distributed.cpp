@@ -128,10 +128,11 @@ TEST(dist_result_struct) {
     dist_result_t result;
     memset(&result, 0, sizeof(result));
 
-    strncpy(result.private_key, "0000000000000000000000000000000000000000000000000000000000000007",
-            sizeof(result.private_key) - 1);
-    strncpy(result.address, "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH",
-            sizeof(result.address) - 1);
+    /* Use snprintf instead of strncpy to avoid truncation warning */
+    snprintf(result.private_key, sizeof(result.private_key),
+             "%s", "0000000000000000000000000000000000000000000000000000000000000007");
+    snprintf(result.address, sizeof(result.address),
+             "%s", "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH");
     result.worker_id = 3;
     result.found_time = 1234567890;
 
@@ -635,6 +636,8 @@ TEST(dist_coordinator_get_state_path) {
 }
 
 /* Create a temporary directory for test files */
+/* Note: These helpers are available for future file-based tests */
+#if 0  /* Disabled to avoid unused function warnings - enable when needed */
 static char g_test_dir[256] = {0};
 
 static void setup_test_dir(void) {
@@ -651,6 +654,7 @@ static void cleanup_test_dir(void) {
         g_test_dir[0] = '\0';
     }
 }
+#endif
 
 TEST(dist_coordinator_save_load_state) {
     dist_coordinator_t coord;

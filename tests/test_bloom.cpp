@@ -150,8 +150,9 @@ TEST(bloom_binary_data) {
     bloom_add(&bf, hash1, 20);
 
     ASSERT_EQ(1, bloom_check(&bf, hash1, 20));
-    /* hash2 should likely not be found */
+    /* hash2 should likely not be found (use it to suppress unused warning) */
     /* Not asserting because of false positive possibility */
+    (void)bloom_check(&bf, hash2, 20);
 
     bloom_free(&bf);
 }
