@@ -35,6 +35,7 @@ analysis.txt
 
 # Build output directories
 obj/
+build_output.txt
 obj_asan/
 obj_tsan/
 obj_coverage/
