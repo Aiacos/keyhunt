@@ -338,7 +338,10 @@ bool Int::IsStrictPositive() {
 
 void Int::Neg() {
 
-	volatile unsigned char c=0;
+	// Note: c is not volatile; the compiler should keep it in a register.
+	// The _subborrow_u64 operations have inherent data dependencies that
+	// prevent reordering. Previous 'volatile' was unnecessary here.
+	unsigned char c = 0;
 	c = _subborrow_u64(c, 0, bits64[0], bits64 + 0);
 	c = _subborrow_u64(c, 0, bits64[1], bits64 + 1);
 	c = _subborrow_u64(c, 0, bits64[2], bits64 + 2);
@@ -350,6 +353,7 @@ void Int::Neg() {
 	c = _subborrow_u64(c, 0, bits64[7], bits64 + 7);
 	c = _subborrow_u64(c, 0, bits64[8], bits64 + 8);
 #endif
+	(void)c;  // Suppress unused variable warning
 
 }
 

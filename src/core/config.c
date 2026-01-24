@@ -41,10 +41,10 @@ static int strcasecmp_local(const char *s1, const char *s2) {
     return tolower((unsigned char)*s1) - tolower((unsigned char)*s2);
 }
 
-void config_init(keyhunt_config_t *cfg) {
+void config_init(keyhunt_ini_config_t *cfg) {
     if (!cfg) return;
 
-    memset(cfg, 0, sizeof(keyhunt_config_t));
+    memset(cfg, 0, sizeof(keyhunt_ini_config_t));
 
     /* Defaults */
     strncpy(cfg->mode, "auto", sizeof(cfg->mode) - 1);
@@ -98,7 +98,7 @@ int config_parse_gpu_devices(const char *str, int *devices, int max_devices) {
 }
 
 /* Parse a single config line */
-static int parse_line(keyhunt_config_t *cfg, const char *line, int line_num) {
+static int parse_line(keyhunt_ini_config_t *cfg, const char *line, int line_num) {
     char buf[CONFIG_MAX_LINE];
     strncpy(buf, line, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
@@ -187,7 +187,7 @@ static int parse_line(keyhunt_config_t *cfg, const char *line, int line_num) {
     return 0;
 }
 
-int config_load(keyhunt_config_t *cfg, const char *filepath) {
+int config_load(keyhunt_ini_config_t *cfg, const char *filepath) {
     if (!cfg || !filepath) return -1;
 
     FILE *f = fopen(filepath, "r");
@@ -220,7 +220,7 @@ int config_load(keyhunt_config_t *cfg, const char *filepath) {
     return 0;
 }
 
-int config_save(const keyhunt_config_t *cfg, const char *filepath) {
+int config_save(const keyhunt_ini_config_t *cfg, const char *filepath) {
     if (!cfg || !filepath) return -1;
 
     FILE *f = fopen(filepath, "w");
@@ -284,11 +284,11 @@ int config_save(const keyhunt_config_t *cfg, const char *filepath) {
     return 0;
 }
 
-int config_load_default(keyhunt_config_t *cfg) {
+int config_load_default(keyhunt_ini_config_t *cfg) {
     return config_load(cfg, DEFAULT_CONFIG_FILE);
 }
 
-void config_print(const keyhunt_config_t *cfg) {
+void config_print(const keyhunt_ini_config_t *cfg) {
     if (!cfg) return;
 
     fprintf(stderr, "[Config] Current configuration:\n");
@@ -330,7 +330,7 @@ void config_print(const keyhunt_config_t *cfg) {
             cfg->memory_limit_percent, cfg->memory_limit_set ? "" : " (default)");
 }
 
-const char* config_mode_str(const keyhunt_config_t *cfg) {
+const char* config_mode_str(const keyhunt_ini_config_t *cfg) {
     if (!cfg) return "unknown";
     return cfg->mode;
 }

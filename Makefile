@@ -82,18 +82,19 @@ BENCHMARK_OBJS := $(OBJDIR)/benchmark.o
 CLI_OBJS := $(OBJDIR)/cli.o
 WIZARD_OBJS := $(OBJDIR)/wizard/wizard.o $(OBJDIR)/wizard/wizard_config.o $(OBJDIR)/wizard/wizard_ui.o $(OBJDIR)/wizard/wizard_community.o $(OBJDIR)/wizard/wizard_server.o $(OBJDIR)/wizard/wizard_client.o
 CORE_OBJS := $(OBJDIR)/core/util.o $(OBJDIR)/core/sysinfo.o $(OBJDIR)/core/parameter_validator.o $(OBJDIR)/core/config.o
+CONFIG_OBJS := $(OBJDIR)/config/config.o
 SEARCH_OBJS := $(OBJDIR)/search/search_xpoint.o $(OBJDIR)/search/search_rmd160.o
 
-COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS)
+COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS)
 
 KEYHUNT_OBJS := $(OBJDIR)/keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OBJS)
 BSGSD_OBJS := $(OBJDIR)/bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(COMMON_OBJS) $(GMP256K1_OBJS)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/tests
 
-.PHONY: all clean legacy bsgsd directories test
+.PHONY: all clean legacy bsgsd directories test sanitize tsan coverage
 
 all: directories keyhunt
 
@@ -128,34 +129,47 @@ TEST_OBJDIR := $(OBJDIR)/tests
 TEST_INT_OBJ := $(TEST_OBJDIR)/test_int.o
 TEST_BLOOM_OBJ := $(TEST_OBJDIR)/test_bloom.o
 TEST_BSGS_OBJ := $(TEST_OBJDIR)/test_bsgs_integration.o
+TEST_GPU_OBJ := $(TEST_OBJDIR)/test_gpu_backend.o
+TEST_DISTRIBUTED_OBJ := $(TEST_OBJDIR)/test_distributed.o
+TEST_WIZARD_OBJ := $(TEST_OBJDIR)/test_wizard.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
 # CORE_OBJS includes util.o which has tohex() needed by SECP256K1
 TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
                     $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
-                    $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS)
-
-# Create test object directory
-$(TEST_OBJDIR):
-	@mkdir -p $@
+                    $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
+                    $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS)
 
 # Build test object files
-$(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | $(TEST_OBJDIR)
+$(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TEST_BLOOM_OBJ): tests/test_bloom.cpp tests/test_framework.h | $(TEST_OBJDIR)
+$(TEST_BLOOM_OBJ): tests/test_bloom.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TEST_BSGS_OBJ): tests/test_bsgs_integration.cpp tests/test_framework.h | $(TEST_OBJDIR)
+$(TEST_BSGS_OBJ): tests/test_bsgs_integration.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TEST_RUNNER_OBJ): tests/run_tests.cpp | $(TEST_OBJDIR)
+$(TEST_GPU_OBJ): tests/test_gpu_backend.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_DISTRIBUTED_OBJ): tests/test_distributed.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_WIZARD_OBJ): tests/test_wizard.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# All test objects
+TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
+             $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ)
 
 # Build test runner
-run_tests: directories $(TEST_OBJDIR) $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_SHARED_OBJS)
-	$(CXX) $(LDFLAGS) $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
+run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
+	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
 
 # Run all tests
 test: run_tests
@@ -209,6 +223,131 @@ $(OBJDIR)/bsgs/bsgs_ops.o: $(SRCDIR)/bsgs/bsgs_ops.cpp | directories
 
 $(OBJDIR)/bsgs/bsgs_fast.o: $(SRCDIR)/bsgs/bsgs_fast.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
+# ============================================================================
+# Sanitizer Builds (Memory Safety Testing)
+# ============================================================================
+# AddressSanitizer: Detects memory errors (buffer overflow, use-after-free, etc.)
+# ThreadSanitizer: Detects data races in multithreaded code
+#
+# Usage:
+#   make sanitize    # Build with AddressSanitizer and run tests
+#   make tsan        # Build with ThreadSanitizer and run tests
+#
+# Note: Sanitizer builds are slower and use more memory.
+#       They are intended for CI testing, not production.
+# ============================================================================
+
+# Sanitizer-specific directories to avoid conflicts with regular builds
+SANITIZE_OBJDIR := obj_asan
+TSAN_OBJDIR := obj_tsan
+COVERAGE_OBJDIR := obj_coverage
+
+# AddressSanitizer flags
+ASAN_FLAGS := -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer -g -O1
+ASAN_LDFLAGS := -fsanitize=address -fsanitize=undefined
+
+# ThreadSanitizer flags
+TSAN_FLAGS := -fsanitize=thread -fno-omit-frame-pointer -g -O1
+TSAN_LDFLAGS := -fsanitize=thread
+
+# Coverage flags
+COVERAGE_FLAGS := --coverage -fprofile-arcs -ftest-coverage -g -O0
+COVERAGE_LDFLAGS := --coverage
+
+# Sanitizer build: AddressSanitizer + UndefinedBehaviorSanitizer
+sanitize: clean-sanitize
+	@echo "Building with AddressSanitizer..."
+	@mkdir -p $(SANITIZE_OBJDIR)
+	$(MAKE) run_tests_asan OBJDIR=$(SANITIZE_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(ASAN_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(ASAN_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(ASAN_LDFLAGS) -Wl,--as-needed" \
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(SANITIZE_OBJDIR)/gpu/gpu_backend_none.o $(SANITIZE_OBJDIR)/gpu/gpu_autotune.o $(SANITIZE_OBJDIR)/gpu/multi_gpu_scheduler.o $(SANITIZE_OBJDIR)/gpu/async_pipeline.o"
+	@echo ""
+	@echo "Running tests with AddressSanitizer..."
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:print_stats=1 ./run_tests_asan
+
+run_tests_asan: directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
+	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
+
+clean-sanitize:
+	$(RM) -r $(SANITIZE_OBJDIR) run_tests_asan
+
+# ThreadSanitizer build
+tsan: clean-tsan
+	@echo "Building with ThreadSanitizer..."
+	@mkdir -p $(TSAN_OBJDIR)
+	$(MAKE) run_tests_tsan OBJDIR=$(TSAN_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(TSAN_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(TSAN_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(TSAN_LDFLAGS) -Wl,--as-needed" \
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(TSAN_OBJDIR)/gpu/gpu_backend_none.o $(TSAN_OBJDIR)/gpu/gpu_autotune.o $(TSAN_OBJDIR)/gpu/multi_gpu_scheduler.o $(TSAN_OBJDIR)/gpu/async_pipeline.o"
+	@echo ""
+	@echo "Running tests with ThreadSanitizer..."
+	TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ./run_tests_tsan
+
+run_tests_tsan: directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
+	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
+
+clean-tsan:
+	$(RM) -r $(TSAN_OBJDIR) run_tests_tsan
+
+# ============================================================================
+# Code Coverage
+# ============================================================================
+# Builds with coverage instrumentation and generates coverage reports
+#
+# Usage:
+#   make coverage           # Build, run tests, generate report
+#   make coverage-report    # Generate report from existing .gcda files
+#   make clean-coverage     # Remove coverage artifacts
+#
+# Requirements:
+#   - gcov (comes with GCC)
+#   - lcov (for HTML reports): sudo apt install lcov
+# ============================================================================
+
+coverage: clean-coverage
+	@echo "Building with coverage instrumentation..."
+	@mkdir -p $(COVERAGE_OBJDIR)
+	$(MAKE) run_tests_cov OBJDIR=$(COVERAGE_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(COVERAGE_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(COVERAGE_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(COVERAGE_LDFLAGS) -Wl,--as-needed" \
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/gpu_autotune.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o"
+	@echo ""
+	@echo "Running tests for coverage data..."
+	./run_tests_cov
+	@echo ""
+	$(MAKE) coverage-report
+
+run_tests_cov: directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
+	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
+
+coverage-report:
+	@echo "Generating coverage report..."
+	@mkdir -p coverage
+	@# Capture coverage data
+	lcov --capture --directory $(COVERAGE_OBJDIR) --output-file coverage/coverage.info --ignore-errors mismatch 2>/dev/null || \
+		lcov --capture --directory $(COVERAGE_OBJDIR) --output-file coverage/coverage.info 2>/dev/null || \
+		echo "lcov capture completed with warnings"
+	@# Filter out test files and system headers
+	lcov --remove coverage/coverage.info '/usr/*' '*/tests/*' --output-file coverage/coverage.filtered.info 2>/dev/null || \
+		echo "lcov filtering completed with warnings"
+	@# Generate HTML report
+	genhtml coverage/coverage.filtered.info --output-directory coverage/html --title "Keyhunt Test Coverage" 2>/dev/null || \
+		echo "genhtml completed with warnings"
+	@echo ""
+	@echo "Coverage report generated in coverage/html/index.html"
+	@# Print summary
+	@lcov --summary coverage/coverage.filtered.info 2>/dev/null || true
+
+clean-coverage:
+	$(RM) -r $(COVERAGE_OBJDIR) run_tests_cov coverage *.gcda *.gcno
+
+.PHONY: sanitize run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
+.PHONY: coverage run_tests_cov coverage-report clean-coverage
 
 # ============================================================================
 # Fuzzing Targets

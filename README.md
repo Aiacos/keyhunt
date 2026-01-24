@@ -1,6 +1,7 @@
 # keyhunt
 
 [![CI](https://github.com/albertobsd/keyhunt/actions/workflows/ci.yml/badge.svg)](https://github.com/albertobsd/keyhunt/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/albertobsd/keyhunt/graph/badge.svg)](https://codecov.io/gh/albertobsd/keyhunt)
 
 Tool for hunt privatekeys for crypto currencies that use secp256k1 elliptic curve
 

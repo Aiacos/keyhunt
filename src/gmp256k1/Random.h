@@ -24,7 +24,18 @@
 #ifndef RANDOM_H
 #define RANDOM_H
 
-void int_randominit();
-int random_bytes(unsigned char *buffer,int bytes);
+/**
+ * @brief Initialize the random number generator.
+ * @return 0 on success, -1 on failure (e.g., already initialized or RNG unavailable)
+ */
+int int_randominit(void);
+
+/**
+ * @brief Fill buffer with cryptographically secure random bytes.
+ * @param buffer Output buffer to fill
+ * @param bytes Number of bytes to generate
+ * @return Number of bytes actually written, or -1 on error
+ */
+int random_bytes(unsigned char *buffer, int bytes);
 
 #endif

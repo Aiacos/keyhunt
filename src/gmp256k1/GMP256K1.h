@@ -21,6 +21,50 @@
 	SOFTWARE.
 */
 
+/**
+ * @file GMP256K1.h
+ * @brief LEGACY BUILD ONLY: GMP-based secp256k1 implementation
+ *
+ * This implementation uses the GNU Multiple Precision (GMP) library for
+ * big integer arithmetic. It is used ONLY by the legacy build target
+ * (keyhunt_legacy) which requires external dependencies:
+ * - libgmp-dev
+ * - libssl-dev
+ *
+ * == WHEN TO USE THIS ==
+ *
+ * Use gmp256k1 (legacy build) if:
+ * - You need compatibility with older systems
+ * - You're running on platforms where the custom secp256k1 doesn't work
+ * - You need GMP's arbitrary precision for other calculations
+ *
+ * == WHEN TO USE secp256k1/ (default) ==
+ *
+ * The main secp256k1/ implementation should be preferred because:
+ * - No external dependencies (self-contained)
+ * - Better optimized for 256-bit operations
+ * - AVX2/AVX-512 SIMD support for batch hashing
+ * - Consistent performance across platforms
+ *
+ * == BUILD TARGETS ==
+ *
+ * Default build (uses secp256k1/):
+ *   make           # Builds keyhunt with custom secp256k1
+ *
+ * Legacy build (uses gmp256k1/):
+ *   make legacy    # Builds keyhunt_legacy with GMP-based secp256k1
+ *                  # Requires: libgmp-dev, libssl-dev
+ *
+ * == INTERFACE COMPATIBILITY ==
+ *
+ * Both implementations provide the same Secp256K1 class interface, but:
+ * - gmp256k1 does NOT have AVX2/AVX-512 optimized hash functions
+ * - gmp256k1 Int class uses mpz_t internally (GMP arbitrary precision)
+ * - secp256k1 Int class uses fixed 256-bit representation
+ *
+ * @note This header is NOT included in the default keyhunt build.
+ */
+
 #ifndef SECP256K1H
 #define SECP256K1H
 
@@ -71,7 +115,8 @@ public:
 
 private:
 
-	uint8_t GetByte(char *str,int idx);
+	/* GetByte returns -1 on error instead of calling exit() */
+	int GetByte(char *str,int idx);
 	Int GetY(Int x, bool isEven);
 	Point GTable[256*32];       // Generator table
 

@@ -1,0 +1,54 @@
+# Codecov configuration for keyhunt
+# See: https://docs.codecov.com/docs/codecovyml-reference
+
+coverage:
+  # Precision of coverage percentage
+  precision: 2
+
+  # Rounding method (down, up, nearest)
+  round: down
+
+  # Acceptable ranges for coverage
+  range: "40...100"
+
+  status:
+    # Project-level coverage status
+    project:
+      default:
+        # Target coverage percentage (informational, won't fail CI)
+        target: auto
+        # Allow coverage to drop by this amount
+        threshold: 5%
+        # Don't fail CI on coverage
+        informational: true
+
+    # Patch-level coverage (new/modified lines)
+    patch:
+      default:
+        # Target coverage for new code
+        target: 50%
+        # Allow some flexibility for patches
+        threshold: 10%
+        informational: true
+
+# Ignore files and directories from coverage
+ignore:
+  - "tests/**/*"
+  - "**/test_*.cpp"
+  - "**/fuzz_*.cpp"
+  - "src/gpu/**/*"  # GPU code not tested in CI
+
+# Comment settings for pull requests
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false
+  require_base: no
+  require_head: yes
+
+# Flags for different test types
+flags:
+  unittests:
+    paths:
+      - src/
+    carryforward: true

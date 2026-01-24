@@ -820,8 +820,12 @@ void Secp256K1::GetHash160_fromX(int type,unsigned char prefix,
 
   case P2SH:
   {
-	fprintf(stderr,"[E] Fixme unsopported case");
-	exit(0);
+    /* P2SH mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr,"[E] Unsupported P2SH mode in GetHash160_fromX\n");
+    memset(h0, 0, 20);
+    memset(h1, 0, 20);
+    memset(h2, 0, 20);
+    memset(h3, 0, 20);
   }
   break;
 
@@ -874,8 +878,16 @@ void Secp256K1::GetHash160_fromX_02_03(int type,
 
   case P2SH:
   {
-    fprintf(stderr,"[E] Fixme unsopported case");
-    exit(0);
+    /* P2SH mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr,"[E] Unsupported P2SH mode in GetHash160_fromX_02_03\n");
+    memset(h02_0, 0, 20);
+    memset(h02_1, 0, 20);
+    memset(h02_2, 0, 20);
+    memset(h02_3, 0, 20);
+    memset(h03_0, 0, 20);
+    memset(h03_1, 0, 20);
+    memset(h03_2, 0, 20);
+    memset(h03_3, 0, 20);
   }
   break;
   }
@@ -1074,8 +1086,16 @@ void Secp256K1::GetHash160_fromX_AVX2(int type,unsigned char prefix,
 
   case P2SH:
   {
-    fprintf(stderr,"[E] Fixme unsupported case\n");
-    exit(0);
+    /* P2SH mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr,"[E] Unsupported P2SH mode in GetHash160_AVX2\n");
+    memset(h0, 0, 20);
+    memset(h1, 0, 20);
+    memset(h2, 0, 20);
+    memset(h3, 0, 20);
+    memset(h4, 0, 20);
+    memset(h5, 0, 20);
+    memset(h6, 0, 20);
+    memset(h7, 0, 20);
   }
   break;
 
@@ -1154,8 +1174,24 @@ void Secp256K1::GetHash160_fromX_02_03_AVX2(int type,
 
   case P2SH:
   {
-    fprintf(stderr,"[E] Fixme unsupported case\n");
-    exit(0);
+    /* P2SH mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr,"[E] Unsupported P2SH mode in GetHash160_fromX_02_03_AVX2\n");
+    memset(h02_0, 0, 20);
+    memset(h02_1, 0, 20);
+    memset(h02_2, 0, 20);
+    memset(h02_3, 0, 20);
+    memset(h02_4, 0, 20);
+    memset(h02_5, 0, 20);
+    memset(h02_6, 0, 20);
+    memset(h02_7, 0, 20);
+    memset(h03_0, 0, 20);
+    memset(h03_1, 0, 20);
+    memset(h03_2, 0, 20);
+    memset(h03_3, 0, 20);
+    memset(h03_4, 0, 20);
+    memset(h03_5, 0, 20);
+    memset(h03_6, 0, 20);
+    memset(h03_7, 0, 20);
   }
   break;
   }
@@ -1221,8 +1257,24 @@ void Secp256K1::GetHash160_fromX_AVX512(int type, unsigned char prefix,
 
   case P2SH:
   {
-    fprintf(stderr, "[E] Fixme unsupported case\n");
-    exit(0);
+    /* P2SH mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr, "[E] Unsupported P2SH mode in GetHash160_fromX_AVX512\n");
+    memset(h0, 0, 20);
+    memset(h1, 0, 20);
+    memset(h2, 0, 20);
+    memset(h3, 0, 20);
+    memset(h4, 0, 20);
+    memset(h5, 0, 20);
+    memset(h6, 0, 20);
+    memset(h7, 0, 20);
+    memset(h8, 0, 20);
+    memset(h9, 0, 20);
+    memset(h10, 0, 20);
+    memset(h11, 0, 20);
+    memset(h12, 0, 20);
+    memset(h13, 0, 20);
+    memset(h14, 0, 20);
+    memset(h15, 0, 20);
   }
   break;
   }
@@ -1299,8 +1351,40 @@ void Secp256K1::GetHash160_fromX_02_03_AVX512(int type,
 
   case P2SH:
   {
-    fprintf(stderr, "[E] Fixme unsupported case\n");
-    exit(0);
+    /* P2SH mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr, "[E] Unsupported P2SH mode in GetHash160_fromX_02_03_AVX512\n");
+    memset(h02_0, 0, 20);
+    memset(h02_1, 0, 20);
+    memset(h02_2, 0, 20);
+    memset(h02_3, 0, 20);
+    memset(h02_4, 0, 20);
+    memset(h02_5, 0, 20);
+    memset(h02_6, 0, 20);
+    memset(h02_7, 0, 20);
+    memset(h02_8, 0, 20);
+    memset(h02_9, 0, 20);
+    memset(h02_10, 0, 20);
+    memset(h02_11, 0, 20);
+    memset(h02_12, 0, 20);
+    memset(h02_13, 0, 20);
+    memset(h02_14, 0, 20);
+    memset(h02_15, 0, 20);
+    memset(h03_0, 0, 20);
+    memset(h03_1, 0, 20);
+    memset(h03_2, 0, 20);
+    memset(h03_3, 0, 20);
+    memset(h03_4, 0, 20);
+    memset(h03_5, 0, 20);
+    memset(h03_6, 0, 20);
+    memset(h03_7, 0, 20);
+    memset(h03_8, 0, 20);
+    memset(h03_9, 0, 20);
+    memset(h03_10, 0, 20);
+    memset(h03_11, 0, 20);
+    memset(h03_12, 0, 20);
+    memset(h03_13, 0, 20);
+    memset(h03_14, 0, 20);
+    memset(h03_15, 0, 20);
   }
   break;
   }
@@ -1398,8 +1482,24 @@ void Secp256K1::GetHash160_AVX512(int type, bool compressed,
   case P2SH:
   case BECH32:
   {
-    fprintf(stderr, "[E] Fixme unsupported case\n");
-    exit(0);
+    /* P2SH/BECH32 mode not implemented - zero output hashes and return without processing */
+    fprintf(stderr, "[E] Unsupported P2SH/BECH32 mode in GetHash160_AVX512\n");
+    memset(h0, 0, 20);
+    memset(h1, 0, 20);
+    memset(h2, 0, 20);
+    memset(h3, 0, 20);
+    memset(h4, 0, 20);
+    memset(h5, 0, 20);
+    memset(h6, 0, 20);
+    memset(h7, 0, 20);
+    memset(h8, 0, 20);
+    memset(h9, 0, 20);
+    memset(h10, 0, 20);
+    memset(h11, 0, 20);
+    memset(h12, 0, 20);
+    memset(h13, 0, 20);
+    memset(h14, 0, 20);
+    memset(h15, 0, 20);
   }
   break;
   }

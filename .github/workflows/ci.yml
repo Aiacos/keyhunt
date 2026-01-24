@@ -203,6 +203,177 @@ jobs:
           path: cppcheck_output.txt
           retention-days: 7
 
+  address-sanitizer:
+    name: AddressSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Build with AddressSanitizer
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          # Build test runner with ASAN (without running tests)
+          mkdir -p obj_asan
+          make run_tests_asan OBJDIR=obj_asan \
+            COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3" \
+            CXXFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -Wall -Wextra -Wno-deprecated-copy -std=gnu++17 -fno-exceptions -Isrc -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer -g -O1" \
+            CFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -Wall -Wextra -Wno-unused-parameter -Wno-unused-result -Isrc -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer -g -O1" \
+            LDFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -fsanitize=address -fsanitize=undefined -Wl,--as-needed" \
+            LTO_FLAGS="" \
+            GPU_CXXFLAGS="" \
+            GPU_OBJS="obj_asan/gpu/gpu_backend_none.o obj_asan/gpu/gpu_autotune.o obj_asan/gpu/multi_gpu_scheduler.o obj_asan/gpu/async_pipeline.o"
+
+      - name: Run tests with AddressSanitizer
+        timeout-minutes: 10
+        run: |
+          export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:print_stats=1:halt_on_error=1"
+          ./run_tests_asan 2>&1 | tee asan_output.txt
+          exit_code=${PIPESTATUS[0]}
+          if [ $exit_code -ne 0 ]; then
+            echo "::error::AddressSanitizer detected memory errors!"
+            exit $exit_code
+          fi
+
+      - name: Upload ASAN results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: asan-results
+          path: asan_output.txt
+          retention-days: 7
+
+  thread-sanitizer:
+    name: ThreadSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Build with ThreadSanitizer
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          # Build test runner with TSAN (without running tests)
+          mkdir -p obj_tsan
+          make run_tests_tsan OBJDIR=obj_tsan \
+            COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3" \
+            CXXFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -Wall -Wextra -Wno-deprecated-copy -std=gnu++17 -fno-exceptions -Isrc -fsanitize=thread -fno-omit-frame-pointer -g -O1" \
+            CFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -Wall -Wextra -Wno-unused-parameter -Wno-unused-result -Isrc -fsanitize=thread -fno-omit-frame-pointer -g -O1" \
+            LDFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -fsanitize=thread -Wl,--as-needed" \
+            LTO_FLAGS="" \
+            GPU_CXXFLAGS="" \
+            GPU_OBJS="obj_tsan/gpu/gpu_backend_none.o obj_tsan/gpu/gpu_autotune.o obj_tsan/gpu/multi_gpu_scheduler.o obj_tsan/gpu/async_pipeline.o"
+
+      - name: Run tests with ThreadSanitizer
+        timeout-minutes: 10
+        run: |
+          export TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1"
+          ./run_tests_tsan 2>&1 | tee tsan_output.txt
+          exit_code=${PIPESTATUS[0]}
+          if [ $exit_code -ne 0 ]; then
+            echo "::error::ThreadSanitizer detected data races!"
+            exit $exit_code
+          fi
+
+      - name: Upload TSAN results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tsan-results
+          path: tsan_output.txt
+          retention-days: 7
+
+  code-coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential lcov
+
+      - name: Build with coverage instrumentation
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          mkdir -p obj_coverage
+          make run_tests_cov OBJDIR=obj_coverage \
+            COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3" \
+            CXXFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -Wall -Wextra -Wno-deprecated-copy -std=gnu++17 -fno-exceptions -Isrc --coverage -fprofile-arcs -ftest-coverage -g -O0" \
+            CFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -Wall -Wextra -Wno-unused-parameter -Wno-unused-result -Isrc --coverage -fprofile-arcs -ftest-coverage -g -O0" \
+            LDFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 --coverage -Wl,--as-needed" \
+            LTO_FLAGS="" \
+            GPU_CXXFLAGS="" \
+            GPU_OBJS="obj_coverage/gpu/gpu_backend_none.o obj_coverage/gpu/gpu_autotune.o obj_coverage/gpu/multi_gpu_scheduler.o obj_coverage/gpu/async_pipeline.o"
+
+      - name: Run tests for coverage
+        timeout-minutes: 10
+        run: |
+          ./run_tests_cov
+
+      - name: Generate coverage report
+        run: |
+          mkdir -p coverage
+          # Capture coverage data
+          lcov --capture --directory obj_coverage --output-file coverage/coverage.info --ignore-errors mismatch 2>/dev/null || \
+            lcov --capture --directory obj_coverage --output-file coverage/coverage.info 2>/dev/null || \
+            echo "lcov capture completed with warnings"
+          # Filter out test files and system headers
+          lcov --remove coverage/coverage.info '/usr/*' '*/tests/*' --output-file coverage/coverage.filtered.info 2>/dev/null || true
+          # Generate summary
+          lcov --summary coverage/coverage.filtered.info 2>/dev/null || true
+
+      - name: Generate HTML report
+        run: |
+          genhtml coverage/coverage.filtered.info --output-directory coverage/html --title "Keyhunt Test Coverage" 2>/dev/null || \
+            echo "genhtml completed with warnings"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/coverage.filtered.info
+          flags: unittests
+          name: keyhunt-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: |
+            coverage/coverage.info
+            coverage/coverage.filtered.info
+            coverage/html/
+          retention-days: 30
+
   check-formatting:
     name: Check Code Style
     runs-on: ubuntu-latest
@@ -230,7 +401,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [build-and-test, build-with-tls, build-legacy, static-analysis]
+    needs: [build-and-test, build-with-tls, build-legacy, static-analysis, address-sanitizer, thread-sanitizer, code-coverage]
     if: always()
 
     steps:
@@ -244,7 +415,10 @@ jobs:
           echo "| Build with TLS | ${{ needs.build-with-tls.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Legacy | ${{ needs.build-legacy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| AddressSanitizer | ${{ needs.address-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ThreadSanitizer | ${{ needs.thread-sanitizer.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Coverage | ${{ needs.code-coverage.result }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Fail if critical jobs failed
-        if: needs.build-and-test.result == 'failure'
+        if: needs.build-and-test.result == 'failure' || needs.address-sanitizer.result == 'failure'
         run: exit 1

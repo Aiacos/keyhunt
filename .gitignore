@@ -33,8 +33,20 @@ analysis.txt
 # Prerequisites
 *.d
 
-# Build output directory
+# Build output directories
 obj/
+obj_asan/
+obj_tsan/
+obj_coverage/
+
+# Test runners
+run_tests
+run_tests_asan
+run_tests_tsan
+run_tests_cov
+
+# Coverage reports
+coverage/
 
 # Object files
 *.o

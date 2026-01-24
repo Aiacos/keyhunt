@@ -152,7 +152,11 @@ bool Secp256K1::ParsePublicKeyHex(char *str,Point &ret,bool &isCompressed) {
 		printf("ParsePublicKeyHex: Error invalid public key specified (66 or 130 character length)\n");
 		return false;
 	}
-	uint8_t type = GetByte(str, 0);
+	int type = GetByte(str, 0);
+	if (type < 0) {
+		printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
+		return false;
+	}
 	switch (type) {
 		case 0x02:
 			if (len != 66) {
@@ -242,8 +246,8 @@ void Secp256K1::GetPublicKeyHex(bool compressed, Point &pubKey,char *dst){
 char* Secp256K1::GetPublicKeyRaw(bool compressed, Point &pubKey) {
   char *ret = (char*) malloc(65);
   if(ret == NULL) {
-    ::fprintf(stderr,"Can't alloc memory\n");
-    exit(0);
+    /* Return NULL on allocation failure instead of exit() - let caller handle */
+    return NULL;
   }
   if (!compressed) {
     //Uncompressed public key
@@ -276,17 +280,18 @@ void Secp256K1::GetPublicKeyRaw(bool compressed, Point &pubKey,char *dst) {
   }
 }
 
-uint8_t Secp256K1::GetByte(char *str, int idx) {
+/* GetByte now returns -1 on error instead of calling exit() */
+int Secp256K1::GetByte(char *str, int idx) {
   char tmp[3];
   int  val;
   tmp[0] = str[2 * idx];
   tmp[1] = str[2 * idx + 1];
   tmp[2] = 0;
   if (sscanf(tmp, "%X", &val) != 1) {
-    printf("ParsePublicKeyHex: Error invalid public key specified (unexpected hexadecimal digit)\n");
-    exit(-1);
+    /* Return -1 to indicate error instead of exit() */
+    return -1;
   }
-  return (uint8_t)val;
+  return (int)(uint8_t)val;
 }
 
 
@@ -600,8 +605,12 @@ void Secp256K1::GetHash160(int type,bool compressed,
 		
 		break;
 			case P2SH:
-			printf("Unsoported P2SH\n");
-			exit(0);
+			/* P2SH mode not implemented - zero output hashes and return without processing */
+			fprintf(stderr,"[E] Unsupported P2SH mode in GetHash160\n");
+			memset(h0, 0, 20);
+			memset(h1, 0, 20);
+			memset(h2, 0, 20);
+			memset(h3, 0, 20);
 			/*
 			// Redeem Script (1 to 1 P2SH)
 			unsigned char script[64];
@@ -639,8 +648,12 @@ void Secp256K1::GetHash160_fromX(int type,unsigned char prefix,
 		break;
 
 		case P2SH:
-			fprintf(stderr,"[E] Fixme unsopported case");
-			exit(0);
+			/* P2SH mode not implemented - zero output hashes and return without processing */
+			fprintf(stderr,"[E] Unsupported P2SH mode in GetHash160_fromX\n");
+			memset(h0, 0, 20);
+			memset(h1, 0, 20);
+			memset(h2, 0, 20);
+			memset(h3, 0, 20);
 		break;
 	}
 }

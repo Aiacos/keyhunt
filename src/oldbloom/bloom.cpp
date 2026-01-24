@@ -22,6 +22,13 @@
 #include <unistd.h>
 #include <pthread.h>
 
+/* Suppress deprecation warnings within this file - the whole module is deprecated
+ * and internal function calls are expected to use deprecated APIs */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 #include "oldbloom.h"
 #include "../xxhash/xxhash.h"
 
@@ -307,3 +314,7 @@ const char * oldbloom_version()
 {
   return MAKESTRING(BLOOM_VERSION);
 }
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif

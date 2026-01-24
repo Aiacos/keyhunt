@@ -5,8 +5,65 @@
  *  This file is under BSD license. See LICENSE file.
  */
 
+/**
+ * @file oldbloom.h
+ * @brief DEPRECATED: Legacy bloom filter implementation
+ *
+ * This implementation is DEPRECATED and kept for backward compatibility only.
+ * New code should use the modern bloom filter from bloom/bloom.h instead.
+ *
+ * == MIGRATION GUIDE ==
+ *
+ * The new bloom filter (bloom/bloom.h) provides:
+ * - Better performance: Cache-aligned memory allocation, SIMD prefetching
+ * - Memory pool support: Reduced allocation overhead for multiple filters
+ * - No internal locking: Thread safety should be managed externally for better performance
+ * - Smaller struct size: No mutex/checksum overhead
+ *
+ * To migrate from oldbloom to bloom:
+ *
+ * 1. Include the new header:
+ *    - OLD: #include "oldbloom/oldbloom.h"
+ *    - NEW: #include "bloom/bloom.h"
+ *
+ * 2. Update struct type:
+ *    - OLD: struct oldbloom myfilter;
+ *    - NEW: struct bloom myfilter;
+ *
+ * 3. Update function calls (remove "old" prefix):
+ *    - OLD: oldbloom_init2(&filter, entries, error);
+ *    - NEW: bloom_init2(&filter, entries, error);
+ *
+ *    - OLD: oldbloom_add(&filter, data, len);
+ *    - NEW: bloom_add(&filter, data, len);
+ *
+ *    - OLD: oldbloom_check(&filter, data, len);
+ *    - NEW: bloom_check(&filter, data, len);
+ *
+ *    - OLD: oldbloom_free(&filter);
+ *    - NEW: bloom_free(&filter);
+ *
+ * 4. If using thread-safe operations, manage locking externally:
+ *    - OLD: (automatic mutex in oldbloom_add)
+ *    - NEW: pthread_mutex_lock(&my_mutex);
+ *           bloom_add(&filter, data, len);
+ *           pthread_mutex_unlock(&my_mutex);
+ *
+ * 5. For memory pools (multiple filters):
+ *    - NEW: bloom_init_with_pool(&filter, entries, error, pool);
+ *
+ * @deprecated Use bloom/bloom.h for new code. This header will be removed in v4.0.
+ */
+
 #ifndef _OLDBLOOM_H
 #define _OLDBLOOM_H
+
+/* Mark entire API as deprecated */
+#if defined(__GNUC__) || defined(__clang__)
+#define OLDBLOOM_DEPRECATED __attribute__((deprecated("Use bloom/bloom.h instead")))
+#else
+#define OLDBLOOM_DEPRECATED
+#endif
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include <windows.h>
@@ -85,6 +142,7 @@ int oldbloom_savecustom(struct oldbloom * bloom, char * filename);
  *     1 - on failure
  *
  */
+OLDBLOOM_DEPRECATED
 int oldbloom_init2(struct oldbloom * bloom, uint64_t entries, long double error);
 
 
@@ -93,6 +151,7 @@ int oldbloom_init2(struct oldbloom * bloom, uint64_t entries, long double error)
  * Kept for compatibility with libbloom v.1. To be removed in v3.0.
  *
  */
+OLDBLOOM_DEPRECATED
 int oldbloom_init(struct oldbloom * bloom, uint64_t entries, long double error);
 
 
@@ -113,6 +172,7 @@ int oldbloom_init(struct oldbloom * bloom, uint64_t entries, long double error);
  *    -1 - bloom not initialized
  *
  */
+OLDBLOOM_DEPRECATED
 int oldbloom_check(struct oldbloom * bloom, const void * buffer, int len);
 
 
@@ -134,6 +194,7 @@ int oldbloom_check(struct oldbloom * bloom, const void * buffer, int len);
  *    -1 - bloom not initialized
  *
  */
+OLDBLOOM_DEPRECATED
 int oldbloom_add(struct oldbloom * bloom, const void * buffer, int len);
 
 
@@ -141,6 +202,7 @@ int oldbloom_add(struct oldbloom * bloom, const void * buffer, int len);
  * Print (to stdout) info about this bloom filter. Debugging aid.
  *
  */
+OLDBLOOM_DEPRECATED
 void oldbloom_print(struct oldbloom * bloom);
 
 
@@ -157,6 +219,7 @@ void oldbloom_print(struct oldbloom * bloom);
  * Return: none
  *
  */
+OLDBLOOM_DEPRECATED
 void oldbloom_free(struct oldbloom * bloom);
 
 
@@ -175,6 +238,7 @@ void oldbloom_free(struct oldbloom * bloom);
  *     1 - on failure
  *
  */
+OLDBLOOM_DEPRECATED
 int oldbloom_reset(struct oldbloom * bloom);
 
 
@@ -218,6 +282,7 @@ int oldbloom_reset(struct oldbloom * bloom);
  * Return: version string
  *
  */
+OLDBLOOM_DEPRECATED
 const char * oldbloom_version();
 
 #ifdef __cplusplus

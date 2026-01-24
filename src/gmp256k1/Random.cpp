@@ -24,18 +24,24 @@ static int r_state_mt_ready = 0;
 static gmp_randstate_t r_state_mt;
 
 
-void int_randominit()	{
+/**
+ * @brief Initialize the Mersenne Twister random state.
+ * @return 0 on success, -1 if already initialized or RNG unavailable.
+ */
+int int_randominit()	{
 	if(r_state_mt_ready)	{
+		/* Already initialized - return error instead of exit() */
 		fprintf(stderr,"r_state_mt already initialized, file %s, line %i\n",__FILE__,__LINE__ - 1);
-		exit(0);
+		return -1;
 	}
 	mpz_t mpz_seed;
 	int bytes_readed,bytes = 64;
 	unsigned char seed[64];
 	bytes_readed = random_bytes(seed, bytes);
 	if(bytes_readed != bytes)	{
+		/* RNG failure - return error instead of exit() */
 		fprintf(stderr,"Error random_bytes(), file %s, line %i\n",__FILE__,__LINE__ - 2);
-		exit(0);
+		return -1;
 	}
 	mpz_init(mpz_seed);
 	mpz_import(mpz_seed,bytes,1,sizeof(unsigned char),0,0,seed);
@@ -44,12 +50,18 @@ void int_randominit()	{
 	r_state_mt_ready = 1;
 	mpz_clear(mpz_seed);
 	memset(seed,0,bytes);
+	return 0;
 }
 
 void Int::Rand(int nbit)	{
 	if(!r_state_mt_ready)	{
-		fprintf(stderr,"Error Rand(), file %s, line %i\n",__FILE__,__LINE__ - 1);
-		exit(0);
+		/* Auto-initialize if not ready - error message only if init fails */
+		if (int_randominit() != 0) {
+			fprintf(stderr,"Error Rand(): RNG initialization failed, file %s, line %i\n",__FILE__,__LINE__ - 1);
+			/* Set to zero as fallback instead of exit() */
+			mpz_set_ui(num, 0);
+			return;
+		}
 	}
 	mpz_urandomb(num,r_state_mt,nbit);
 	mpz_setbit(num,nbit-1);
@@ -57,8 +69,13 @@ void Int::Rand(int nbit)	{
 
 void Int::Rand(Int *min,Int *max)	{
 	if(!r_state_mt_ready)	{
-		fprintf(stderr,"Error Rand(), file %s, line %i\n",__FILE__,__LINE__ - 1);
-		exit(0);
+		/* Auto-initialize if not ready - error message only if init fails */
+		if (int_randominit() != 0) {
+			fprintf(stderr,"Error Rand(): RNG initialization failed, file %s, line %i\n",__FILE__,__LINE__ - 1);
+			/* Set to min as fallback instead of exit() */
+			this->Set(min);
+			return;
+		}
 	}
 	Int diff(max);
 	diff.Sub(min);
@@ -69,24 +86,26 @@ void Int::Rand(Int *min,Int *max)	{
 
 int random_bytes(unsigned char *buffer,int bytes)	{
     #if defined(_WIN32) || defined(_WIN64)
-        if (!BCryptGenRandom(NULL, buffer, length, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) {
-            fprintf(stderr,"Not BCryptGenRandom available\n");
-			exit(EXIT_FAILURE);
+        if (!BCryptGenRandom(NULL, buffer, bytes, BCRYPT_USE_SYSTEM_PREFERRED_RNG)) {
+            fprintf(stderr,"BCryptGenRandom failed\n");
+            /* Return -1 instead of exit() - let caller handle the error */
+            return -1;
         }
-		else
-			return bytes;
+        return bytes;
 	#elif __unix__ || __unix || __APPLE__ || __MACH__ || __CYGWIN__
 		#ifdef USE_GETRANDOM
-			return syscall(SYS_getrandom, buffer, bytes, GRND_NONBLOCK);
+			int result = syscall(SYS_getrandom, buffer, bytes, GRND_NONBLOCK);
+			return (result < 0) ? -1 : result;
 		#else
             int fd = open("/dev/urandom", O_RDONLY);
             if (fd == -1) {
-				fprintf(stderr,"Not /dev/urandom available\n");
-				exit(EXIT_FAILURE);
+				fprintf(stderr,"/dev/urandom unavailable\n");
+				/* Return -1 instead of exit() - let caller handle the error */
+				return -1;
             }
             ssize_t result = read(fd, buffer, bytes);
             close(fd);
-			return result;
+			return (result < 0) ? -1 : (int)result;
         #endif
     #else
         #error "Unsupported platform"

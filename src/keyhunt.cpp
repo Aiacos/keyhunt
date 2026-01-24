@@ -160,7 +160,7 @@ uint32_t  THREADBPWORKLOAD = 1048576;
 static bool g_avx2_available = false;
 
 // Global configuration (loaded from keyhunt.conf or CLI)
-static keyhunt_config_t g_config;
+static keyhunt_ini_config_t g_config;
 static bool g_config_loaded = false;
 static const char *g_save_config_path = NULL;
 
@@ -586,8 +586,8 @@ typedef struct {
 	Int end_key;
 	Int stride;
 	int64_t target_count;
-	volatile int result;
-	volatile int completed;
+	std::atomic<int> result{0};
+	std::atomic<int> completed{0};
 } gpu_hybrid_args_t;
 
 static void *gpu_hybrid_thread(void *arg);
@@ -750,10 +750,10 @@ int FLAGGPU_FULL = 0;
 // GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
 // Atomic because accessed from multiple threads (CPU workers check this flag)
 std::atomic<int> FLAGGPU_HYBRID{0};
-		// Volatile stats for GPU search
-		volatile uint64_t g_gpu_keys_checked = 0;
-		volatile uint64_t g_gpu_keys_checked_cur = 0;
-		volatile int g_gpu_should_stop = 0;
+		// Atomic stats for GPU search (thread-safe)
+		std::atomic<uint64_t> g_gpu_keys_checked{0};
+		std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
+		std::atomic<int> g_gpu_should_stop{0};
 	// True if we uploaded a GPU-side bloom filter for targets (full mode).
 	static int g_gpu_bloom_uploaded = 0;
 	// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
@@ -795,10 +795,10 @@ std::atomic<int> FLAGGPU_HYBRID{0};
 			// In work-stealing, g_gpu_keys_checked_cur is the in-progress block counter; we
 			// aggregate it with a release/acquire pair so readers never observe a decreasing total.
 			if (!g_work_pool.enabled) {
-				return __atomic_load_n(&g_gpu_keys_checked, __ATOMIC_ACQUIRE);
+				return g_gpu_keys_checked.load(std::memory_order_acquire);
 			}
-			uint64_t cur = __atomic_load_n(&g_gpu_keys_checked_cur, __ATOMIC_ACQUIRE);
-			uint64_t base = __atomic_load_n(&g_gpu_keys_checked, __ATOMIC_ACQUIRE);
+			uint64_t cur = g_gpu_keys_checked_cur.load(std::memory_order_acquire);
+			uint64_t base = g_gpu_keys_checked.load(std::memory_order_acquire);
 			return base + cur;
 		}
 
@@ -1418,7 +1418,7 @@ static void append_progress_info(char *buffer, size_t bufferSize) {
 #ifndef _WIN64
 typedef struct {
 	int period_seconds;
-	volatile int *stop_flag;
+	std::atomic<int> *stop_flag;
 } gpu_full_stats_args_t;
 
 static void *gpu_full_stats_thread(void *arg) {
@@ -1433,17 +1433,17 @@ static void *gpu_full_stats_thread(void *arg) {
 
 	uint64_t prev_total = 0;
 	uint64_t seconds = 0;
-	while (!*(args->stop_flag)) {
+	while (!args->stop_flag->load(std::memory_order_acquire)) {
 		sleep_ms(1000);
 		seconds++;
-		if (*(args->stop_flag)) {
+		if (args->stop_flag->load(std::memory_order_acquire)) {
 			break;
 		}
 		if ((seconds % (uint64_t)period) != 0) {
 			continue;
 		}
 
-		uint64_t total_u64 = g_gpu_keys_checked;
+		uint64_t total_u64 = g_gpu_keys_checked.load(std::memory_order_relaxed);
 		uint64_t delta_u64 = total_u64 - prev_total;
 
 		Int total_i;
@@ -4354,14 +4354,14 @@ int main(int argc, char **argv)	{
 				output_success("Running GPU full search mode...\n");
 	
 					// Reset stats
-					__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
-					__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
-					g_gpu_should_stop = 0;
+					g_gpu_keys_checked.store(0, std::memory_order_release);
+					g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+					g_gpu_should_stop.store(0, std::memory_order_release);
 
 #ifndef _WIN64
 				pthread_t gpu_stats_tid;
 				int gpu_stats_started = 0;
-				volatile int gpu_stats_stop = 0;
+				std::atomic<int> gpu_stats_stop{0};
 				gpu_full_stats_args_t gpu_stats_args;
 				memset(&gpu_stats_args, 0, sizeof(gpu_stats_args));
 				if (OUTPUTSECONDS.IsGreater(&ZERO)) {
@@ -4374,12 +4374,12 @@ int main(int argc, char **argv)	{
 					}
 				}
 #endif
-	
+
 				// Run GPU search
 				int gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
 
 #ifndef _WIN64
-				gpu_stats_stop = 1;
+				gpu_stats_stop.store(1, std::memory_order_release);
 				if (gpu_stats_started) {
 					pthread_join(gpu_stats_tid, NULL);
 				}
@@ -4388,7 +4388,7 @@ int main(int argc, char **argv)	{
 				if (gpu_result >= 0) {
 					// GPU search completed successfully
 					output_success("GPU search finished. Keys found: %d\n", gpu_result);
-					output_success("Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked);
+					output_success("Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked.load(std::memory_order_acquire));
 
 				// Cleanup and exit
 #ifndef _WIN64
@@ -4450,13 +4450,13 @@ int main(int argc, char **argv)	{
 							gpu_hybrid_args.end_key.Set(&n_range_end);
 							gpu_hybrid_args.stride.Set(&stride);
 							gpu_hybrid_args.target_count = N;
-							gpu_hybrid_args.result = 0;
-							gpu_hybrid_args.completed = 0;
+							gpu_hybrid_args.result.store(0, std::memory_order_release);
+							gpu_hybrid_args.completed.store(0, std::memory_order_release);
 
 								// Reset GPU stats
-								__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
-								__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
-								g_gpu_should_stop = 0;
+								g_gpu_keys_checked.store(0, std::memory_order_release);
+								g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+								g_gpu_should_stop.store(0, std::memory_order_release);
 
 							int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
 							if (err != 0) {
@@ -4539,13 +4539,13 @@ int main(int argc, char **argv)	{
 				gpu_hybrid_args.end_key.Set(&gpu_range_end);
 				gpu_hybrid_args.stride.Set(&stride);
 				gpu_hybrid_args.target_count = N;
-			gpu_hybrid_args.result = 0;
-			gpu_hybrid_args.completed = 0;
+			gpu_hybrid_args.result.store(0, std::memory_order_release);
+			gpu_hybrid_args.completed.store(0, std::memory_order_release);
 
 				// Reset GPU stats
-				__atomic_store_n(&g_gpu_keys_checked, 0, __ATOMIC_RELEASE);
-				__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
-				g_gpu_should_stop = 0;
+				g_gpu_keys_checked.store(0, std::memory_order_release);
+				g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+				g_gpu_should_stop.store(0, std::memory_order_release);
 
 			// Start GPU thread (with its fixed range)
 			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
@@ -4899,7 +4899,7 @@ int main(int argc, char **argv)	{
 			printf("\n[+] Waiting for GPU thread to complete...\n");
 			pthread_join(gpu_thread_id, NULL);
 
-			output_success("GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result);
+			output_success("GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result.load(std::memory_order_acquire));
 			output_success("GPU keys checked: %" PRIu64 "\n", gpu_keys_checked_total_u64());
 
 			// Print final adaptive scheduler stats
@@ -8931,10 +8931,10 @@ static void *gpu_hybrid_thread(void *arg) {
 		int found = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
 		if (found > 0) total_found = found;
 		uint64_t elapsed = adaptive_time_ms() - start_time;
-		uint64_t keys = __atomic_load_n(&g_gpu_keys_checked, __ATOMIC_ACQUIRE);
+		uint64_t keys = g_gpu_keys_checked.load(std::memory_order_acquire);
 		adaptive_report_work(WORKER_GPU, keys, elapsed);
-		args->result = total_found;
-		args->completed = 1;
+		args->result.store(total_found, std::memory_order_release);
+		args->completed.store(1, std::memory_order_release);
 		printf("[GPU] Static-range thread completed: %d keys found\n", total_found);
 		return NULL;
 	}
@@ -8985,8 +8985,8 @@ static void *gpu_hybrid_thread(void *arg) {
 	printf("[GPU] Work-stealing thread completed: %lu blocks, %d keys found\n",
 		   (unsigned long)blocks_processed, total_found);
 
-	args->result = total_found;
-	args->completed = 1;
+	args->result.store(total_found, std::memory_order_release);
+	args->completed.store(1, std::memory_order_release);
 
 	return NULL;
 }
@@ -9017,12 +9017,13 @@ static void *gpu_hybrid_thread(void *arg) {
 	config.callback_userdata = NULL;
 
 			if (g_work_pool.enabled) {
-				__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
-				config.keys_checked = &g_gpu_keys_checked_cur;
+				g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+				// Note: reinterpret_cast is safe for lock-free atomics (same memory representation)
+				config.keys_checked = reinterpret_cast<volatile uint64_t*>(&g_gpu_keys_checked_cur);
 			} else {
-				config.keys_checked = &g_gpu_keys_checked;
+				config.keys_checked = reinterpret_cast<volatile uint64_t*>(&g_gpu_keys_checked);
 			}
-		config.should_stop = &g_gpu_should_stop;
+		config.should_stop = reinterpret_cast<volatile int*>(&g_gpu_should_stop);
 		config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
 
 		output_success("Starting GPU full search (ECC + hash160 + matching on GPU)\n");
@@ -9037,9 +9038,9 @@ static void *gpu_hybrid_thread(void *arg) {
 
 					int found = gpu_full_search(&config);
 				if (g_work_pool.enabled) {
-					uint64_t done = __atomic_load_n(&g_gpu_keys_checked_cur, __ATOMIC_ACQUIRE);
-					__atomic_fetch_add(&g_gpu_keys_checked, done, __ATOMIC_RELEASE);
-					__atomic_store_n(&g_gpu_keys_checked_cur, 0, __ATOMIC_RELEASE);
+					uint64_t done = g_gpu_keys_checked_cur.load(std::memory_order_acquire);
+					g_gpu_keys_checked.fetch_add(done, std::memory_order_release);
+					g_gpu_keys_checked_cur.store(0, std::memory_order_release);
 				}
 				return found;
 		}

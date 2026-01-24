@@ -56,40 +56,40 @@ typedef struct {
 
     /* Config file path (if loaded) */
     char loaded_from[256];
-} keyhunt_config_t;
+} keyhunt_ini_config_t;
 
 /**
  * Initialize config with default values
  */
-void config_init(keyhunt_config_t *cfg);
+void config_init(keyhunt_ini_config_t *cfg);
 
 /**
  * Load configuration from file
  * Returns 0 on success, -1 on error (file not found or parse error)
  */
-int config_load(keyhunt_config_t *cfg, const char *filepath);
+int config_load(keyhunt_ini_config_t *cfg, const char *filepath);
 
 /**
  * Save current configuration to file
  * Returns 0 on success, -1 on error
  */
-int config_save(const keyhunt_config_t *cfg, const char *filepath);
+int config_save(const keyhunt_ini_config_t *cfg, const char *filepath);
 
 /**
  * Try to load default config file (./keyhunt.conf)
  * Returns 0 if loaded, -1 if not found (not an error)
  */
-int config_load_default(keyhunt_config_t *cfg);
+int config_load_default(keyhunt_ini_config_t *cfg);
 
 /**
  * Print current configuration to stderr (for debugging)
  */
-void config_print(const keyhunt_config_t *cfg);
+void config_print(const keyhunt_ini_config_t *cfg);
 
 /**
  * Get mode string for config value
  */
-const char* config_mode_str(const keyhunt_config_t *cfg);
+const char* config_mode_str(const keyhunt_ini_config_t *cfg);
 
 /**
  * Parse GPU devices string "0,1,2" into array

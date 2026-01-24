@@ -45,7 +45,8 @@ detect_gpu_arch() {
     fi
 
     # Get compute capability from nvidia-smi
-    local compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1)
+    local compute_cap
+    compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1)
 
     if [[ -z "$compute_cap" ]]; then
         echo -e "${YELLOW}Could not detect GPU compute capability${NC}"
@@ -53,12 +54,15 @@ detect_gpu_arch() {
     fi
 
     # Convert compute capability (e.g., 7.5) to sm_xx format
-    local major=$(echo "$compute_cap" | cut -d. -f1)
-    local minor=$(echo "$compute_cap" | cut -d. -f2)
+    local major
+    local minor
+    major=$(echo "$compute_cap" | cut -d. -f1)
+    minor=$(echo "$compute_cap" | cut -d. -f2)
     DETECTED_GPU_ARCH="sm_${major}${minor}"
 
     # Get GPU name for display
-    local gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    local gpu_name
+    gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
 
     echo -e "${GREEN}Detected GPU: $gpu_name (Compute $compute_cap -> $DETECTED_GPU_ARCH)${NC}"
     return 0
@@ -84,7 +88,8 @@ find_cuda() {
     for path in "${cuda_paths[@]}"; do
         if [[ -x "$path/bin/nvcc" ]]; then
             CUDA_HOME="$path"
-            local cuda_version=$("$path/bin/nvcc" --version 2>/dev/null | grep "release" | sed 's/.*release \([0-9.]*\).*/\1/')
+            local cuda_version
+            cuda_version=$("$path/bin/nvcc" --version 2>/dev/null | grep "release" | sed 's/.*release \([0-9.]*\).*/\1/')
             echo -e "${GREEN}Found CUDA $cuda_version at: $CUDA_HOME${NC}"
             return 0
         fi
@@ -92,8 +97,9 @@ find_cuda() {
 
     # Check if nvcc is in PATH
     if command -v nvcc &> /dev/null; then
-        CUDA_HOME=$(dirname $(dirname $(which nvcc)))
-        local cuda_version=$(nvcc --version 2>/dev/null | grep "release" | sed 's/.*release \([0-9.]*\).*/\1/')
+        CUDA_HOME=$(dirname "$(dirname "$(which nvcc)")")
+        local cuda_version
+        cuda_version=$(nvcc --version 2>/dev/null | grep "release" | sed 's/.*release \([0-9.]*\).*/\1/')
         echo -e "${GREEN}Found nvcc in PATH (CUDA $cuda_version), CUDA_HOME: $CUDA_HOME${NC}"
         return 0
     fi
@@ -129,7 +135,8 @@ find_compatible_gcc() {
 
     for gcc in "${gcc_paths[@]}"; do
         if [[ -n "$gcc" && -x "$gcc" ]]; then
-            local version=$("$gcc" -dumpversion 2>/dev/null | cut -d. -f1)
+            local version
+            version=$("$gcc" -dumpversion 2>/dev/null | cut -d. -f1)
             if [[ -n "$version" && "$version" -le 14 ]]; then
                 GCC_VERSION="$gcc"
                 echo -e "${GREEN}Found compatible GCC: $GCC_VERSION (version $version)${NC}"
@@ -139,7 +146,8 @@ find_compatible_gcc() {
     done
 
     # Check system GCC version
-    local sys_gcc_version=$(gcc -dumpversion 2>/dev/null | cut -d. -f1)
+    local sys_gcc_version
+    sys_gcc_version=$(gcc -dumpversion 2>/dev/null | cut -d. -f1)
     if [[ -z "$sys_gcc_version" ]]; then
         echo -e "${RED}GCC not found! Please install build-essential or gcc${NC}"
         return 1
@@ -169,8 +177,10 @@ setup_ccbin() {
     CCBIN_DIR="/tmp/ccbin-keyhunt-$$"
     mkdir -p "$CCBIN_DIR"
 
-    local gcc_dir=$(dirname "$GCC_VERSION")
-    local gcc_base=$(basename "$GCC_VERSION" | sed 's/gcc//')
+    local gcc_dir
+    local gcc_base
+    gcc_dir=$(dirname "$GCC_VERSION")
+    gcc_base=$(basename "$GCC_VERSION" | sed 's/gcc//')
 
     ln -sf "$GCC_VERSION" "$CCBIN_DIR/gcc"
     ln -sf "${gcc_dir}/g++${gcc_base}" "$CCBIN_DIR/g++" 2>/dev/null || \

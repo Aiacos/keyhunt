@@ -1,12 +1,15 @@
-#include <cstring>
-#include <cstdio>
-#include <cstdlib>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "util.h"
 
-static void tokenizer_reserve(Tokenizer *t, int min_capacity) {
+/**
+ * @brief Reserve capacity in tokenizer. Returns 0 on success, -1 on allocation failure.
+ */
+static int tokenizer_reserve(Tokenizer *t, int min_capacity) {
 	if (t->capacity >= min_capacity) {
-		return;
+		return 0;
 	}
 	int new_capacity = t->capacity > 0 ? t->capacity : 4;
 	while (new_capacity < min_capacity) {
@@ -14,11 +17,12 @@ static void tokenizer_reserve(Tokenizer *t, int min_capacity) {
 	}
 	char **new_tokens = (char **) realloc(t->tokens, sizeof(char *) * new_capacity);
 	if (new_tokens == NULL) {
-		printf("Out of memory\n");
-		exit(EXIT_FAILURE);
+		/* Return error instead of calling exit() - let caller decide how to handle */
+		return -1;
 	}
 	t->tokens = new_tokens;
 	t->capacity = new_capacity;
+	return 0;
 }
 
 
@@ -94,7 +98,10 @@ void stringtokenizer(char *data,Tokenizer *t)	{
 	trim(data,"\t\n\r :");
 	token = strtok(data," \t:");
 	while(token != NULL)	{
-		tokenizer_reserve(t, t->n + 1);
+		if (tokenizer_reserve(t, t->n + 1) != 0) {
+			/* Allocation failed - stop tokenizing but keep what we have */
+			break;
+		}
 		t->tokens[t->n++] = token;
 		token = strtok(NULL," \t:");
 	}
