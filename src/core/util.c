@@ -126,9 +126,10 @@ char *tohex(char *ptr,int length){
   int offset = 0;
   unsigned char c;
   buffer = (char *) malloc((length * 2)+1);
+  if (buffer == NULL) return NULL;
   for (int i = 0; i <length; i++) {
     c = ptr[i];
-	sprintf((char*) (buffer + offset),"%.2x",c);
+	snprintf((char*) (buffer + offset), 3, "%.2x", c);
 	offset+=2;
   }
   buffer[length*2] = 0;
@@ -140,7 +141,7 @@ void tohex_dst(char *ptr,int length,char *dst)	{
   unsigned char c;
   for (int i = 0; i <length; i++) {
     c = ptr[i];
-	sprintf((char*) (dst + offset),"%.2x",c);
+	snprintf((char*) (dst + offset), 3, "%.2x", c);
 	offset+=2;
   }
   dst[length*2] = 0;

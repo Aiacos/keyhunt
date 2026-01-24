@@ -369,10 +369,14 @@ void ripemd160sse_test() {
   unsigned char m2[64];
   unsigned char m3[64];
 
-  strcpy((char *)m0, "This is a test message to test01");
-  strcpy((char *)m1, "This is a test message to test02");
-  strcpy((char *)m2, "This is a test message to test03");
-  strcpy((char *)m3, "This is a test message to test04");
+  memset(m0, 0, sizeof(m0));
+  memset(m1, 0, sizeof(m1));
+  memset(m2, 0, sizeof(m2));
+  memset(m3, 0, sizeof(m3));
+  strncpy((char *)m0, "This is a test message to test01", sizeof(m0) - 1);
+  strncpy((char *)m1, "This is a test message to test02", sizeof(m1) - 1);
+  strncpy((char *)m2, "This is a test message to test03", sizeof(m2) - 1);
+  strncpy((char *)m3, "This is a test message to test04", sizeof(m3) - 1);
 
   ripemd160_32(m0, ch0);
   ripemd160_32(m1, ch1);

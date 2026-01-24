@@ -1187,10 +1187,14 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             json_add_int(response, sizeof(response), "work_id", work_id);
             json_add_string(response, sizeof(response), "range_start", range_start);
             json_add_string(response, sizeof(response), "range_end", range_end);
-            /* Remove trailing comma */
+            /* Remove trailing comma and close JSON object */
             size_t len = strlen(response);
             if (len > 0 && response[len-1] == ',') response[len-1] = '\0';
-            strcat(response, "}");
+            len = strlen(response);
+            if (len + 2 <= sizeof(response)) {
+                response[len] = '}';
+                response[len + 1] = '\0';
+            }
         } else {
             snprintf(response, sizeof(response), "{\"type\":\"no_work\"}");
         }
@@ -1813,7 +1817,11 @@ int dist_worker_connect(dist_worker_client_t *client) {
     }
     size_t len = strlen(msg);
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
-    strcat(msg, "}");
+    len = strlen(msg);
+    if (len + 2 <= sizeof(msg)) {
+        msg[len] = '}';
+        msg[len + 1] = '\0';
+    }
 
     if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) {
         dist_worker_disconnect(client);
@@ -1952,7 +1960,11 @@ int dist_worker_report_done(dist_worker_client_t *client,
     json_add_double(msg, sizeof(msg), "gpu_speed_mkeys", client->gpu_speed_mkeys);
     size_t len = strlen(msg);
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
-    strcat(msg, "}");
+    len = strlen(msg);
+    if (len + 2 <= sizeof(msg)) {
+        msg[len] = '}';
+        msg[len + 1] = '\0';
+    }
 
     if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) return -1;
 
@@ -1975,7 +1987,11 @@ int dist_worker_report_found(dist_worker_client_t *client,
     json_add_string(msg, sizeof(msg), "address", address);
     size_t len = strlen(msg);
     if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
-    strcat(msg, "}");
+    len = strlen(msg);
+    if (len + 2 <= sizeof(msg)) {
+        msg[len] = '}';
+        msg[len + 1] = '\0';
+    }
 
     if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) return -1;
 

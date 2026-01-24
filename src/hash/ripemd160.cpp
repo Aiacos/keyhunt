@@ -325,7 +325,7 @@ std::string ripemd160_hex(unsigned char *digest) {
   char buf[2 * 20 + 1];
   buf[2 * 20] = 0;
   for (int i = 0; i < 20; i++)
-    sprintf(buf + i * 2, "%02x", (int)digest[i]);
+    snprintf(buf + i * 2, 3, "%02x", (int)digest[i]);
   return std::string(buf);
 
 }

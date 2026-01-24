@@ -421,14 +421,22 @@ void ripemd160avx2_test() {
     unsigned char m0[64], m1[64], m2[64], m3[64];
     unsigned char m4[64], m5[64], m6[64], m7[64];
 
-    strcpy((char *)m0, "Test message 01 for AVX2 RMD160");
-    strcpy((char *)m1, "Test message 02 for AVX2 RMD160");
-    strcpy((char *)m2, "Test message 03 for AVX2 RMD160");
-    strcpy((char *)m3, "Test message 04 for AVX2 RMD160");
-    strcpy((char *)m4, "Test message 05 for AVX2 RMD160");
-    strcpy((char *)m5, "Test message 06 for AVX2 RMD160");
-    strcpy((char *)m6, "Test message 07 for AVX2 RMD160");
-    strcpy((char *)m7, "Test message 08 for AVX2 RMD160");
+    memset(m0, 0, sizeof(m0));
+    memset(m1, 0, sizeof(m1));
+    memset(m2, 0, sizeof(m2));
+    memset(m3, 0, sizeof(m3));
+    memset(m4, 0, sizeof(m4));
+    memset(m5, 0, sizeof(m5));
+    memset(m6, 0, sizeof(m6));
+    memset(m7, 0, sizeof(m7));
+    strncpy((char *)m0, "Test message 01 for AVX2 RMD160", sizeof(m0) - 1);
+    strncpy((char *)m1, "Test message 02 for AVX2 RMD160", sizeof(m1) - 1);
+    strncpy((char *)m2, "Test message 03 for AVX2 RMD160", sizeof(m2) - 1);
+    strncpy((char *)m3, "Test message 04 for AVX2 RMD160", sizeof(m3) - 1);
+    strncpy((char *)m4, "Test message 05 for AVX2 RMD160", sizeof(m4) - 1);
+    strncpy((char *)m5, "Test message 06 for AVX2 RMD160", sizeof(m5) - 1);
+    strncpy((char *)m6, "Test message 07 for AVX2 RMD160", sizeof(m6) - 1);
+    strncpy((char *)m7, "Test message 08 for AVX2 RMD160", sizeof(m7) - 1);
 
     // Compute reference hashes using scalar version
     ripemd160_32(m0, ch0);
