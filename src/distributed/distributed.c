@@ -1740,8 +1740,9 @@ int dist_worker_init(dist_worker_client_t *client,
     client->socket_fd = -1;
 
     /* Generate worker ID */
-    char hostname[64] = {0};
+    char hostname[48] = {0};  /* Leave room for dash and PID in worker_id */
     gethostname(hostname, sizeof(hostname)-1);
+    hostname[sizeof(hostname)-1] = '\0';
     snprintf(client->worker_id, sizeof(client->worker_id), "%s-%d", hostname, getpid());
 
     return 0;
@@ -2650,6 +2651,8 @@ int dist_federation_connect(dist_coordinator_t *coordinator) {
 }
 
 int dist_federation_process(dist_coordinator_t *coordinator, int timeout_ms) {
+    (void)timeout_ms;  /* Reserved for future use */
+
     if (!coordinator) return -1;
 
     if (coordinator->federation.role == FEDERATION_STANDALONE) {

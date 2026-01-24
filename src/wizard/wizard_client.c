@@ -597,7 +597,7 @@ static int search_range_subprocess(const char *start, const char *end,
                                     double *cpu_speed_mkeys, double *gpu_speed_mkeys,
                                     volatile int *stop_flag,
                                     char *found_key, char *found_addr) {
-    char cmd[4096];
+    char cmd[8192];  /* Large enough for two PATH_MAX paths plus arguments */
     *keys_checked = 0;
     *cpu_speed_mkeys = 0.0;
     *gpu_speed_mkeys = 0.0;

@@ -297,9 +297,20 @@ int wizard_community_fetch(int puzzle_number, community_range_t **ranges, int *c
 
         const puzzle_def_t *puzzle = wizard_get_puzzle(puzzle_number);
         if (puzzle) {
-            /* Simple mapping: rangeId indicates position in puzzle space */
-            snprintf((*ranges)[idx].hex_start, sizeof((*ranges)[idx].hex_start),
-                     "%s%s", puzzle->range_start, (*ranges)[idx].range_id);
+            /* Simple mapping: rangeId indicates position in puzzle space.
+             * Truncate range_id if needed to fit within hex_start buffer. */
+            size_t start_len = strlen(puzzle->range_start);
+            size_t buf_size = sizeof((*ranges)[idx].hex_start);
+            if (start_len < buf_size - 1) {
+                size_t max_id_len = buf_size - start_len - 1;
+                snprintf((*ranges)[idx].hex_start, buf_size,
+                         "%s%.*s", puzzle->range_start,
+                         (int)max_id_len, (*ranges)[idx].range_id);
+            } else {
+                /* range_start is too long, just copy what fits */
+                strncpy((*ranges)[idx].hex_start, puzzle->range_start, buf_size - 1);
+                (*ranges)[idx].hex_start[buf_size - 1] = '\0';
+            }
         }
 
         (*ranges)[idx].scanned_time = time(NULL);
@@ -850,7 +861,7 @@ int wizard_save_local_progress(int puzzle_number,
                                const char *range_end) {
     if (!range_start || !range_end) return -1;
 
-    char dir[512];
+    char dir[480];  /* Leave room for filename in filepath */
     if (get_cache_dir(dir, sizeof(dir)) != 0) {
         return -1;
     }
@@ -869,7 +880,7 @@ int wizard_save_local_progress(int puzzle_number,
 }
 
 int wizard_load_local_progress_count(int puzzle_number) {
-    char dir[512];
+    char dir[480];  /* Leave room for filename in filepath */
     if (get_cache_dir(dir, sizeof(dir)) != 0) {
         return 0;
     }
