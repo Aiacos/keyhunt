@@ -57,6 +57,8 @@
 extern Secp256K1 *secp;
 
 /* Thread-padded counters to avoid false sharing */
+#ifndef THREAD_COUNTER_DEFINED
+#define THREAD_COUNTER_DEFINED
 struct thread_counter {
     uint64_t value;
     uint8_t padding[56];
@@ -66,6 +68,7 @@ struct thread_flag {
     unsigned int value;
     uint8_t padding[60];
 };
+#endif
 
 /* ============================================================================
  * Thread Arguments - New configuration-based threading
@@ -121,9 +124,9 @@ extern Int BSGS_CURRENT;
 extern Point BSGS_P;
 extern Point BSGS_MP;
 extern Point BSGS_MP2;
-extern struct bloom *bloom_bP;
-extern struct bloom *bloom_bP2;
-extern struct bloom *bloom_bP3;
+extern bloom_extended_t *bloom_bP;
+extern bloom_extended_t *bloom_bPx2nd;
+extern bloom_extended_t *bloom_bPx3rd;
 
 /* BSGS algorithm state (defined in keyhunt.cpp) */
 #include <vector>

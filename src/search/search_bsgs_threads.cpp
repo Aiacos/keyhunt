@@ -19,8 +19,9 @@
  */
 
 #include "search_context.h"
-#include "search_common.h"
 #include "search_utils.h"
+#include "../secp256k1/IntGroup.h"
+#include "../platform/platform.h"
 #include "../output.h"
 #include <cstdio>
 #include <cstdlib>
@@ -824,6 +825,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	char *aux_c,*hextemp;
 	Int base_key,keyfound,dy,dyn,_s,_p,intaux;
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
+	struct thread_rand_state rand_state;
 	uint32_t k,l,r,salir,thread_number,entrar,cycles;
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 
@@ -833,6 +835,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -851,7 +854,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 		while base_key is less than n_range_end then:
 	*/
 	do	{
-		r = thread_rand_n(3);
+		r = (uint32_t)thread_rand_n(&rand_state, 3);
 platform_mutex_lock(&bsgs_thread);
 	switch(r)	{
 		case 0:	//TOP
@@ -1306,6 +1309,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	Int intaux;
 	Point pp;
 	Point pn;
+	struct thread_rand_state rand_state;
 	grp->Set(dx);
 
 
@@ -1313,6 +1317,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -1331,7 +1336,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	*/
 	do	{
 
-		r = thread_rand_n(2);
+		r = (uint32_t)thread_rand_n(&rand_state, 2);
 platform_mutex_lock(&bsgs_thread);
 		switch(r)	{
 			case 0:	//TOP

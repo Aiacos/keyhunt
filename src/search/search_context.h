@@ -156,9 +156,19 @@ extern struct bloom *vanity_bloom;
 extern bloom_extended_t bloom;
 
 /* Data arrays */
-/* Defined in search_common.h; forward-declared here for extern */
-struct thread_counter;
-struct thread_flag;
+/* Cache-line padded counters to avoid false sharing */
+#ifndef THREAD_COUNTER_DEFINED
+#define THREAD_COUNTER_DEFINED
+struct thread_counter {
+    uint64_t value;
+    uint8_t padding[56];
+};
+
+struct thread_flag {
+    unsigned int value;
+    uint8_t padding[60];
+};
+#endif
 extern struct thread_counter *steps;
 extern struct thread_flag *ends;
 extern uint64_t N;
@@ -263,7 +273,7 @@ extern struct address_value *addressTable;
 
 extern struct oldbloom oldbloom_bP;
 
-extern struct bloom *bloom_bP;
+extern bloom_extended_t *bloom_bP;
 extern bloom_extended_t *bloom_bPx2nd;
 extern bloom_extended_t *bloom_bPx3rd;
 
