@@ -66,11 +66,9 @@
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
-#include <windows.h>
 #define strcasecmp _stricmp
 #else
 #include <unistd.h>
-#include <pthread.h>
 #include <sys/random.h>
 #include <strings.h>
 #ifdef __linux__
