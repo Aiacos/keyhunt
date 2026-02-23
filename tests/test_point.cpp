@@ -462,6 +462,165 @@ TEST(point_triple) {
 }
 
 /* ============================================================================
+ * Edge Cases: Identity, Infinity, Special Points
+ * ============================================================================ */
+
+TEST(point_edge_cases) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* --- Point at Infinity Tests --- */
+
+    /* Test 1: Point at infinity with z=0 (canonical form) */
+    Point infinity1;
+    Int x_any(12345);
+    Int y_any(67890);
+    Int z_zero(0);
+    infinity1.Set(&x_any, &y_any, &z_zero);
+
+    ASSERT_TRUE(infinity1.isZero());
+
+    /* Test 2: Point at infinity after Clear() */
+    Point infinity2;
+    infinity2.Clear();
+    ASSERT_TRUE(infinity2.isZero());
+    ASSERT_TRUE(infinity2.x.IsZero());
+    ASSERT_TRUE(infinity2.y.IsZero());
+    ASSERT_TRUE(infinity2.z.IsZero());
+
+    /* Test 3: Both infinity representations should be detected as zero */
+    ASSERT_TRUE(infinity1.isZero());
+    ASSERT_TRUE(infinity2.isZero());
+
+    /* --- Identity Element in Group Law --- */
+
+    /* Test 4: G + O = G (where O is point at infinity/identity) */
+    Point result1 = secp.Add(secp.G, infinity2);
+    ASSERT_FALSE(result1.isZero());
+    /* Result should represent the same point as G (though may differ in projective coords) */
+
+    /* Test 5: O + G = G (commutativity with identity) */
+    Point result2 = secp.Add(infinity2, secp.G);
+    ASSERT_FALSE(result2.isZero());
+
+    /* Test 6: O + O = O (identity + identity = identity) */
+    Point result3 = secp.Add(infinity1, infinity2);
+    ASSERT_TRUE(result3.isZero());
+
+    /* Test 7: 2*O = O (doubling identity gives identity) */
+    Point result4 = secp.Double(infinity2);
+    ASSERT_TRUE(result4.isZero());
+
+    /* --- Generator Point Special Properties --- */
+
+    /* Test 8: Generator point should not be zero */
+    ASSERT_FALSE(secp.G.isZero());
+
+    /* Test 9: Generator has z=1 (affine form) */
+    ASSERT_EQ(1, secp.G.z.GetInt64());
+
+    /* Test 10: G - G = O (point minus itself gives identity) */
+    Point negG = secp.Negation(secp.G);
+    Point should_be_zero = secp.Add(secp.G, negG);
+    ASSERT_TRUE(should_be_zero.isZero());
+
+    /* Test 11: -(- G) = G (double negation) */
+    Point doubleNegG = secp.Negation(negG);
+    /* After reduction, should equal G */
+    doubleNegG.Reduce();
+    Point G_reduced = secp.G;
+    G_reduced.Reduce();
+    ASSERT_TRUE(doubleNegG.x.IsEqual(&G_reduced.x));
+    ASSERT_TRUE(doubleNegG.y.IsEqual(&G_reduced.y));
+
+    /* --- Projective Equivalence Tests --- */
+
+    /* Test 12: Same affine point with different z coordinates */
+    /* Point (X, Y, Z) = (2X, 2Y, 2Z) in projective coordinates */
+    Int x_val(100);
+    Int y_val(200);
+    Int z1(1);
+    Point p1(&x_val, &y_val, &z1);
+
+    /* Create equivalent point with z=2: (100*2, 200*2, 1*2) = (200, 400, 2) */
+    Int x_val2;
+    x_val2.Set(&x_val);
+    x_val2.Add(&x_val);  /* x_val2 = 2 * x_val = 200 */
+
+    Int y_val2;
+    y_val2.Set(&y_val);
+    y_val2.Add(&y_val);  /* y_val2 = 2 * y_val = 400 */
+
+    Int z2(2);
+    Point p2(&x_val2, &y_val2, &z2);
+
+    /* Not equal in projective form (different z) */
+    ASSERT_FALSE(p1.equals(p2));
+
+    /* But after reduction to affine, coordinates should match */
+    p1.Reduce();
+    p2.Reduce();
+    ASSERT_TRUE(p1.x.IsEqual(&p2.x));
+    ASSERT_TRUE(p1.y.IsEqual(&p2.y));
+    ASSERT_EQ(1, p1.z.GetInt64());
+    ASSERT_EQ(1, p2.z.GetInt64());
+
+    /* --- Reduce Edge Cases --- */
+
+    /* Test 13: Reduce on point at infinity gives canonical (0,0,0) */
+    Point inf_test;
+    Int x_nonzero(999);
+    Int y_nonzero(888);
+    Int z_zero2(0);
+    inf_test.Set(&x_nonzero, &y_nonzero, &z_zero2);
+
+    inf_test.Reduce();
+    ASSERT_TRUE(inf_test.x.IsZero());
+    ASSERT_TRUE(inf_test.y.IsZero());
+    ASSERT_TRUE(inf_test.z.IsZero());
+    ASSERT_TRUE(inf_test.isZero());
+
+    /* Test 14: Reduce on already-affine point (z=1) is idempotent */
+    Point affine_point;
+    Int x_affine(42);
+    Int y_affine(84);
+    Int z_one(1);
+    affine_point.Set(&x_affine, &y_affine, &z_one);
+
+    Point before_reduce = affine_point;
+    affine_point.Reduce();
+
+    ASSERT_TRUE(affine_point.equals(before_reduce));
+    ASSERT_TRUE(affine_point.x.IsEqual(&x_affine));
+    ASSERT_TRUE(affine_point.y.IsEqual(&y_affine));
+    ASSERT_EQ(1, affine_point.z.GetInt64());
+
+    /* --- Special Arithmetic Edge Cases --- */
+
+    /* Test 15: Verify G is on the curve */
+    ASSERT_TRUE(secp.EC(secp.G));
+
+    /* Test 16: 2G is also on the curve */
+    Point double_g = secp.Double(secp.G);
+    ASSERT_TRUE(secp.EC(double_g));
+
+    /* Test 17: G + 2G = 3G is on the curve */
+    Point triple_g = secp.Add(secp.G, double_g);
+    ASSERT_TRUE(secp.EC(triple_g));
+
+    /* Test 18: Negation of G is on the curve */
+    Point neg_g = secp.Negation(secp.G);
+    ASSERT_TRUE(secp.EC(neg_g));
+
+    /* Test 19: -G has same x coordinate as G, but negated y */
+    neg_g.Reduce();
+    Point g_copy = secp.G;
+    g_copy.Reduce();
+    ASSERT_TRUE(neg_g.x.IsEqual(&g_copy.x));
+    ASSERT_FALSE(neg_g.y.IsEqual(&g_copy.y));  /* y coordinates differ */
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -518,6 +677,9 @@ int run_point_tests(void) {
     RUN_TEST(point_add_direct);
     RUN_TEST(point_double_direct);
     RUN_TEST(point_triple);
+
+    TEST_SECTION("Edge Cases: Identity, Infinity, Special Points");
+    RUN_TEST(point_edge_cases);
 
     return TEST_RESULTS();
 }
