@@ -56,6 +56,8 @@
 #include "cli.h"
 #include "bsgs/bsgs_sort.h"
 #include "sort/sort.h"
+#include "crypto/address_util.h"
+#include "crypto/bloom_init.h"
 
 /*
  * NOTE: search/search_context.h and search/search_utils.h provide the
@@ -580,9 +582,6 @@ void sleep_ms(int milliseconds);
 int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
 int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
 
-void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3);
-void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3);
-
 bool vanityrmdmatch(unsigned char *rmdhash);
 void writevanitykey(bool compress,Int *key);
 int addvanity(char *target);
@@ -612,18 +611,12 @@ typedef struct {
 
 static void *gpu_hybrid_thread(void *arg);
 
-bool isBase58(char c);
-bool isValidBase58String(char *str);
-
 bool readFileAddress(char *fileName);
 bool readFileVanity(char *fileName);
 bool forceReadFileAddress(char *fileName);
 bool forceReadFileAddressEth(char *fileName);
 bool forceReadFileXPoint(char *fileName);
 bool processOneVanity();
-
-bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom);
-bool initBloomFilterExt(bloom_extended_t *bloom_arg, uint64_t items_bloom);
 
 void writeFileIfNeeded(const char *fileName);
 
@@ -652,15 +645,9 @@ void *thread_bPload(void *vargp);
 void *thread_bPload_2blooms(void *vargp);
 #endif
 
-char *pubkeytopubaddress(char *pkey,int length);
-void pubkeytopubaddress_dst(char *pkey,int length,char *dst);
-void rmd160toaddress_dst(char *rmd,char *dst);
 void set_minikey(char *buffer,char *rawbuffer,int length);
 bool increment_minikey_index(char *buffer,char *rawbuffer,int index);
 void increment_minikey_N(char *rawbuffer);
-	
-void KECCAK_256(uint8_t *source, size_t size,uint8_t *dst);
-void generate_binaddress_eth(Point &publickey,unsigned char *dst_address);
 
 int THREADOUTPUT = 0;
 char *bit_range_str_min;
@@ -4809,55 +4796,8 @@ int main(int argc, char **argv)	{
 	platform_mutex_destroy(&bsgs_thread);
 }
 
-void pubkeytopubaddress_dst(char *pkey,int length,char *dst)	{
-	char digest[60];
-	size_t pubaddress_size = 40;
-	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
-	ripemd160_32((const unsigned char*)digest,(unsigned char*)(digest+1));
-	digest[0] = 0;
-	sha256((uint8_t*)digest, 21,(uint8_t*) digest+21);
-	sha256((uint8_t*)digest+21, 32,(uint8_t*) digest+21);
-	if(!b58enc(dst,&pubaddress_size,digest,25)){
-		fprintf(stderr,"error b58enc\n");
-	}
-}
-
-void rmd160toaddress_dst(char *rmd,char *dst){
-	char digest[60];
-	size_t pubaddress_size = 40;
-	digest[0] = byte_encode_crypto;
-	memcpy(digest+1,rmd,20);
-	sha256((uint8_t*)digest, 21,(uint8_t*) digest+21);
-	sha256((uint8_t*)digest+21, 32,(uint8_t*) digest+21);
-	if(!b58enc(dst,&pubaddress_size,digest,25)){
-		fprintf(stderr,"error b58enc\n");
-	}
-}
-
-
-char *pubkeytopubaddress(char *pkey,int length)	{
-	char *pubaddress = (char*) calloc(MAXLENGTHADDRESS+10,1);
-	char *digest = (char*) calloc(60,1);
-	size_t pubaddress_size = MAXLENGTHADDRESS+10;
-	checkpointer((void *)pubaddress,__FILE__,"malloc","pubaddress" ,__LINE__ -1 );
-	checkpointer((void *)digest,__FILE__,"malloc","digest" ,__LINE__ -1 );
-	//digest [000...0]
- 	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
-	//digest [SHA256 32 bytes+000....0]
-	ripemd160_32((const unsigned char*)digest,(unsigned char*)(digest+1));
-	//digest [? +RMD160 20 bytes+????000....0]
-	digest[0] = 0;
-	//digest [0 +RMD160 20 bytes+????000....0]
-	sha256((uint8_t*)digest, 21,(uint8_t*) digest+21);
-	//digest [0 +RMD160 20 bytes+SHA256 32 bytes+....0]
-	sha256((uint8_t*)digest+21, 32,(uint8_t*) digest+21);
-	//digest [0 +RMD160 20 bytes+SHA256 32 bytes+....0]
-	if(!b58enc(pubaddress,&pubaddress_size,digest,25)){
-		fprintf(stderr,"error b58enc\n");
-	}
-	free(digest);
-	return pubaddress;	// pubaddress need to be free by te caller funtion
-}
+/* pubkeytopubaddress_dst, rmd160toaddress_dst, pubkeytopubaddress
+ * moved to crypto/address_util.cpp */
 
 /* cmp_hash20, load_u64_be, load_u32_be moved to sort/sort.cpp */
 
@@ -7015,29 +6955,7 @@ bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 }
 
 /* This function perform the KECCAK Opetation*/
-void KECCAK_256(uint8_t *source, size_t size,uint8_t *dst)	{
-	SHA3_256_CTX ctx;
-	SHA3_256_Init(&ctx);
-	SHA3_256_Update(&ctx,source,size);
-	KECCAK_256_Final(dst,&ctx);
-}
-
-/* This function takes in two parameters:
-
-publickey: a reference to a Point object representing a public key.
-dst_address: a pointer to an unsigned char array where the generated binary address will be stored.
-The function is designed to generate a binary address for Ethereum using the given public key.
-It first extracts the x and y coordinates of the public key as 32-byte arrays, and concatenates them
-to form a 64-byte array called bin_publickey. Then, it applies the KECCAK-256 hashing algorithm to
-bin_publickey to generate the binary address, which is stored in dst_address. */
-
-void generate_binaddress_eth(Point &publickey,unsigned char *dst_address)	{
-	unsigned char bin_publickey[64];
-	publickey.x.Get32Bytes(bin_publickey);
-	publickey.y.Get32Bytes(bin_publickey+32);
-	KECCAK_256(bin_publickey, 64, bin_publickey);
-	memcpy(dst_address,bin_publickey+12,20);
-}
+/* KECCAK_256, generate_binaddress_eth moved to crypto/address_util.cpp */
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 DWORD WINAPI thread_process_bsgs_dance(LPVOID vargp) {
@@ -7816,67 +7734,8 @@ void increment_minikey_N(char *rawbuffer)	{
 }
 
 
-#define BUFFMINIKEY(buff,src) \
-(buff)[ 0] = (uint32_t)src[ 0] << 24 | (uint32_t)src[ 1] << 16 | (uint32_t)src[ 2] << 8 | (uint32_t)src[ 3]; \
-(buff)[ 1] = (uint32_t)src[ 4] << 24 | (uint32_t)src[ 5] << 16 | (uint32_t)src[ 6] << 8 | (uint32_t)src[ 7]; \
-(buff)[ 2] = (uint32_t)src[ 8] << 24 | (uint32_t)src[ 9] << 16 | (uint32_t)src[10] << 8 | (uint32_t)src[11]; \
-(buff)[ 3] = (uint32_t)src[12] << 24 | (uint32_t)src[13] << 16 | (uint32_t)src[14] << 8 | (uint32_t)src[15]; \
-(buff)[ 4] = (uint32_t)src[16] << 24 | (uint32_t)src[17] << 16 | (uint32_t)src[18] << 8 | (uint32_t)src[19]; \
-(buff)[ 5] = (uint32_t)src[20] << 24 | (uint32_t)src[21] << 16 | 0x8000; \
-(buff)[ 6] = 0; \
-(buff)[ 7] = 0; \
-(buff)[ 8] = 0; \
-(buff)[ 9] = 0; \
-(buff)[10] = 0; \
-(buff)[11] = 0; \
-(buff)[12] = 0; \
-(buff)[13] = 0; \
-(buff)[14] = 0; \
-(buff)[15] = 0xB0;	//176 bits => 22 BYTES
-
-
-void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3)	{
-  uint32_t b0[16];
-  uint32_t b1[16];
-  uint32_t b2[16];
-  uint32_t b3[16];
-  BUFFMINIKEY(b0, src0);
-  BUFFMINIKEY(b1, src1);
-  BUFFMINIKEY(b2, src2);
-  BUFFMINIKEY(b3, src3);
-  sha256sse_1B(b0, b1, b2, b3, dst0, dst1, dst2, dst3);
-}
-
-
-#define BUFFMINIKEYCHECK(buff,src) \
-(buff)[ 0] = (uint32_t)src[ 0] << 24 | (uint32_t)src[ 1] << 16 | (uint32_t)src[ 2] << 8 | (uint32_t)src[ 3]; \
-(buff)[ 1] = (uint32_t)src[ 4] << 24 | (uint32_t)src[ 5] << 16 | (uint32_t)src[ 6] << 8 | (uint32_t)src[ 7]; \
-(buff)[ 2] = (uint32_t)src[ 8] << 24 | (uint32_t)src[ 9] << 16 | (uint32_t)src[10] << 8 | (uint32_t)src[11]; \
-(buff)[ 3] = (uint32_t)src[12] << 24 | (uint32_t)src[13] << 16 | (uint32_t)src[14] << 8 | (uint32_t)src[15]; \
-(buff)[ 4] = (uint32_t)src[16] << 24 | (uint32_t)src[17] << 16 | (uint32_t)src[18] << 8 | (uint32_t)src[19]; \
-(buff)[ 5] = (uint32_t)src[20] << 24 | (uint32_t)src[21] << 16 | (uint32_t)src[22] << 8 | 0x80; \
-(buff)[ 6] = 0; \
-(buff)[ 7] = 0; \
-(buff)[ 8] = 0; \
-(buff)[ 9] = 0; \
-(buff)[10] = 0; \
-(buff)[11] = 0; \
-(buff)[12] = 0; \
-(buff)[13] = 0; \
-(buff)[14] = 0; \
-(buff)[15] = 0xB8;	//184 bits => 23 BYTES
-
-void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3)	{
-  uint32_t b0[16];
-  uint32_t b1[16];
-  uint32_t b2[16];
-  uint32_t b3[16];
-  BUFFMINIKEYCHECK(b0, src0);
-  BUFFMINIKEYCHECK(b1, src1);
-  BUFFMINIKEYCHECK(b2, src2);
-  BUFFMINIKEYCHECK(b3, src3);
-  sha256sse_1B(b0, b1, b2, b3, dst0, dst1, dst2, dst3);
-}
+/* BUFFMINIKEY, sha256sse_22, BUFFMINIKEYCHECK, sha256sse_23
+ * moved to crypto/address_util.cpp */
 
 void menu() {
 	printf("\n");
@@ -8496,21 +8355,7 @@ platform_mutex_unlock(&write_keys);
 	free(hextemp);
 }
 
-bool isBase58(char c) {
-    // Define the base58 set
-    const char base58Set[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    // Check if the character is in the base58 set
-    return strchr(base58Set, c) != NULL;
-}
-
-bool isValidBase58String(char *str)	{
-	int len = strlen(str);
-	bool continuar = true;
-	for (int i = 0; i < len && continuar; i++) {
-		continuar = isBase58(str[i]);
-	}
-	return continuar;
-}
+/* isBase58, isValidBase58String moved to crypto/address_util.cpp */
 
 bool processOneVanity()	{
 	int i,k;
@@ -9018,124 +8863,7 @@ bool forceReadFileXPoint(char *fileName)	{
 	I write this as a function because i have the same segment of code in 3 different functions
 */
 
-bool initBloomFilter(struct bloom *bloom_arg,uint64_t items_bloom)	{
-	bool r = true;
-	output_success("Bloom filter for %" PRIu64 " elements.\n",items_bloom);
-	if(items_bloom <= 10000)	{
-		if(bloom_init2(bloom_arg,10000,0.000001) == 1){
-			output_error("error bloom_init for 10000 elements.\n");
-			r = false;
-		}
-	}
-	else	{
-		if(bloom_init2(bloom_arg,FLAGBLOOMMULTIPLIER*items_bloom,0.000001)	== 1){
-			output_error("error bloom_init for %" PRIu64 " elements.\n",items_bloom);
-			r = false;
-		}
-	}
-	output_success("Loading data to the bloomfilter total: %.2f MB\n",(double)(((double) bloom_arg->bytes)/(double)1048576));
-
-	// Memory check: verify bloom filter fits in available RAM
-	if(r) {
-		uint64_t bloom_mb = bloom_arg->bytes / (1024 * 1024);
-		uint64_t available_ram_mb = g_sysinfo.ram_available;
-		uint64_t safe_limit_mb = (available_ram_mb * 80) / 100; // 80% safety margin
-
-		if(bloom_mb > safe_limit_mb) {
-			fprintf(stderr,"\n");
-			output_warning("========================================================\n");
-			output_warning("INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
-			output_warning("========================================================\n");
-			output_warning("Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb/1024);
-			output_warning("Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb/1024);
-			output_warning("Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
-			output_warning("\n");
-			output_warning("Current settings:\n");
-			output_warning("  Items:      %" PRIu64 "\n", items_bloom);
-			output_warning("  Multiplier: %d (-z parameter)\n", FLAGBLOOMMULTIPLIER);
-			output_warning("  Total bloom elements: %" PRIu64 "\n", FLAGBLOOMMULTIPLIER*items_bloom);
-			output_warning("\n");
-			output_warning("SUGGESTIONS:\n");
-			output_warning("--------------------------------------------------------\n");
-
-			// Calculate optimal multiplier that fits
-			int suggested_multiplier = (int)(safe_limit_mb * 1024 * 1024 / items_bloom / 3.59);
-			if(suggested_multiplier < 1) suggested_multiplier = 1;
-
-			output_warning("Try reducing -z parameter to: %d\n", suggested_multiplier);
-			output_warning("  Command: add -z %d to your command line\n", suggested_multiplier);
-			output_warning("  This will use ~%" PRIu64 " MB\n",
-				(uint64_t)(items_bloom * suggested_multiplier * 3.59 / 1024 / 1024));
-			output_warning("\n");
-			output_warning("Or reduce the number of items in your input file\n");
-			output_warning("========================================================\n\n");
-
-			// Free the bloom filter we just allocated
-			bloom_free(bloom_arg);
-			bloom_arg->bf = NULL;
-
-			r = false;
-		}
-		else {
-			// Show memory usage info
-			double percent_used = (double)bloom_mb * 100.0 / (double)available_ram_mb;
-			output_info("Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
-				bloom_mb, available_ram_mb, percent_used);
-		}
-	}
-
-	return r;
-}
-
-/*
- * Initialize bloom filter using the fast extended wrapper
- * This provides ~2x speedup on bloom lookups
- */
-bool initBloomFilterExt(bloom_extended_t *bloom_arg, uint64_t items_bloom) {
-	bool r = true;
-	uint64_t effective_items = items_bloom <= 10000 ? 10000 : FLAGBLOOMMULTIPLIER * items_bloom;
-
-	output_success("Bloom filter for %" PRIu64 " elements.\n", items_bloom);
-
-	if (bloom_ext_init(bloom_arg, effective_items, 0.000001) != 0) {
-		output_error("error bloom_init for %" PRIu64 " elements.\n", effective_items);
-		return false;
-	}
-
-	uint64_t bloom_bytes = bloom_ext_bytes(bloom_arg);
-	output_success("Loading data to the bloomfilter total: %.2f MB\n", (double)bloom_bytes / 1048576.0);
-
-	if (bloom_ext_is_fast(bloom_arg)) {
-		output_success("Using FAST bloom filter (XXH3 + bitmask optimization)\n");
-	}
-
-	// Memory check
-	uint64_t bloom_mb = bloom_bytes / (1024 * 1024);
-	uint64_t available_ram_mb = g_sysinfo.ram_available;
-	uint64_t safe_limit_mb = (available_ram_mb * 80) / 100;
-
-	if (bloom_mb > safe_limit_mb) {
-		fprintf(stderr, "\n");
-		output_warning("========================================================\n");
-		output_warning("INSUFFICIENT MEMORY FOR BLOOM FILTER\n");
-		output_warning("========================================================\n");
-		output_warning("Bloom filter: %" PRIu64 " MB (~%.1f GB)\n", bloom_mb, (double)bloom_mb / 1024);
-		output_warning("Available:    %" PRIu64 " MB (~%.1f GB)\n", available_ram_mb, (double)available_ram_mb / 1024);
-		output_warning("Safe limit:   %" PRIu64 " MB (80%% of available)\n", safe_limit_mb);
-		output_warning("\n");
-		output_warning("Try reducing -z parameter or input file size\n");
-		output_warning("========================================================\n\n");
-
-		bloom_ext_free(bloom_arg);
-		r = false;
-	} else {
-		double percent_used = (double)bloom_mb * 100.0 / (double)available_ram_mb;
-		output_info("Memory check: %" PRIu64 " MB bloom filter, %" PRIu64 " MB available (%.1f%% used)\n",
-			bloom_mb, available_ram_mb, percent_used);
-	}
-
-	return r;
-}
+/* initBloomFilter, initBloomFilterExt moved to crypto/bloom_init.cpp */
 
 void writeFileIfNeeded(const char *fileName)	{
 	//printf("[D] FLAGSAVEREADFILE %i, FLAGREADEDFILE1 %i\n",FLAGSAVEREADFILE,FLAGREADEDFILE1);
