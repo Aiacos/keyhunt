@@ -75,7 +75,7 @@ extern thread_local bool cpu_cached_block_valid;
  *
  * These mirror the profiling macros defined in keyhunt.cpp.
  * We need local copies since the originals are file-static.
- * The keyhunt_profile_counters_t matches keyhunt.cpp's profile_counters_t
+ * The profile_counters_t matches keyhunt.cpp's profile_counters_t
  * layout (which differs from search_utils.h's version).
  * ============================================================================ */
 
@@ -86,10 +86,10 @@ typedef struct {
 	uint64_t ns_binsearch;
 	uint64_t ns_write;
 	uint64_t keys;
-} keyhunt_profile_counters_t;
+} profile_counters_t;
 
 extern bool g_profile_enabled;
-extern thread_local keyhunt_profile_counters_t *tls_prof;
+extern thread_local profile_counters_t *tls_prof;
 
 /* High-resolution monotonic time in nanoseconds */
 static inline uint64_t kh_profile_now_ns(void) {
@@ -118,7 +118,7 @@ struct kh_profile_scope_t {
 
 #define KH_PROF_PTR() ((__builtin_expect(g_profile_enabled, 0) && tls_prof) ? tls_prof : NULL)
 #define KH_PROF_SCOPE(field) kh_profile_scope_t _kh_prof_scope_##__LINE__(KH_PROF_PTR() ? &KH_PROF_PTR()->field : NULL)
-#define KH_PROF_ADD_KEYS(n) do { keyhunt_profile_counters_t *p = KH_PROF_PTR(); if (p) p->keys += (uint64_t)(n); } while(0)
+#define KH_PROF_ADD_KEYS(n) do { profile_counters_t *p = KH_PROF_PTR(); if (p) p->keys += (uint64_t)(n); } while(0)
 
 /* profile_set_thread: sets tls_prof for the current thread. Defined in keyhunt.cpp. */
 extern void profile_set_thread(int idx);
@@ -658,7 +658,7 @@ void *thread_process(void *vargp)	{
 						startP = secp->ComputePublicKey(&key_center);
 					}
 
-				keyhunt_profile_counters_t *prof = KH_PROF_PTR();
+				profile_counters_t *prof = KH_PROF_PTR();
 				const uint64_t ec_start = prof ? kh_profile_now_ns() : 0;
 
 				for(i = 0; i < hLength; i++) {

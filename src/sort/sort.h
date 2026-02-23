@@ -22,10 +22,6 @@
 /* Forward declarations for types defined in keyhunt.cpp */
 struct address_value;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* ============================================================================
  * Sorting Functions
  * ============================================================================ */
@@ -117,9 +113,5 @@ void _myheapsort(struct address_value *arr, int64_t n);
  *   Index of match if found, -1 otherwise
  */
 int searchbinary(struct address_value *buffer, char *data, int64_t array_length);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* SORT_H */
