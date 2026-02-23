@@ -5,6 +5,7 @@
  * - Batch context initialization and cleanup
  * - Memory allocation and alignment
  * - Bloom filter integration
+ * - Batch point computation
  * - SIMD capability detection
  */
 
@@ -438,6 +439,157 @@ TEST(bsgs_batch_reuse) {
 }
 
 /* ============================================================================
+ * Batch Point Computation Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_compute_points_null_context) {
+    /* Should not crash with NULL context */
+    Point startP, GSn, _2GSn;
+    bsgs_batch_compute_points(NULL, &startP, &GSn, &_2GSn, 512);
+    ASSERT_TRUE(1);  /* If we get here, it didn't crash */
+}
+
+TEST(bsgs_batch_compute_points_uninitialized) {
+    bsgs_batch_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+
+    Point startP, GSn, _2GSn;
+    /* Should not crash with uninitialized context */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 512);
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_batch_compute_points_null_startP) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point GSn, _2GSn;
+    /* Should not crash with NULL startP */
+    bsgs_batch_compute_points(&ctx, NULL, &GSn, &_2GSn, 512);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_null_GSn) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, _2GSn;
+    /* Should not crash with NULL GSn */
+    bsgs_batch_compute_points(&ctx, &startP, NULL, &_2GSn, 512);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_null_2GSn) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn;
+    /* Should not crash with NULL _2GSn */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, NULL, 512);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_zero_length) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn, _2GSn;
+    /* Should handle zero length */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 0);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_small_length) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn, _2GSn;
+    /* Test with small hLength */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 16);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_typical_length) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn, _2GSn;
+    /* Test with typical hLength (CPU_GRP_SIZE/2 - 1) */
+    int typical_length = 512;  /* Common value for CPU_GRP_SIZE=1024 */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, typical_length);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_large_length) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn, _2GSn;
+    /* Test with large hLength */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 2048);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_negative_length) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn, _2GSn;
+    /* Should handle negative length gracefully */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, -1);
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_multiple_calls) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    Point startP, GSn, _2GSn;
+
+    /* Multiple sequential calls should not crash */
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 256);
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 512);
+    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 128);
+
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_compute_points_different_batch_sizes) {
+    Point startP, GSn, _2GSn;
+    int batch_sizes[] = {64, 128, 256, 512, 1024};
+
+    for (int i = 0; i < 5; i++) {
+        bsgs_batch_ctx_t ctx;
+        bsgs_batch_init(&ctx, batch_sizes[i]);
+
+        /* Test with each batch size */
+        bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, batch_sizes[i] / 2 - 1);
+
+        bsgs_batch_free(&ctx);
+    }
+
+    ASSERT_TRUE(1);
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -491,6 +643,20 @@ int run_bsgs_ops_tests(void) {
     TEST_SECTION("Edge Cases");
     RUN_TEST(bsgs_batch_bloom_check_max_batch);
     RUN_TEST(bsgs_batch_reuse);
+
+    TEST_SECTION("Batch Point Computation");
+    RUN_TEST(bsgs_batch_compute_points_null_context);
+    RUN_TEST(bsgs_batch_compute_points_uninitialized);
+    RUN_TEST(bsgs_batch_compute_points_null_startP);
+    RUN_TEST(bsgs_batch_compute_points_null_GSn);
+    RUN_TEST(bsgs_batch_compute_points_null_2GSn);
+    RUN_TEST(bsgs_batch_compute_points_zero_length);
+    RUN_TEST(bsgs_batch_compute_points_small_length);
+    RUN_TEST(bsgs_batch_compute_points_typical_length);
+    RUN_TEST(bsgs_batch_compute_points_large_length);
+    RUN_TEST(bsgs_batch_compute_points_negative_length);
+    RUN_TEST(bsgs_batch_compute_points_multiple_calls);
+    RUN_TEST(bsgs_batch_compute_points_different_batch_sizes);
 
     return TEST_RESULTS();
 }
