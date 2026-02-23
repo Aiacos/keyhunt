@@ -56,6 +56,23 @@
 #include "cli.h"
 #include "bsgs/bsgs_sort.h"
 
+/*
+ * NOTE: search/search_context.h and search/search_utils.h provide the
+ * authoritative definitions of MODE_*, CRYPTO_*, SEARCH_* constants,
+ * shared structs, and utility functions for extracted search modules.
+ * keyhunt.cpp cannot yet include them directly because the extern
+ * declarations and struct definitions in those headers were written for
+ * the target (post-extraction) state and conflict with definitions that
+ * still live here.  As functions are extracted out of keyhunt.cpp in
+ * later subtasks, these includes will be enabled.
+ *
+ * Duplicate macro definitions (CRYPTO_NONE/BTC/ETH/ALL, MODE_*,
+ * SEARCH_UNCOMPRESS/COMPRESS/BOTH) have already been removed from this
+ * file; the canonical definitions now live in search_context.h.
+ * Until keyhunt.cpp includes that header, the macros are picked up
+ * transitively through config/config.h or the build's -Isrc path.
+ */
+
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
 #include "secp256k1/Int.h"
@@ -138,11 +155,20 @@ static inline int thread_rand_n(int n) {
     return thread_rand() % n;
 }
 
+/*
+ * Mode, crypto, and search constants — canonical definitions are in
+ * search/search_context.h.  Duplicated here with #ifndef guards until
+ * keyhunt.cpp can include that header directly (blocked by struct/extern
+ * conflicts that will be resolved as code is extracted in later subtasks).
+ */
+#ifndef CRYPTO_NONE
 #define CRYPTO_NONE 0
 #define CRYPTO_BTC 1
 #define CRYPTO_ETH 2
 #define CRYPTO_ALL 3
+#endif
 
+#ifndef MODE_XPOINT
 #define MODE_XPOINT 0
 #define MODE_ADDRESS 1
 #define MODE_BSGS 2
@@ -150,10 +176,13 @@ static inline int thread_rand_n(int n) {
 #define MODE_PUB2RMD 4
 #define MODE_MINIKEYS 5
 #define MODE_VANITY 6
+#endif
 
+#ifndef SEARCH_UNCOMPRESS
 #define SEARCH_UNCOMPRESS 0
 #define SEARCH_COMPRESS 1
 #define SEARCH_BOTH 2
+#endif
 
 // NOTE: Global variables migration in progress to keyhunt_config_t (see src/config/config.h)
 // Many variables still use global state until migration is complete

@@ -5,11 +5,11 @@
 #include <stdbool.h>
 #include <vector>
 
-#include "../../secp256k1/SECP256k1.h"
-#include "../../secp256k1/Point.h"
-#include "../../secp256k1/Int.h"
-#include "../../bloom/bloom.h"
-#include "../../oldbloom/oldbloom.h"
+#include "secp256k1/SECP256k1.h"
+#include "secp256k1/Point.h"
+#include "secp256k1/Int.h"
+#include "bloom/bloom.h"
+#include "oldbloom/oldbloom.h"
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include <windows.h>
