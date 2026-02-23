@@ -653,11 +653,7 @@ const char *cryptos[3] = {"btc","eth","all"};
 const char *publicsearch[3] = {"uncompress","compress","both"};
 const char *default_fileName = "addresses.txt";
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-HANDLE* tid = NULL;
-#else
-pthread_t *tid = NULL;
-#endif
+platform_thread_t *tid = NULL;
 platform_mutex_t write_keys;
 platform_mutex_t write_random;
 platform_mutex_t bsgs_thread;
@@ -1915,15 +1911,11 @@ int main(int argc, char **argv)	{
 	size_t rsize;
 
 	// Hybrid mode variables (GPU + CPU parallel)
-	pthread_t gpu_thread_id = 0;
+	platform_thread_t gpu_thread_id = 0;
 	gpu_hybrid_args_t gpu_hybrid_args = {};
 	int gpu_hybrid_started = 0;
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-	DWORD s;
-#else
 	int s;
-#endif
 	platform_mutex_init(&write_keys);
 	platform_mutex_init(&write_random);
 	platform_mutex_init(&bsgs_thread);
@@ -3771,12 +3763,8 @@ int main(int argc, char **argv)	{
 				
 				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
 				fflush(stdout);
-				
-#if defined(_WIN64) && !defined(__CYGWIN__)
-				tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
-#else
-				tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-#endif
+
+				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
 				checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
 				bPload_mutex = (platform_mutex_t*) calloc(NTHREADS,sizeof(platform_mutex_t));
 				checkpointer((void *)bPload_mutex,__FILE__,"calloc","bPload_mutex" ,__LINE__ -1 );
@@ -3808,12 +3796,10 @@ int main(int argc, char **argv)	{
 								bPload_temp_ptr[j].workload = THREADBPWORKLOAD + PERTHREAD_R;
 								salir = 1;
 							}
-#if defined(_WIN64) && !defined(__CYGWIN__)
-							tid[j] = CreateThread(NULL, 0, thread_bPload_2blooms, (void*) &bPload_temp_ptr[j], 0, &s);
-#else
-							s = pthread_create(&tid[j],NULL,thread_bPload_2blooms,(void*) &bPload_temp_ptr[j]);
-							pthread_detach(tid[j]);
-#endif
+							s = platform_thread_create(&tid[j], thread_bPload_2blooms, (void*) &bPload_temp_ptr[j]);
+							if (s == 0) {
+								platform_thread_detach(tid[j]);
+							}
 							BASE+=THREADBPWORKLOAD;
 							THREADCOUNTER++;
 						}
@@ -3875,12 +3861,8 @@ int main(int argc, char **argv)	{
 				
 				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
 				fflush(stdout);
-				
-#if defined(_WIN64) && !defined(__CYGWIN__)
-				tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
-#else
-				tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-#endif
+
+				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
 				checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
 				bPload_mutex = (platform_mutex_t*) calloc(NTHREADS,sizeof(platform_mutex_t));
 				checkpointer((void *)bPload_mutex,__FILE__,"calloc","bPload_mutex" ,__LINE__ -1 );
@@ -3916,12 +3898,10 @@ int main(int argc, char **argv)	{
 								//if(FLAGDEBUG) printf("[D] Salir OK\n");
 							}
 							//if(FLAGDEBUG) output_info("%lu to %lu\n",bPload_temp_ptr[i].from,bPload_temp_ptr[i].to);
-#if defined(_WIN64) && !defined(__CYGWIN__)
-							tid[j] = CreateThread(NULL, 0, thread_bPload, (void*) &bPload_temp_ptr[j], 0, &s);
-#else
-							s = pthread_create(&tid[j],NULL,thread_bPload,(void*) &bPload_temp_ptr[j]);
-							pthread_detach(tid[j]);
-#endif
+							s = platform_thread_create(&tid[j], thread_bPload, (void*) &bPload_temp_ptr[j]);
+							if (s == 0) {
+								platform_thread_detach(tid[j]);
+							}
 							BASE+=THREADBPWORKLOAD;
 							THREADCOUNTER++;
 						}
@@ -4156,11 +4136,7 @@ int main(int argc, char **argv)	{
 		checkpointer((void *)steps,__FILE__,"aligned_calloc","steps" ,__LINE__ -1 );
 		ends = (struct thread_flag *) aligned_calloc(64, NTHREADS, sizeof(struct thread_flag));
 		checkpointer((void *)ends,__FILE__,"aligned_calloc","ends" ,__LINE__ -1 );
-#if defined(_WIN64) && !defined(__CYGWIN__)
-		tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
-#else
-		tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-#endif
+		tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
 		checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
 #ifndef _WIN64
 		if(FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_XPOINT || FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_VANITY) {
@@ -4179,46 +4155,23 @@ int main(int argc, char **argv)	{
 			steps[j].value = 0;
 			s = 0;
 			switch(FLAGBSGSMODE)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
 				case 0:
-					tid[j] = CreateThread(NULL, 0, thread_process_bsgs, (void*)tt, 0, &s);
-					break;
-				case 1:
-					tid[j] = CreateThread(NULL, 0, thread_process_bsgs_backward, (void*)tt, 0, &s);
-					break;
-				case 2:
-					tid[j] = CreateThread(NULL, 0, thread_process_bsgs_both, (void*)tt, 0, &s);
-					break;
-				case 3:
-					tid[j] = CreateThread(NULL, 0, thread_process_bsgs_random, (void*)tt, 0, &s);
-					break;
-				case 4:
-					tid[j] = CreateThread(NULL, 0, thread_process_bsgs_dance, (void*)tt, 0, &s);
-					break;
-				}
-#else
-				case 0:
-					s = pthread_create(&tid[j],NULL,thread_process_bsgs,(void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs, (void *)tt);
 				break;
 				case 1:
-					s = pthread_create(&tid[j],NULL,thread_process_bsgs_backward,(void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_backward, (void *)tt);
 				break;
 				case 2:
-					s = pthread_create(&tid[j],NULL,thread_process_bsgs_both,(void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_both, (void *)tt);
 				break;
 				case 3:
-					s = pthread_create(&tid[j],NULL,thread_process_bsgs_random,(void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_random, (void *)tt);
 				break;
 				case 4:
-					s = pthread_create(&tid[j],NULL,thread_process_bsgs_dance,(void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_dance, (void *)tt);
 				break;
-#endif
 			}
-#if defined(_WIN64) && !defined(__CYGWIN__)
-			if (tid[j] == NULL) {
-#else
 			if(s != 0)	{
-#endif
 				output_error("thread thread_process\n");
 				exit(EXIT_FAILURE);
 			}
@@ -4236,11 +4189,7 @@ int main(int argc, char **argv)	{
 		checkpointer((void *)steps,__FILE__,"aligned_calloc","steps" ,__LINE__ -1 );
 		ends = (struct thread_flag *) aligned_calloc(64, NTHREADS, sizeof(struct thread_flag));
 		checkpointer((void *)ends,__FILE__,"aligned_calloc","ends" ,__LINE__ -1 );
-#if defined(_WIN64) && !defined(__CYGWIN__)
-		tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
-#else
-		tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-#endif
+		tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
 		checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
 #ifndef _WIN64
 			// IMPORTANT: delay work-queue startup until after GPU FULL/HYBRID handling.
@@ -4261,7 +4210,7 @@ int main(int argc, char **argv)	{
 					g_gpu_should_stop.store(0, std::memory_order_release);
 
 #ifndef _WIN64
-				pthread_t gpu_stats_tid;
+				platform_thread_t gpu_stats_tid;
 				int gpu_stats_started = 0;
 				std::atomic<int> gpu_stats_stop{0};
 				gpu_full_stats_args_t gpu_stats_args;
@@ -4270,7 +4219,7 @@ int main(int argc, char **argv)	{
 					gpu_stats_args.period_seconds = OUTPUTSECONDS.GetInt32();
 					gpu_stats_args.stop_flag = &gpu_stats_stop;
 					if (gpu_stats_args.period_seconds > 0) {
-						if (pthread_create(&gpu_stats_tid, NULL, gpu_full_stats_thread, &gpu_stats_args) == 0) {
+						if (platform_thread_create(&gpu_stats_tid, gpu_full_stats_thread, &gpu_stats_args) == 0) {
 							gpu_stats_started = 1;
 						}
 					}
@@ -4283,7 +4232,7 @@ int main(int argc, char **argv)	{
 #ifndef _WIN64
 				gpu_stats_stop.store(1, std::memory_order_release);
 				if (gpu_stats_started) {
-					pthread_join(gpu_stats_tid, NULL);
+					platform_thread_join(gpu_stats_tid, NULL);
 				}
 #endif
 	
@@ -4360,7 +4309,7 @@ int main(int argc, char **argv)	{
 								g_gpu_keys_checked_cur.store(0, std::memory_order_release);
 								g_gpu_should_stop.store(0, std::memory_order_release);
 
-							int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
+							int err = platform_thread_create(&gpu_thread_id, gpu_hybrid_thread, &gpu_hybrid_args);
 							if (err != 0) {
 								output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 								g_work_pool.disable();
@@ -4450,7 +4399,7 @@ int main(int argc, char **argv)	{
 				g_gpu_should_stop.store(0, std::memory_order_release);
 
 			// Start GPU thread (with its fixed range)
-			int err = pthread_create(&gpu_thread_id, NULL, gpu_hybrid_thread, &gpu_hybrid_args);
+			int err = platform_thread_create(&gpu_thread_id, gpu_hybrid_thread, &gpu_hybrid_args);
 			if (err != 0) {
 				output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 				FLAGGPU_HYBRID.store(0, std::memory_order_release);
@@ -4486,31 +4435,17 @@ int main(int argc, char **argv)	{
 			steps[j].value = 0;
 			s = 0;
 			switch(FLAGMODE)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
 				case MODE_ADDRESS:
 				case MODE_XPOINT:
 				case MODE_RMD160:
-					tid[j] = CreateThread(NULL, 0, thread_process, (void*)tt, 0, &s);
+					s = platform_thread_create(&tid[j], thread_process, (void *)tt);
 				break;
 				case MODE_MINIKEYS:
-					tid[j] = CreateThread(NULL, 0, thread_process_minikeys, (void*)tt, 0, &s);
+					s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)tt);
 				break;
 				case MODE_VANITY:
-					tid[j] = CreateThread(NULL, 0, thread_process_vanity, (void*)tt, 0, &s);
+					s = platform_thread_create(&tid[j], thread_process_vanity, (void *)tt);
 				break;
-#else
-				case MODE_ADDRESS:
-				case MODE_XPOINT:
-				case MODE_RMD160:
-					s = pthread_create(&tid[j],NULL,thread_process,(void *)tt);
-				break;
-				case MODE_MINIKEYS:
-					s = pthread_create(&tid[j],NULL,thread_process_minikeys,(void *)tt);
-				break;
-				case MODE_VANITY:
-					s = pthread_create(&tid[j],NULL,thread_process_vanity,(void *)tt);
-				break;
-#endif
 			}
 			if(s != 0)	{
 				output_error("pthread_create thread_process\n");
@@ -4791,7 +4726,7 @@ int main(int argc, char **argv)	{
 		// Wait for GPU thread if hybrid mode was started
 		if (FLAGGPU_HYBRID && gpu_hybrid_started) {
 			printf("\n[+] Waiting for GPU thread to complete...\n");
-			pthread_join(gpu_thread_id, NULL);
+			platform_thread_join(gpu_thread_id, NULL);
 
 			output_success("GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result.load(std::memory_order_acquire));
 			output_success("GPU keys checked: %" PRIu64 "\n", gpu_keys_checked_total_u64());
