@@ -132,6 +132,10 @@ TEST_BSGS_OBJ := $(TEST_OBJDIR)/test_bsgs_integration.o
 TEST_GPU_OBJ := $(TEST_OBJDIR)/test_gpu_backend.o
 TEST_DISTRIBUTED_OBJ := $(TEST_OBJDIR)/test_distributed.o
 TEST_WIZARD_OBJ := $(TEST_OBJDIR)/test_wizard.o
+TEST_HASH_OBJ := $(TEST_OBJDIR)/test_hash.o
+TEST_BSGS_OPS_OBJ := $(TEST_OBJDIR)/test_bsgs_ops.o
+TEST_POINT_OBJ := $(TEST_OBJDIR)/test_point.o
+TEST_INTGROUP_OBJ := $(TEST_OBJDIR)/test_intgroup.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
@@ -139,7 +143,7 @@ TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
                     $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
                     $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
-                    $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS)
+                    $(BSGS_OBJS) $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS)
 
 # Build test object files
 $(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | directories
@@ -160,12 +164,23 @@ $(TEST_DISTRIBUTED_OBJ): tests/test_distributed.cpp tests/test_framework.h | dir
 $(TEST_WIZARD_OBJ): tests/test_wizard.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_HASH_OBJ): tests/test_hash.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_BSGS_OPS_OBJ): tests/test_bsgs_ops.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_POINT_OBJ): tests/test_point.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_INTGROUP_OBJ): tests/test_intgroup.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # All test objects
-TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
-             $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ)
+TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ)
 
 # Build test runner
 run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
