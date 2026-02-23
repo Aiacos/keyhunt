@@ -141,7 +141,7 @@ TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
                     $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
                     $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
-                    $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS)
+                    $(BSGS_OBJS) $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS)
 
 # Build test object files
 $(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | directories

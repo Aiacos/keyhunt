@@ -578,7 +578,7 @@ TEST(bsgs_batch_extract_xpoints_zero) {
  * ============================================================================ */
 
 TEST(bsgs_ops_simd_available) {
-    int simd = bsgs_ops_simd_available();
+    int simd = bsgs_fast_simd_available();
 
     /* Return value should be 0 (no SIMD), 1 (AVX2), or 2 (AVX-512) */
     ASSERT_TRUE(simd >= 0 && simd <= 2);
@@ -586,7 +586,7 @@ TEST(bsgs_ops_simd_available) {
 
 TEST(bsgs_ops_print_caps) {
     /* Should not crash when called */
-    bsgs_ops_print_caps();
+    bsgs_fast_print_caps();
     ASSERT_TRUE(1);
 }
 

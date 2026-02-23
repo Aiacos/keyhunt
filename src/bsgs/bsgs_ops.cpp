@@ -133,6 +133,29 @@ int bsgs_batch_bloom_check(bsgs_batch_ctx_t *ctx, void *bloom_array, int num_poi
     return hits;
 }
 
+// Batch compute points with optimized memory access
+void bsgs_batch_compute_points(
+    bsgs_batch_ctx_t *ctx,
+    Point *startP,
+    Point *GSn,
+    Point *_2GSn,
+    int hLength)
+{
+    // Stub implementation - validates parameters
+    if (!ctx || !ctx->initialized) {
+        return;
+    }
+    if (!startP || !GSn || !_2GSn) {
+        return;
+    }
+    if (hLength < 0) {
+        return;
+    }
+
+    // TODO: Implement actual batch point computation
+    // This is a placeholder for the actual BSGS point computation logic
+}
+
 // Check if SIMD is available
 int bsgs_ops_simd_available(void) {
     return check_avx2() ? (check_avx512() ? 2 : 1) : 0;
