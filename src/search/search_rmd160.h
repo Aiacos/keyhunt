@@ -1,6 +1,8 @@
 /*
  * search_rmd160.h - RIPEMD160 hash mode search implementation
  *
+ * MIGRATION STATUS: Config-aware (utility functions)
+ *
  * RMD160 mode searches for known RIPEMD160 hashes (HASH160) instead of
  * full Bitcoin addresses. This skips Base58Check encoding compared to
  * ADDRESS mode but uses the same hashing pipeline.
@@ -19,6 +21,11 @@
  *
  * The RMD160 checking logic is shared with ADDRESS mode since both
  * use HASH160 = RIPEMD160(SHA256(pubkey)).
+ *
+ * Config migration:
+ * - All functions accept dependencies as parameters (config-ready)
+ * - No direct global variable access
+ * - Functions will indirectly use config once calling code is migrated
  */
 
 #ifndef SEARCH_RMD160_H
