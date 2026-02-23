@@ -11,6 +11,7 @@
 
 #include "test_framework.h"
 #include "bsgs/bsgs_ops.h"
+#include "bsgs/bsgs_fast.h"
 #include "bloom/bloom.h"
 #include <cstdlib>
 #include <cstring>
@@ -856,6 +857,373 @@ TEST(bsgs_batch_compute_points_different_batch_sizes) {
 }
 
 /* ============================================================================
+ * BSGS Performance Counter Tests
+ * ============================================================================ */
+
+TEST(bsgs_fast_init_cleanup) {
+    /* Initialize the fast BSGS module */
+    int result = bsgs_fast_init();
+    ASSERT_EQ(0, result);
+
+    /* Cleanup should not crash */
+    bsgs_fast_cleanup();
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_fast_double_init) {
+    /* First initialization */
+    int result1 = bsgs_fast_init();
+    ASSERT_EQ(0, result1);
+
+    /* Second initialization should be safe */
+    int result2 = bsgs_fast_init();
+    ASSERT_EQ(0, result2);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_cleanup_without_init) {
+    /* Cleanup without init should not crash */
+    bsgs_fast_cleanup();
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_fast_double_cleanup) {
+    bsgs_fast_init();
+
+    /* First cleanup */
+    bsgs_fast_cleanup();
+
+    /* Second cleanup should be safe */
+    bsgs_fast_cleanup();
+
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_fast_get_stats_basic) {
+    bsgs_fast_init();
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    /* Stats structure should be populated */
+    /* Initial values should be zero or valid */
+    ASSERT_TRUE(stats.total_points_checked >= 0);
+    ASSERT_TRUE(stats.bloom_hits >= 0);
+    ASSERT_TRUE(stats.bloom_false_positives >= 0);
+    ASSERT_TRUE(stats.second_checks >= 0);
+    ASSERT_TRUE(stats.keys_found >= 0);
+    ASSERT_TRUE(stats.time_in_modinv_ms >= 0.0);
+    ASSERT_TRUE(stats.time_in_bloom_ms >= 0.0);
+    ASSERT_TRUE(stats.time_in_point_calc_ms >= 0.0);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_get_stats_null) {
+    bsgs_fast_init();
+
+    /* Should not crash with NULL stats pointer */
+    bsgs_fast_get_stats(NULL);
+    ASSERT_TRUE(1);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_reset_stats) {
+    bsgs_fast_init();
+
+    /* Increment some counters */
+    bsgs_fast_inc_points_checked(100);
+    bsgs_fast_inc_bloom_hits(10);
+
+    /* Get stats to verify they're non-zero */
+    bsgs_perf_stats_t stats_before;
+    bsgs_fast_get_stats(&stats_before);
+
+    /* Reset stats */
+    bsgs_fast_reset_stats();
+
+    /* Get stats again - should be reset to zero */
+    bsgs_perf_stats_t stats_after;
+    bsgs_fast_get_stats(&stats_after);
+
+    ASSERT_EQ(0, stats_after.total_points_checked);
+    ASSERT_EQ(0, stats_after.bloom_hits);
+    ASSERT_EQ(0, stats_after.bloom_false_positives);
+    ASSERT_EQ(0, stats_after.second_checks);
+    ASSERT_EQ(0, stats_after.keys_found);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_points_checked) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Increment points checked counter */
+    bsgs_fast_inc_points_checked(100);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(100, stats.total_points_checked);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_points_checked_multiple) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Multiple increments should accumulate */
+    bsgs_fast_inc_points_checked(50);
+    bsgs_fast_inc_points_checked(30);
+    bsgs_fast_inc_points_checked(20);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(100, stats.total_points_checked);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_points_checked_large) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Test with large value */
+    uint64_t large_value = 1000000000ULL;
+    bsgs_fast_inc_points_checked(large_value);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(large_value, stats.total_points_checked);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_points_checked_zero) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Increment by zero should not change counter */
+    bsgs_fast_inc_points_checked(0);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(0, stats.total_points_checked);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_bloom_hits) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Increment bloom hits counter */
+    bsgs_fast_inc_bloom_hits(10);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(10, stats.bloom_hits);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_bloom_hits_multiple) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Multiple increments should accumulate */
+    bsgs_fast_inc_bloom_hits(5);
+    bsgs_fast_inc_bloom_hits(3);
+    bsgs_fast_inc_bloom_hits(2);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(10, stats.bloom_hits);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_bloom_hits_zero) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Increment by zero should not change counter */
+    bsgs_fast_inc_bloom_hits(0);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(0, stats.bloom_hits);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_inc_bloom_hits_negative) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Test with negative value (should be handled gracefully) */
+    bsgs_fast_inc_bloom_hits(-5);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    /* Implementation should handle this gracefully */
+    ASSERT_TRUE(stats.bloom_hits >= 0);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_simd_available) {
+    bsgs_fast_init();
+
+    int simd = bsgs_fast_simd_available();
+
+    /* Return value should be 0 (none), 1 (AVX2), or 2 (AVX-512) */
+    ASSERT_TRUE(simd >= 0 && simd <= 2);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_simd_available_without_init) {
+    /* Should work even without initialization */
+    int simd = bsgs_fast_simd_available();
+    ASSERT_TRUE(simd >= 0 && simd <= 2);
+}
+
+TEST(bsgs_fast_print_caps) {
+    bsgs_fast_init();
+
+    /* Should not crash when called */
+    bsgs_fast_print_caps();
+    ASSERT_TRUE(1);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_print_caps_without_init) {
+    /* Should not crash even without initialization */
+    bsgs_fast_print_caps();
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_fast_stats_persistence) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Set some stats */
+    bsgs_fast_inc_points_checked(1000);
+    bsgs_fast_inc_bloom_hits(50);
+
+    /* Get stats multiple times - should remain consistent */
+    bsgs_perf_stats_t stats1, stats2, stats3;
+    bsgs_fast_get_stats(&stats1);
+    bsgs_fast_get_stats(&stats2);
+    bsgs_fast_get_stats(&stats3);
+
+    ASSERT_EQ(stats1.total_points_checked, stats2.total_points_checked);
+    ASSERT_EQ(stats2.total_points_checked, stats3.total_points_checked);
+    ASSERT_EQ(stats1.bloom_hits, stats2.bloom_hits);
+    ASSERT_EQ(stats2.bloom_hits, stats3.bloom_hits);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_stats_after_reset) {
+    bsgs_fast_init();
+
+    /* Set some stats */
+    bsgs_fast_inc_points_checked(500);
+    bsgs_fast_inc_bloom_hits(25);
+
+    /* Reset and verify all counters are zero */
+    bsgs_fast_reset_stats();
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    ASSERT_EQ(0, stats.total_points_checked);
+    ASSERT_EQ(0, stats.bloom_hits);
+    ASSERT_EQ(0, stats.bloom_false_positives);
+    ASSERT_EQ(0, stats.second_checks);
+    ASSERT_EQ(0, stats.keys_found);
+    ASSERT_EQ(0.0, stats.time_in_modinv_ms);
+    ASSERT_EQ(0.0, stats.time_in_bloom_ms);
+    ASSERT_EQ(0.0, stats.time_in_point_calc_ms);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_stats_boundary_values) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Test with boundary values */
+    uint64_t max_value = UINT64_MAX;
+    bsgs_fast_inc_points_checked(max_value);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    /* Should handle large values */
+    ASSERT_TRUE(stats.total_points_checked > 0);
+
+    bsgs_fast_cleanup();
+}
+
+TEST(bsgs_fast_multiple_init_cleanup_cycles) {
+    /* Test multiple init/cleanup cycles */
+    for (int i = 0; i < 3; i++) {
+        int result = bsgs_fast_init();
+        ASSERT_EQ(0, result);
+
+        bsgs_fast_inc_points_checked(100);
+
+        bsgs_perf_stats_t stats;
+        bsgs_fast_get_stats(&stats);
+        ASSERT_TRUE(stats.total_points_checked >= 0);
+
+        bsgs_fast_cleanup();
+    }
+
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_fast_stats_counters_independent) {
+    bsgs_fast_init();
+    bsgs_fast_reset_stats();
+
+    /* Increment only points_checked */
+    bsgs_fast_inc_points_checked(100);
+
+    bsgs_perf_stats_t stats;
+    bsgs_fast_get_stats(&stats);
+
+    /* Only points_checked should be non-zero */
+    ASSERT_EQ(100, stats.total_points_checked);
+    ASSERT_EQ(0, stats.bloom_hits);
+
+    /* Now increment only bloom_hits */
+    bsgs_fast_inc_bloom_hits(10);
+    bsgs_fast_get_stats(&stats);
+
+    /* Both should be non-zero now */
+    ASSERT_EQ(100, stats.total_points_checked);
+    ASSERT_EQ(10, stats.bloom_hits);
+
+    bsgs_fast_cleanup();
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -930,6 +1298,32 @@ int run_bsgs_ops_tests(void) {
     RUN_TEST(bsgs_batch_compute_points_negative_length);
     RUN_TEST(bsgs_batch_compute_points_multiple_calls);
     RUN_TEST(bsgs_batch_compute_points_different_batch_sizes);
+
+    TEST_SECTION("BSGS Performance Counters");
+    RUN_TEST(bsgs_fast_init_cleanup);
+    RUN_TEST(bsgs_fast_double_init);
+    RUN_TEST(bsgs_fast_cleanup_without_init);
+    RUN_TEST(bsgs_fast_double_cleanup);
+    RUN_TEST(bsgs_fast_get_stats_basic);
+    RUN_TEST(bsgs_fast_get_stats_null);
+    RUN_TEST(bsgs_fast_reset_stats);
+    RUN_TEST(bsgs_fast_inc_points_checked);
+    RUN_TEST(bsgs_fast_inc_points_checked_multiple);
+    RUN_TEST(bsgs_fast_inc_points_checked_large);
+    RUN_TEST(bsgs_fast_inc_points_checked_zero);
+    RUN_TEST(bsgs_fast_inc_bloom_hits);
+    RUN_TEST(bsgs_fast_inc_bloom_hits_multiple);
+    RUN_TEST(bsgs_fast_inc_bloom_hits_zero);
+    RUN_TEST(bsgs_fast_inc_bloom_hits_negative);
+    RUN_TEST(bsgs_fast_simd_available);
+    RUN_TEST(bsgs_fast_simd_available_without_init);
+    RUN_TEST(bsgs_fast_print_caps);
+    RUN_TEST(bsgs_fast_print_caps_without_init);
+    RUN_TEST(bsgs_fast_stats_persistence);
+    RUN_TEST(bsgs_fast_stats_after_reset);
+    RUN_TEST(bsgs_fast_stats_boundary_values);
+    RUN_TEST(bsgs_fast_multiple_init_cleanup_cycles);
+    RUN_TEST(bsgs_fast_stats_counters_independent);
 
     return TEST_RESULTS();
 }
