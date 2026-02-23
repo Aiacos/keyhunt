@@ -65,10 +65,8 @@
 #define OLDBLOOM_DEPRECATED
 #endif
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-#include <windows.h>
-#else
-#endif
+#include "../platform/platform.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -101,11 +99,7 @@ struct oldbloom
   uint8_t checksum[32];
   uint8_t checksum_backup[32];
   uint8_t *bf;
-#if defined(_WIN64) && !defined(__CYGWIN__)
-  HANDLE mutex;
-#else
-  pthread_mutex_t mutex;
-#endif
+  platform_mutex_t mutex;
 };
 /*
 Customs
