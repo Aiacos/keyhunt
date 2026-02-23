@@ -87,30 +87,21 @@ struct thread_args {
  * NOTE: These will be gradually removed as migration to config progresses
  * ============================================================================ */
 
-/* Core search state */
-extern std::atomic<uint64_t> FINISHED_ITEMS;
-extern uint64_t OLDFINISHED_ITEMS;
-extern uint64_t N;
-extern uint64_t u64range;
-
-/* Thread state arrays */
-extern struct thread_counter *steps;
-extern struct thread_flag *ends;
-
-/* Configuration flags */
-extern int FLAGMODE;
-extern int FLAGSEARCH;
-extern int FLAGCRYPTO;
-extern int FLAGENDOMORPHISM;
-extern int FLAGQUIET;
-extern int FLAGDEBUG;
-extern int FLAGRANDOM;
-extern int FLAGSTRIDE;
-extern int NTHREADS;
-extern int KFACTOR;
-
-/* Bloom filter */
-extern bloom_extended_t bloom;
+/* NOTE: Core search state, thread state arrays, configuration flags, and
+ * bloom filter have been migrated to keyhunt_config_t and removed in subtask-4-1.
+ * See MIGRATION_GUIDE.md and REMOVED_GLOBALS_SUMMARY.txt for details.
+ *
+ * Removed extern declarations (variables now in config or using local externs):
+ *   - FINISHED_ITEMS, OLDFINISHED_ITEMS (runtime_state_t)
+ *   - N, u64range (search_config_t)
+ *   - steps, ends (runtime_state_t)
+ *   - FLAGMODE, FLAGSEARCH, FLAGCRYPTO, FLAGENDOMORPHISM (search_config_t)
+ *   - FLAGQUIET, FLAGDEBUG, FLAGRANDOM, FLAGSTRIDE (search_config_t)
+ *   - NTHREADS, KFACTOR (runtime_state_t, bsgs_config_t)
+ *   - bloom (runtime_state_t)
+ *
+ * Functions needing removed variables should use local 'extern' declarations.
+ */
 
 /* BSGS-specific globals */
 extern Int BSGS_M;
@@ -149,15 +140,16 @@ extern bloom_extended_t *bloom_bPx3rd;        /* 3rd level bloom filter */
 /* Byte encode for address generation */
 extern uint8_t byte_encode_crypto;
 
-/* Vanity mode specific */
-extern int vanity_rmd_targets;
-extern int vanity_rmd_total;
-extern int *vanity_rmd_limits;
-extern uint8_t ***vanity_rmd_limit_values_A;
-extern uint8_t ***vanity_rmd_limit_values_B;
-extern int vanity_rmd_minimun_bytes_check_length;
-extern char **vanity_address_targets;
-extern struct bloom *vanity_bloom;
+/* NOTE: Vanity mode variables have been migrated to keyhunt_config_t and
+ * removed in subtask-4-1 (see REMOVED_GLOBALS_SUMMARY.txt section 3).
+ * Functions needing these variables should use local 'extern' declarations.
+ *
+ * Removed extern declarations (now in runtime_state_t):
+ *   - vanity_rmd_targets, vanity_rmd_total, vanity_rmd_limits
+ *   - vanity_rmd_limit_values_A, vanity_rmd_limit_values_B
+ *   - vanity_rmd_minimun_bytes_check_length
+ *   - vanity_address_targets, vanity_bloom
+ */
 
 /* Thread synchronization */
 #if defined(_WIN64) && !defined(__CYGWIN__)
