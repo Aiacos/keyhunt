@@ -155,23 +155,9 @@ static inline int thread_rand_n(int n) {
 #define SEARCH_COMPRESS 1
 #define SEARCH_BOTH 2
 
-uint32_t  THREADBPWORKLOAD = 1048576;
-
-// AVX2 support detection
-static bool g_avx2_available = false;
-
-// Global configuration (loaded from keyhunt.conf or CLI)
-static keyhunt_ini_config_t g_config;
-static bool g_config_loaded = false;
-static const char *g_save_config_path = NULL;
-
-// Progress tracking state
-static progress_state_t g_progress_state;
-static bool g_progress_enabled = false;
-
-#ifndef _WIN64
-static WorkQueue<Int> g_workQueue;
-#endif
+// NOTE: Global variables have been migrated to keyhunt_config_t (see src/config/config.h)
+// THREADBPWORKLOAD, g_avx2_available, g_config, g_progress_state, g_workQueue
+// are now accessed through the config structure passed to functions.
 
 // ---------------------------------------------------------------------------
 // Lightweight internal profiler (enabled via KEYHUNT_PROFILE=1)
@@ -687,26 +673,15 @@ pthread_mutex_t bsgs_thread;
 pthread_mutex_t *bPload_mutex = NULL;
 #endif
 
-uint64_t FINISHED_THREADS_COUNTER = 0;
-uint64_t FINISHED_THREADS_BP = 0;
-uint64_t THREADCYCLES = 0;
-uint64_t THREADCOUNTER = 0;
-/* Use atomic for FINISHED_ITEMS since it's updated from multiple threads */
-std::atomic<uint64_t> FINISHED_ITEMS{0};
-uint64_t OLDFINISHED_ITEMS = -1;
+// NOTE: Thread runtime state variables migrated to runtime_state_t in keyhunt_config_t
+// FINISHED_THREADS_COUNTER->runtime.finished_threads, THREADCYCLES->runtime.thread_cycles
+// THREADCOUNTER->runtime.thread_counter, FINISHED_ITEMS->runtime.finished_items
+// OLDFINISHED_ITEMS->runtime.old_finished_items
 
 uint8_t byte_encode_crypto = 0x00;		/* Bitcoin  */
 
-
-int vanity_rmd_targets = 0;
-int vanity_rmd_total = 0;
-int *vanity_rmd_limits = NULL;
-uint8_t ***vanity_rmd_limit_values_A = NULL,***vanity_rmd_limit_values_B = NULL;
-int vanity_rmd_minimun_bytes_check_length = 999999;
-char **vanity_address_targets = NULL;
-struct bloom *vanity_bloom = NULL;
-
-bloom_extended_t bloom;  /* Fast bloom filter wrapper */
+// NOTE: Vanity and bloom variables migrated to runtime_state_t in keyhunt_config_t
+// vanity_rmd_targets, vanity_rmd_total, vanity_bloom, bloom filter are now in config->runtime
 
 /* Pad shared counters to separate cache lines and reduce false sharing between threads. */
 struct thread_counter {
@@ -723,62 +698,17 @@ struct thread_counter *steps = NULL;
 struct thread_flag *ends = NULL;
 uint64_t N = 0;
 
-uint64_t N_SEQUENTIAL_MAX = 0x100000000;
-uint64_t DEBUGCOUNT = 0x400;
-uint64_t u64range;
+// NOTE: Global FLAG* variables migrated to keyhunt_config_t (see MIGRATION_GUIDE.md)
+// Search config: FLAGMODE->search.mode, FLAGSEARCH->search.key_format, FLAGCRYPTO->search.crypto_type
+//               FLAGENDOMORPHISM->search.endomorphism, FLAGRANDOM->search.random_mode
+//               FLAGQUIET->search.quiet_mode, FLAGDEBUG->search.debug_mode, FLAGMATRIX->search.matrix_mode
+// BSGS config: KFACTOR->bsgs.k_factor, FLAGBLOOMMULTIPLIER->bsgs.bloom_multiplier, FLAGBSGSMODE->bsgs.bsgs_mode
+// GPU config: FLAGGPU->gpu.enabled, FLAGGPU_FULL->gpu.full_mode, FLAGGPU_HYBRID->gpu.hybrid_mode
+// Runtime: NTHREADS->runtime.num_threads, OUTPUTSECONDS->runtime.output_interval_sec
+// All FLAG* variables now accessed through config structure passed to functions.
 
-Int OUTPUTSECONDS;
-
-int FLAGSKIPCHECKSUM = 0;
-int FLAGENDOMORPHISM = 0;
-
-int FLAGBLOOMMULTIPLIER = 1;
-int FLAGVANITY = 0;
-int FLAGBASEMINIKEY = 0;
-int FLAGBSGSMODE = 0;
-int FLAGDEBUG = 0;
-int FLAGQUIET = 0;
-int FLAGMATRIX = 0;
-int FLAGPROGRESSBAR = 0;
-int KFACTOR = 1;
-int MAXLENGTHADDRESS = -1;
-int NTHREADS = 1;
-int FLAGTHREADS = 0;
-
-int FLAGSAVEREADFILE = 0;
-int FLAGREADEDFILE1 = 0;
-int FLAGREADEDFILE2 = 0;
-int FLAGREADEDFILE3 = 0;
-int FLAGREADEDFILE4 = 0;
-int FLAGUPDATEFILE1 = 0;
-
-
-int FLAGSTRIDE = 0;
-int FLAGSEARCH = 2;
-int FLAGBITRANGE = 0;
-int FLAGRANGE = 0;
-int FLAGFILE = 0;
-int FLAGMODE = MODE_ADDRESS;
-int FLAGCRYPTO = 0;
-int FLAGRAWDATA	= 0;
-int FLAGRANDOM = 0;
-int FLAG_N = 0;
-int FLAGPRECALCUTED_P_FILE = 0;
-// GPU usage flag: 0=off, 1=on, -1=auto
-int FLAGGPU = 0;
-// GPU full search mode: 0=off (hash-only), 1=full ECC+hash+match on GPU
-int FLAGGPU_FULL = 0;
-// GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
-// Atomic because accessed from multiple threads (CPU workers check this flag)
-std::atomic<int> FLAGGPU_HYBRID{0};
-		// Atomic stats for GPU search (thread-safe)
-		std::atomic<uint64_t> g_gpu_keys_checked{0};
-		std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
-		std::atomic<int> g_gpu_should_stop{0};
-	// True if we uploaded a GPU-side bloom filter for targets (full mode).
-	static int g_gpu_bloom_uploaded = 0;
-	// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
-	int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
+// NOTE: Functions below need refactoring to accept config parameter (future work)
+// Currently using extern references to globals until complete migration
 
 		static inline bool cpu_use_y_parity_for_compressed_btc() {
 		// Unify CPU-only and HYBRID behavior for BTC compressed-only search:
@@ -789,6 +719,8 @@ std::atomic<int> FLAGGPU_HYBRID{0};
 		// Overrides:
 		//   KEYHUNT_CPU_USE_Y=0|1            (global CPU behavior, default=1)
 		//   KEYHUNT_HYBRID_CPU_USE_Y=0|1     (when in HYBRID+FULL, default=1)
+		// TODO: Accept config parameter instead of using extern globals
+		extern int FLAGMODE, FLAGCRYPTO, FLAGENDOMORPHISM, FLAGSEARCH;
 		if (!((FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
 			  FLAGCRYPTO == CRYPTO_BTC &&
 			  !FLAGENDOMORPHISM &&
@@ -796,6 +728,8 @@ std::atomic<int> FLAGGPU_HYBRID{0};
 			return false;
 		}
 
+		extern std::atomic<int> FLAGGPU_HYBRID;
+		extern int FLAGGPU_FULL;
 		if (FLAGGPU_HYBRID && FLAGGPU_FULL == 1) {
 			const char *env = getenv("KEYHUNT_HYBRID_CPU_USE_Y");
 			if (env && *env) {
@@ -815,6 +749,10 @@ std::atomic<int> FLAGGPU_HYBRID{0};
 			// In static-range modes the backend updates g_gpu_keys_checked directly.
 			// In work-stealing, g_gpu_keys_checked_cur is the in-progress block counter; we
 			// aggregate it with a release/acquire pair so readers never observe a decreasing total.
+			// TODO: Accept config parameter instead of using extern globals
+			extern WorkQueue<Int> g_work_pool;
+			extern std::atomic<uint64_t> g_gpu_keys_checked;
+			extern std::atomic<uint64_t> g_gpu_keys_checked_cur;
 			if (!g_work_pool.enabled) {
 				return g_gpu_keys_checked.load(std::memory_order_acquire);
 			}
@@ -823,21 +761,10 @@ std::atomic<int> FLAGGPU_HYBRID{0};
 			return base + cur;
 		}
 
-int bitrange;
-char *str_N;
-char *range_start;
-char *range_end;
-char *str_stride;
-Int stride;
-
-uint64_t BSGS_XVALUE_RAM = 8;  // Optimized: 8 bytes for uint64_t comparison
-
-// Global system information (for memory checks across all modes)
-system_info_t g_sysinfo;
-gpu_backend_info_t g_gpu_backend_info;
-// Only the first 16 bytes of X are used in BSGS bloom filters to reduce hash cost.
-uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
-uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
+// NOTE: Range and BSGS configuration variables migrated to keyhunt_config_t
+// bitrange->search.bit_range, str_N/range_start/range_end/str_stride->search.*
+// stride computed from config, g_sysinfo/g_gpu_backend_info->autotune.*
+// BSGS_XVALUE_RAM, BSGS_BUFFERXPOINTLENGTH, BSGS_BUFFERREGISTERLENGTH->bsgs.*
 
 static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
@@ -845,10 +772,13 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 		int v = atoi(env);
 		if (v >= 1 && v <= 99) return v;
 	}
+	// TODO: Accept config parameter instead of using extern g_gpu_range_percent
+	extern int g_gpu_range_percent;
 	if (cpu_threads <= 0) return g_gpu_range_percent;
 
 	// Heuristic split based on SM count vs CPU threads.
 	// Goal: avoid the CPU tail becoming the bottleneck in static split.
+	extern gpu_backend_info_t g_gpu_backend_info;
 	const int sms = g_gpu_backend_info.multiprocessors;
 	if (sms > 0) {
 		const double ratio = ((double)sms * 5.0) / (double)cpu_threads;  // empirical scale
@@ -863,6 +793,14 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 
 /*
 BSGS Variables
+NOTE: Many BSGS runtime state variables are kept as module-scoped for now.
+They will be migrated to runtime_state_t in a future refactoring phase.
+
+Configuration variables (bsgs_m, bloom_bP_totalbytes, bsgs_aux, bsgs_point_number)
+have been migrated to bsgs_config_t and runtime_state_t.
+
+Runtime algorithm state (bPtable, bloom_bP*, addressTable, checksums, mutexes)
+remain as module-scoped until BSGS algorithm is fully encapsulated.
 */
 int *bsgs_found;
 std::vector<Point> OriginalPointsBSGS;
@@ -895,17 +833,10 @@ pthread_mutex_t *bloom_bPx2nd_mutex;
 pthread_mutex_t *bloom_bPx3rd_mutex;
 #endif
 
-
-
-
-uint64_t bloom_bP_totalbytes = 0;
-uint64_t bloom_bP2_totalbytes = 0;
-uint64_t bloom_bP3_totalbytes = 0;
-uint64_t bsgs_m = 4194304;
-uint64_t bsgs_m2;
-uint64_t bsgs_m3;
-uint64_t bsgs_aux;
-uint32_t bsgs_point_number;
+// NOTE: BSGS config variables migrated to bsgs_config_t:
+// bloom_bP_totalbytes->bsgs.bloom_bp_bytes, bsgs_m->bsgs.m_value
+// bsgs_m2->bsgs.m2_value, bsgs_m3->bsgs.m3_value
+// bsgs_aux->bsgs.aux_value, bsgs_point_number->bsgs.point_number
 
 const char *str_limits_prefixs[7] = {"Mkeys/s","Gkeys/s","Tkeys/s","Pkeys/s","Ekeys/s","Zkeys/s","Ykeys/s"};
 const char *str_limits[7] = {"1000000","1000000000","1000000000000","1000000000000000","1000000000000000000","1000000000000000000000","1000000000000000000000000"};
