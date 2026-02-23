@@ -13,6 +13,7 @@
 extern "C" {
 #include "src/hash/ripemd160.h"
 #include "src/hash/sha256.h"
+#include "src/hash/sha256_avx2.h"
 }
 
 #include <cstring>
@@ -320,6 +321,241 @@ TEST(ripemd160_avx512_16way) {
     /* Verify all 16 digests match */
     for (int j = 0; j < 16; j++) {
         ASSERT_MEM_EQ(expected[j], digest[j], 20);
+    }
+}
+
+/* ============================================================================
+ * SIMD Variant Equivalence Tests
+ * ============================================================================ */
+
+TEST(ripemd160_simd_equivalence) {
+    /* Verify SSE2, AVX2, and AVX-512 produce identical results */
+    unsigned char input[16][32];
+    unsigned char digest_scalar[16][20];
+    unsigned char digest_sse[4][20];
+    unsigned char digest_avx2[8][20];
+    unsigned char digest_avx512[16][20];
+
+    /* Prepare 16 different 32-byte test inputs */
+    for (int j = 0; j < 16; j++) {
+        for (int i = 0; i < 32; i++) {
+            input[j][i] = (i * 7 + j * 13) & 0xFF;  /* Pseudo-random pattern */
+        }
+    }
+
+    /* Compute reference digests using scalar version */
+    for (int j = 0; j < 16; j++) {
+        ripemd160_32(input[j], digest_scalar[j]);
+    }
+
+    /* Test SSE2 4-way (process first 4 inputs) */
+    ripemd160sse_32(input[0], input[1], input[2], input[3],
+                    digest_sse[0], digest_sse[1], digest_sse[2], digest_sse[3]);
+
+    for (int j = 0; j < 4; j++) {
+        ASSERT_MEM_EQ(digest_scalar[j], digest_sse[j], 20);
+    }
+
+    /* Test AVX2 8-way (if available) */
+    if (ripemd160_avx2_available()) {
+        ripemd160avx2_32(input[0], input[1], input[2], input[3],
+                         input[4], input[5], input[6], input[7],
+                         digest_avx2[0], digest_avx2[1], digest_avx2[2], digest_avx2[3],
+                         digest_avx2[4], digest_avx2[5], digest_avx2[6], digest_avx2[7]);
+
+        for (int j = 0; j < 8; j++) {
+            ASSERT_MEM_EQ(digest_scalar[j], digest_avx2[j], 20);
+        }
+    }
+
+    /* Test AVX-512 16-way (if available) */
+    if (ripemd160_avx512_available()) {
+        ripemd160avx512_32(
+            input[0],  input[1],  input[2],  input[3],
+            input[4],  input[5],  input[6],  input[7],
+            input[8],  input[9],  input[10], input[11],
+            input[12], input[13], input[14], input[15],
+            digest_avx512[0],  digest_avx512[1],  digest_avx512[2],  digest_avx512[3],
+            digest_avx512[4],  digest_avx512[5],  digest_avx512[6],  digest_avx512[7],
+            digest_avx512[8],  digest_avx512[9],  digest_avx512[10], digest_avx512[11],
+            digest_avx512[12], digest_avx512[13], digest_avx512[14], digest_avx512[15]);
+
+        for (int j = 0; j < 16; j++) {
+            ASSERT_MEM_EQ(digest_scalar[j], digest_avx512[j], 20);
+        }
+    }
+}
+
+TEST(ripemd160_simd_stress_test) {
+    /* Stress test with many varied inputs to ensure SIMD equivalence */
+    const int num_batches = 10;
+    unsigned char input[16][32];
+    unsigned char digest_scalar[20];
+    unsigned char digest_simd[20];
+
+    for (int batch = 0; batch < num_batches; batch++) {
+        /* Generate varied test patterns */
+        for (int i = 0; i < 32; i++) {
+            input[0][i] = (batch * 31 + i * 17) & 0xFF;
+        }
+
+        /* Test scalar vs SSE2 */
+        ripemd160_32(input[0], digest_scalar);
+
+        unsigned char d1[20], d2[20], d3[20];
+        ripemd160sse_32(input[0], input[0], input[0], input[0],
+                        digest_simd, d1, d2, d3);
+        ASSERT_MEM_EQ(digest_scalar, digest_simd, 20);
+
+        /* Test scalar vs AVX2 (if available) */
+        if (ripemd160_avx2_available()) {
+            unsigned char d4[20], d5[20], d6[20], d7[20];
+            ripemd160avx2_32(input[0], input[0], input[0], input[0],
+                             input[0], input[0], input[0], input[0],
+                             digest_simd, d1, d2, d3, d4, d5, d6, d7);
+            ASSERT_MEM_EQ(digest_scalar, digest_simd, 20);
+        }
+
+        /* Test scalar vs AVX-512 (if available) */
+        if (ripemd160_avx512_available()) {
+            unsigned char dummies[15][20];
+            ripemd160avx512_32(
+                input[0], input[0], input[0], input[0],
+                input[0], input[0], input[0], input[0],
+                input[0], input[0], input[0], input[0],
+                input[0], input[0], input[0], input[0],
+                digest_simd, dummies[0], dummies[1], dummies[2],
+                dummies[3], dummies[4], dummies[5], dummies[6],
+                dummies[7], dummies[8], dummies[9], dummies[10],
+                dummies[11], dummies[12], dummies[13], dummies[14]);
+            ASSERT_MEM_EQ(digest_scalar, digest_simd, 20);
+        }
+    }
+}
+
+TEST(sha256_simd_equivalence) {
+    /* Verify SSE2 and AVX2 SHA256 produce identical results */
+    uint32_t input[8][8];  /* 8 inputs of 8 uint32_t (32 bytes) */
+    uint8_t digest_scalar[8][32];
+    uint8_t digest_sse[4][32];
+    uint8_t digest_avx2[8][32];
+
+    /* Prepare test inputs (SHA256 uses uint32_t inputs for SIMD versions) */
+    for (int j = 0; j < 8; j++) {
+        for (int i = 0; i < 8; i++) {
+            input[j][i] = (i * 11 + j * 23) ^ (j << 16);
+        }
+    }
+
+    /* Compute reference digests using scalar version */
+    for (int j = 0; j < 8; j++) {
+        sha256((uint8_t*)input[j], 32, digest_scalar[j]);
+    }
+
+    /* Test SSE2 4-way (1 block version) */
+    sha256sse_1B(input[0], input[1], input[2], input[3],
+                 digest_sse[0], digest_sse[1], digest_sse[2], digest_sse[3]);
+
+    for (int j = 0; j < 4; j++) {
+        ASSERT_MEM_EQ(digest_scalar[j], digest_sse[j], 32);
+    }
+
+    /* Test AVX2 8-way (if available) */
+    if (sha256_avx2_available()) {
+        sha256avx2_1B(input[0], input[1], input[2], input[3],
+                      input[4], input[5], input[6], input[7],
+                      digest_avx2[0], digest_avx2[1], digest_avx2[2], digest_avx2[3],
+                      digest_avx2[4], digest_avx2[5], digest_avx2[6], digest_avx2[7]);
+
+        for (int j = 0; j < 8; j++) {
+            ASSERT_MEM_EQ(digest_scalar[j], digest_avx2[j], 32);
+        }
+    }
+}
+
+TEST(sha256_simd_checksum_equivalence) {
+    /* Verify SIMD checksum functions produce identical results */
+    uint32_t input[8][8];
+    uint8_t checksum_scalar[8][4];
+    uint8_t checksum_sse[4][4];
+    uint8_t checksum_avx2[8][4];
+
+    /* Prepare test inputs */
+    for (int j = 0; j < 8; j++) {
+        for (int i = 0; i < 8; i++) {
+            input[j][i] = (i * 5 + j * 7) ^ (j << 8);
+        }
+    }
+
+    /* Compute reference checksums using scalar version */
+    for (int j = 0; j < 8; j++) {
+        sha256_checksum((uint8_t*)input[j], 32, checksum_scalar[j]);
+    }
+
+    /* Test SSE2 4-way checksum */
+    sha256sse_checksum(input[0], input[1], input[2], input[3],
+                       checksum_sse[0], checksum_sse[1],
+                       checksum_sse[2], checksum_sse[3]);
+
+    for (int j = 0; j < 4; j++) {
+        ASSERT_MEM_EQ(checksum_scalar[j], checksum_sse[j], 4);
+    }
+
+    /* Test AVX2 8-way checksum (if available) */
+    if (sha256_avx2_available()) {
+        sha256avx2_checksum(input[0], input[1], input[2], input[3],
+                            input[4], input[5], input[6], input[7],
+                            checksum_avx2[0], checksum_avx2[1],
+                            checksum_avx2[2], checksum_avx2[3],
+                            checksum_avx2[4], checksum_avx2[5],
+                            checksum_avx2[6], checksum_avx2[7]);
+
+        for (int j = 0; j < 8; j++) {
+            ASSERT_MEM_EQ(checksum_scalar[j], checksum_avx2[j], 4);
+        }
+    }
+}
+
+TEST(sha256_simd_2block_equivalence) {
+    /* Verify SIMD 2-block SHA256 produces identical results */
+    uint32_t input[8][8];
+    uint8_t digest_scalar[8][32];
+    uint8_t digest_sse[4][32];
+    uint8_t digest_avx2[8][32];
+
+    /* Prepare test inputs */
+    for (int j = 0; j < 8; j++) {
+        for (int i = 0; i < 8; i++) {
+            input[j][i] = (i * 3 + j * 29) ^ (j << 12);
+        }
+    }
+
+    /* Compute reference digests using scalar version (2 blocks = 64 bytes) */
+    for (int j = 0; j < 8; j++) {
+        uint8_t temp[64];
+        memcpy(temp, input[j], 32);
+        memcpy(temp + 32, input[j], 32);  /* Duplicate for 2-block test */
+        sha256(temp, 64, digest_scalar[j]);
+    }
+
+    /* Test SSE2 4-way (2 blocks) */
+    sha256sse_2B(input[0], input[1], input[2], input[3],
+                 digest_sse[0], digest_sse[1], digest_sse[2], digest_sse[3]);
+
+    for (int j = 0; j < 4; j++) {
+        ASSERT_MEM_EQ(digest_scalar[j], digest_sse[j], 32);
+    }
+
+    /* Test AVX2 8-way (2 blocks, if available) */
+    if (sha256_avx2_available()) {
+        sha256avx2_2B(input[0], input[1], input[2], input[3],
+                      input[4], input[5], input[6], input[7],
+                      digest_avx2[0], digest_avx2[1], digest_avx2[2], digest_avx2[3],
+                      digest_avx2[4], digest_avx2[5], digest_avx2[6], digest_avx2[7]);
+
+        for (int j = 0; j < 8; j++) {
+            ASSERT_MEM_EQ(digest_scalar[j], digest_avx2[j], 32);
+        }
     }
 }
 
@@ -666,6 +902,13 @@ int main(int argc, char *argv[]) {
     RUN_TEST(ripemd160_sse_4way);
     RUN_TEST(ripemd160_avx2_8way);
     RUN_TEST(ripemd160_avx512_16way);
+
+    TEST_SECTION("SIMD Variant Equivalence Tests");
+    RUN_TEST(ripemd160_simd_equivalence);
+    RUN_TEST(ripemd160_simd_stress_test);
+    RUN_TEST(sha256_simd_equivalence);
+    RUN_TEST(sha256_simd_checksum_equivalence);
+    RUN_TEST(sha256_simd_2block_equivalence);
 
     TEST_SECTION("SHA256 Test Vectors");
     RUN_TEST(sha256_empty);
