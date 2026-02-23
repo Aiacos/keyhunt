@@ -21,6 +21,7 @@ Work for Ethereum
 - **[Community Progress Integration](#community-progress-integration)**: Leverage community scanning data to avoid redundant searches
 - **[Hardware Auto-Detection](#hardware-auto-detection)**: Automatic CPU/GPU detection with optimized parameters
 - **[GPU Acceleration](#gpu-modes)**: CUDA-based GPU support with multi-GPU scheduling and async pipelines
+- **Structured Configuration System**: Migrated from 50+ global variables to organized config structures for better maintainability and thread-safety (see `MIGRATION_GUIDE.md` for developers)
 
 ## Documentation
 
@@ -1773,6 +1774,41 @@ void* mempool_alloc_aligned(mem_pool_t *p, size_t size, size_t alignment);
 void mempool_reset(mem_pool_t *p);
 void mempool_destroy(mem_pool_t *p);
 ```
+
+---
+
+## For Developers
+
+### Configuration System
+
+The codebase has migrated from 50+ global variables to a structured configuration system for better code quality:
+
+**Configuration Hierarchy**:
+```
+keyhunt_config_t
+├── search_config_t    - Search mode, ranges, flags (FLAGMODE → config->search.mode)
+├── bsgs_config_t      - BSGS parameters (bsgs_m → config->bsgs.m_value)
+├── gpu_config_t       - GPU settings (FLAGGPU → config->gpu.enabled)
+├── autotune_config_t  - Auto-detected hardware info
+└── runtime_state_t    - Runtime state (thread counters, progress)
+```
+
+**Benefits**:
+- ✅ Explicit dependency injection (pass config to functions)
+- ✅ Thread-safe configuration passing
+- ✅ Type-safe enums (no magic numbers)
+- ✅ Easier unit testing and debugging
+- ✅ Better code organization
+
+**Developer Resources**:
+- `MIGRATION_GUIDE.md` - Complete global-to-config field mappings
+- `src/config/config.h` - Configuration structure definitions
+- `CLAUDE.md` - Architecture documentation for AI-assisted development
+
+**Key Files**:
+- `src/config/config.{h,c}` - Configuration structures and initialization
+- `src/cli.{h,c}` - Command-line parsing and config population
+- `src/search/search_common.h` - Search module interfaces
 
 ---
 

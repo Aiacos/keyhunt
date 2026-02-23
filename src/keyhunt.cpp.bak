@@ -155,20 +155,23 @@ static inline int thread_rand_n(int n) {
 #define SEARCH_COMPRESS 1
 #define SEARCH_BOTH 2
 
-// NOTE: Global variables migration in progress to keyhunt_config_t (see src/config/config.h)
-// Many variables still use global state until migration is complete
+uint32_t  THREADBPWORKLOAD = 1048576;
 
-// Infrastructure globals
-uint32_t THREADBPWORKLOAD = 0;
+// AVX2 support detection
 static bool g_avx2_available = false;
+
+// Global configuration (loaded from keyhunt.conf or CLI)
 static keyhunt_ini_config_t g_config;
 static bool g_config_loaded = false;
 static const char *g_save_config_path = NULL;
+
+// Progress tracking state
 static progress_state_t g_progress_state;
 static bool g_progress_enabled = false;
 
-// Work queue (used on all platforms now)
+#ifndef _WIN64
 static WorkQueue<Int> g_workQueue;
+#endif
 
 // ---------------------------------------------------------------------------
 // Lightweight internal profiler (enabled via KEYHUNT_PROFILE=1)
@@ -684,26 +687,26 @@ pthread_mutex_t bsgs_thread;
 pthread_mutex_t *bPload_mutex = NULL;
 #endif
 
-// NOTE: Thread runtime state variables migration in progress to runtime_state_t in keyhunt_config_t
 uint64_t FINISHED_THREADS_COUNTER = 0;
 uint64_t FINISHED_THREADS_BP = 0;
 uint64_t THREADCYCLES = 0;
 uint64_t THREADCOUNTER = 0;
+/* Use atomic for FINISHED_ITEMS since it's updated from multiple threads */
 std::atomic<uint64_t> FINISHED_ITEMS{0};
-uint64_t OLDFINISHED_ITEMS = 0;
+uint64_t OLDFINISHED_ITEMS = -1;
 
 uint8_t byte_encode_crypto = 0x00;		/* Bitcoin  */
 
-// NOTE: Vanity and bloom variables migration in progress to runtime_state_t in keyhunt_config_t
+
 int vanity_rmd_targets = 0;
 int vanity_rmd_total = 0;
 int *vanity_rmd_limits = NULL;
-uint8_t ***vanity_rmd_limit_values_A = NULL;
-uint8_t ***vanity_rmd_limit_values_B = NULL;
-int vanity_rmd_minimun_bytes_check_length = 0;
+uint8_t ***vanity_rmd_limit_values_A = NULL,***vanity_rmd_limit_values_B = NULL;
+int vanity_rmd_minimun_bytes_check_length = 999999;
 char **vanity_address_targets = NULL;
 struct bloom *vanity_bloom = NULL;
-bloom_extended_t bloom;
+
+bloom_extended_t bloom;  /* Fast bloom filter wrapper */
 
 /* Pad shared counters to separate cache lines and reduce false sharing between threads. */
 struct thread_counter {
@@ -720,10 +723,15 @@ struct thread_counter *steps = NULL;
 struct thread_flag *ends = NULL;
 uint64_t N = 0;
 
-// NOTE: Global FLAG* variables migration in progress to keyhunt_config_t (see MIGRATION_GUIDE.md)
-// Search configuration flags
+uint64_t N_SEQUENTIAL_MAX = 0x100000000;
+uint64_t DEBUGCOUNT = 0x400;
+uint64_t u64range;
+
+Int OUTPUTSECONDS;
+
 int FLAGSKIPCHECKSUM = 0;
 int FLAGENDOMORPHISM = 0;
+
 int FLAGBLOOMMULTIPLIER = 1;
 int FLAGVANITY = 0;
 int FLAGBASEMINIKEY = 0;
@@ -733,54 +741,44 @@ int FLAGQUIET = 0;
 int FLAGMATRIX = 0;
 int FLAGPROGRESSBAR = 0;
 int KFACTOR = 1;
-int MAXLENGTHADDRESS = 20;
+int MAXLENGTHADDRESS = -1;
 int NTHREADS = 1;
 int FLAGTHREADS = 0;
+
 int FLAGSAVEREADFILE = 0;
 int FLAGREADEDFILE1 = 0;
 int FLAGREADEDFILE2 = 0;
 int FLAGREADEDFILE3 = 0;
 int FLAGREADEDFILE4 = 0;
 int FLAGUPDATEFILE1 = 0;
+
+
 int FLAGSTRIDE = 0;
-int FLAGSEARCH = SEARCH_BOTH;
+int FLAGSEARCH = 2;
 int FLAGBITRANGE = 0;
 int FLAGRANGE = 0;
 int FLAGFILE = 0;
 int FLAGMODE = MODE_ADDRESS;
 int FLAGCRYPTO = 0;
-int FLAGRAWDATA = 0;
+int FLAGRAWDATA	= 0;
 int FLAGRANDOM = 0;
 int FLAG_N = 0;
 int FLAGPRECALCUTED_P_FILE = 0;
+// GPU usage flag: 0=off, 1=on, -1=auto
 int FLAGGPU = 0;
+// GPU full search mode: 0=off (hash-only), 1=full ECC+hash+match on GPU
 int FLAGGPU_FULL = 0;
+// GPU hybrid mode: 1=run GPU+CPU in parallel for maximum throughput
+// Atomic because accessed from multiple threads (CPU workers check this flag)
 std::atomic<int> FLAGGPU_HYBRID{0};
-int DEBUGCOUNT = 0;
-
-// GPU runtime state
-std::atomic<uint64_t> g_gpu_keys_checked{0};
-std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
-std::atomic<int> g_gpu_should_stop{0};
-static int g_gpu_bloom_uploaded = 0;
-int g_gpu_range_percent = 0;
-
-// Range and stride variables
-int bitrange = 0;
-char *str_N = NULL;
-char *range_start = NULL;
-char *range_end = NULL;
-char *str_stride = NULL;
-Int stride;
-
-// Runtime output control
-Int OUTPUTSECONDS;
-
-// Sequential max for work queue
-uint64_t N_SEQUENTIAL_MAX = 4096;
-
-// NOTE: Functions below need refactoring to accept config parameter (future work)
-// Currently using extern references to globals until complete migration
+		// Atomic stats for GPU search (thread-safe)
+		std::atomic<uint64_t> g_gpu_keys_checked{0};
+		std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
+		std::atomic<int> g_gpu_should_stop{0};
+	// True if we uploaded a GPU-side bloom filter for targets (full mode).
+	static int g_gpu_bloom_uploaded = 0;
+	// Hybrid mode range split (GPU gets gpu_range_split% of the total range)
+	int g_gpu_range_percent = 80;  // Default: GPU gets 80% of range
 
 		static inline bool cpu_use_y_parity_for_compressed_btc() {
 		// Unify CPU-only and HYBRID behavior for BTC compressed-only search:
@@ -791,8 +789,6 @@ uint64_t N_SEQUENTIAL_MAX = 4096;
 		// Overrides:
 		//   KEYHUNT_CPU_USE_Y=0|1            (global CPU behavior, default=1)
 		//   KEYHUNT_HYBRID_CPU_USE_Y=0|1     (when in HYBRID+FULL, default=1)
-		// TODO: Accept config parameter instead of using extern globals
-		extern int FLAGMODE, FLAGCRYPTO, FLAGENDOMORPHISM, FLAGSEARCH;
 		if (!((FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
 			  FLAGCRYPTO == CRYPTO_BTC &&
 			  !FLAGENDOMORPHISM &&
@@ -800,8 +796,6 @@ uint64_t N_SEQUENTIAL_MAX = 4096;
 			return false;
 		}
 
-		extern std::atomic<int> FLAGGPU_HYBRID;
-		extern int FLAGGPU_FULL;
 		if (FLAGGPU_HYBRID && FLAGGPU_FULL == 1) {
 			const char *env = getenv("KEYHUNT_HYBRID_CPU_USE_Y");
 			if (env && *env) {
@@ -821,11 +815,7 @@ uint64_t N_SEQUENTIAL_MAX = 4096;
 			// In static-range modes the backend updates g_gpu_keys_checked directly.
 			// In work-stealing, g_gpu_keys_checked_cur is the in-progress block counter; we
 			// aggregate it with a release/acquire pair so readers never observe a decreasing total.
-			// TODO: Accept config parameter instead of using extern globals
-			extern WorkPool g_work_pool;
-			extern std::atomic<uint64_t> g_gpu_keys_checked;
-			extern std::atomic<uint64_t> g_gpu_keys_checked_cur;
-			if (!g_work_pool.enabled.load(std::memory_order_acquire)) {
+			if (!g_work_pool.enabled) {
 				return g_gpu_keys_checked.load(std::memory_order_acquire);
 			}
 			uint64_t cur = g_gpu_keys_checked_cur.load(std::memory_order_acquire);
@@ -833,22 +823,21 @@ uint64_t N_SEQUENTIAL_MAX = 4096;
 			return base + cur;
 		}
 
-// System info and GPU backend info
+int bitrange;
+char *str_N;
+char *range_start;
+char *range_end;
+char *str_stride;
+Int stride;
+
+uint64_t BSGS_XVALUE_RAM = 8;  // Optimized: 8 bytes for uint64_t comparison
+
+// Global system information (for memory checks across all modes)
 system_info_t g_sysinfo;
 gpu_backend_info_t g_gpu_backend_info;
-
-// BSGS configuration and buffers
-uint64_t BSGS_XVALUE_RAM = 0;
-uint64_t BSGS_BUFFERXPOINTLENGTH = 0;
-uint64_t BSGS_BUFFERREGISTERLENGTH = 0;
-uint64_t bloom_bP_totalbytes = 0;
-uint64_t bloom_bP2_totalbytes = 0;
-uint64_t bloom_bP3_totalbytes = 0;
-uint64_t bsgs_m = 0;
-uint64_t bsgs_m2 = 0;
-uint64_t bsgs_m3 = 0;
-uint64_t bsgs_aux = 0;
-uint32_t bsgs_point_number = 0;
+// Only the first 16 bytes of X are used in BSGS bloom filters to reduce hash cost.
+uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
+uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
 
 static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
@@ -856,13 +845,10 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 		int v = atoi(env);
 		if (v >= 1 && v <= 99) return v;
 	}
-	// TODO: Accept config parameter instead of using extern g_gpu_range_percent
-	extern int g_gpu_range_percent;
 	if (cpu_threads <= 0) return g_gpu_range_percent;
 
 	// Heuristic split based on SM count vs CPU threads.
 	// Goal: avoid the CPU tail becoming the bottleneck in static split.
-	extern gpu_backend_info_t g_gpu_backend_info;
 	const int sms = g_gpu_backend_info.multiprocessors;
 	if (sms > 0) {
 		const double ratio = ((double)sms * 5.0) / (double)cpu_threads;  // empirical scale
@@ -877,14 +863,6 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 
 /*
 BSGS Variables
-NOTE: Many BSGS runtime state variables are kept as module-scoped for now.
-They will be migrated to runtime_state_t in a future refactoring phase.
-
-Configuration variables (bsgs_m, bloom_bP_totalbytes, bsgs_aux, bsgs_point_number)
-have been migrated to bsgs_config_t and runtime_state_t.
-
-Runtime algorithm state (bPtable, bloom_bP*, addressTable, checksums, mutexes)
-remain as module-scoped until BSGS algorithm is fully encapsulated.
 */
 int *bsgs_found;
 std::vector<Point> OriginalPointsBSGS;
@@ -917,10 +895,17 @@ pthread_mutex_t *bloom_bPx2nd_mutex;
 pthread_mutex_t *bloom_bPx3rd_mutex;
 #endif
 
-// NOTE: BSGS config variables migrated to bsgs_config_t:
-// bloom_bP_totalbytes->bsgs.bloom_bp_bytes, bsgs_m->bsgs.m_value
-// bsgs_m2->bsgs.m2_value, bsgs_m3->bsgs.m3_value
-// bsgs_aux->bsgs.aux_value, bsgs_point_number->bsgs.point_number
+
+
+
+uint64_t bloom_bP_totalbytes = 0;
+uint64_t bloom_bP2_totalbytes = 0;
+uint64_t bloom_bP3_totalbytes = 0;
+uint64_t bsgs_m = 4194304;
+uint64_t bsgs_m2;
+uint64_t bsgs_m3;
+uint64_t bsgs_aux;
+uint32_t bsgs_point_number;
 
 const char *str_limits_prefixs[7] = {"Mkeys/s","Gkeys/s","Tkeys/s","Pkeys/s","Ekeys/s","Zkeys/s","Ykeys/s"};
 const char *str_limits[7] = {"1000000","1000000000","1000000000000","1000000000000000","1000000000000000000","1000000000000000000000","1000000000000000000000000"};
@@ -5340,7 +5325,7 @@ void *thread_process(void *vargp)	{
 			if(continue_flag)	{
 					count = 0;
 					uint64_t block_limit = N_SEQUENTIAL_MAX;
-					if (!local_random && stride.IsOne()) {
+					if (!FLAGRANDOM && stride.IsOne()) {
 						Int range_end_local;
 						if (g_work_pool.enabled && cpu_cached_block_valid) {
 							range_end_local.Set(&cpu_cached_block_end);
@@ -5352,14 +5337,14 @@ void *thread_process(void *vargp)	{
 							block_limit = rem_u64;
 						}
 				}
-				if(local_matrix)	{
+				if(FLAGMATRIX)	{
 						hextemp = key_mpz.GetBase16();
 						printf("Base key: %s thread %i\n",hextemp,thread_number);
 						fflush(stdout);
 					free(hextemp);
 			}
 			else	{
-				if(!local_quiet){
+				if(FLAGQUIET == 0){
 					hextemp = key_mpz.GetBase16();
 					printf("\rBase key: %s     \r",hextemp);
 					fflush(stdout);
@@ -5438,7 +5423,7 @@ void *thread_process(void *vargp)	{
 					pts[pp_offset] = pp;
 					pts[pn_offset] = pn;
 					
-					if(local_endomorphism)	{
+					if(FLAGENDOMORPHISM)	{
 						/*
 							Q = (x,y)
 							For any point Q
@@ -5462,7 +5447,7 @@ void *thread_process(void *vargp)	{
 				/*
 					Half point for endomorphism because pts[CPU_GRP_SIZE / 2] was not calcualte in the previous cycle
 				*/
-				if(local_endomorphism)	{
+				if(FLAGENDOMORPHISM)	{
 					if( calculate_y  )	{
 
 						endomorphism_beta[CPU_GRP_SIZE / 2].y.Set(&pts[CPU_GRP_SIZE / 2].y);
@@ -5496,7 +5481,7 @@ void *thread_process(void *vargp)	{
 				/*
 					First point for endomorphism because pts[0] was not calcualte previously
 				*/
-				if(local_endomorphism)	{
+				if(FLAGENDOMORPHISM)	{
 					if( calculate_y  )	{
 						endomorphism_beta[0].y.Set(&pn.y);
 						endomorphism_beta2[0].y.Set(&pn.y);
@@ -5506,18 +5491,18 @@ void *thread_process(void *vargp)	{
 				}
 								
 				if (prof) prof->ns_ec += (profile_now_ns() - ec_start);
-				if((local_mode == MODE_RMD160 || local_mode == MODE_ADDRESS) && local_crypto == CRYPTO_BTC && !local_endomorphism) {
+				if((FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) && FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM) {
 					process_rmd160_batch_btc_simple(key_mpz, pts, count);
 				}
 				else {
 				for(j = 0; j < CPU_GRP_SIZE/4;j++){
-					switch(local_mode)	{
+					switch(FLAGMODE)	{
 						case MODE_RMD160:
 						case MODE_ADDRESS:
-							if(local_crypto == CRYPTO_BTC){
+							if(FLAGCRYPTO == CRYPTO_BTC){
 								
-								if(local_search == SEARCH_COMPRESS || local_search == SEARCH_BOTH ){
-									if(local_endomorphism)	{
+								if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH ){
+									if(FLAGENDOMORPHISM)	{
 										secp->GetHash160_fromX(P2PKH,0x02,&pts[(j*4)].x,&pts[(j*4)+1].x,&pts[(j*4)+2].x,&pts[(j*4)+3].x,(uint8_t*)publickeyhashrmd160_endomorphism[0][0],(uint8_t*)publickeyhashrmd160_endomorphism[0][1],(uint8_t*)publickeyhashrmd160_endomorphism[0][2],(uint8_t*)publickeyhashrmd160_endomorphism[0][3]);
 										secp->GetHash160_fromX(P2PKH,0x03,&pts[(j*4)].x,&pts[(j*4)+1].x,&pts[(j*4)+2].x,&pts[(j*4)+3].x,(uint8_t*)publickeyhashrmd160_endomorphism[1][0],(uint8_t*)publickeyhashrmd160_endomorphism[1][1],(uint8_t*)publickeyhashrmd160_endomorphism[1][2],(uint8_t*)publickeyhashrmd160_endomorphism[1][3]);
 
@@ -5533,8 +5518,8 @@ void *thread_process(void *vargp)	{
 									}
 									
 								}
-								if(local_search == SEARCH_UNCOMPRESS || local_search == SEARCH_BOTH){
-									if(local_endomorphism)	{
+								if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH){
+									if(FLAGENDOMORPHISM)	{
 										for(l = 0; l < 4; l++)	{
 											endomorphism_negeted_point[l] = secp->Negation(pts[(j*4)+l]);
 										}
@@ -5559,8 +5544,8 @@ void *thread_process(void *vargp)	{
 									}
 								}
 							}								
-							else if(local_crypto == CRYPTO_ETH){
-								if(local_endomorphism)	{
+							else if(FLAGCRYPTO == CRYPTO_ETH){
+								if(FLAGENDOMORPHISM)	{
 									for(k = 0; k < 4;k++)	{
 										endomorphism_negeted_point[k] = secp->Negation(pts[(j*4)+k]);
 										generate_binaddress_eth(pts[(4*j)+k],(uint8_t*)publickeyhashrmd160_endomorphism[0][k]);
@@ -5584,14 +5569,14 @@ void *thread_process(void *vargp)	{
 					}
 
 
-					switch(local_mode)	{
+					switch(FLAGMODE)	{
 						case MODE_RMD160:
 						case MODE_ADDRESS:
-							if( local_crypto  == CRYPTO_BTC) {
+							if( FLAGCRYPTO  == CRYPTO_BTC) {
 								
 								for(k = 0; k < 4;k++)	{
-									if(local_search == SEARCH_COMPRESS || local_search == SEARCH_BOTH){
-										if(local_endomorphism)	{
+									if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH){
+										if(FLAGENDOMORPHISM)	{
 											for(l = 0;l < 6; l++)	{
 												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
@@ -5677,8 +5662,8 @@ void *thread_process(void *vargp)	{
 										}
 									}
 
-									if(local_search == SEARCH_UNCOMPRESS || local_search == SEARCH_BOTH)	{
-										if(local_endomorphism)	{
+									if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH)	{
+										if(FLAGENDOMORPHISM)	{
 											for(l = 6;l < 12; l++)	{	//We check the array from 6 to 12(excluded) because we save the uncompressed information there
 												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);	//Check in Bloom filter
 												if(r) {
@@ -5738,8 +5723,8 @@ void *thread_process(void *vargp)	{
 									}
 								}
 							}
-							else if( local_crypto == CRYPTO_ETH) {
-								if(local_endomorphism)	{
+							else if( FLAGCRYPTO == CRYPTO_ETH) {
+								if(FLAGENDOMORPHISM)	{
 									for(k = 0; k < 4;k++)	{
 										for(l = 0;l < 6; l++)	{
 											r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
@@ -5804,7 +5789,7 @@ void *thread_process(void *vargp)	{
 						break;
 						case MODE_XPOINT:
 							for(k = 0; k < 4;k++)	{
-								if(local_endomorphism)	{
+								if(FLAGENDOMORPHISM)	{
 									pts[(4*j)+k].x.Get32Bytes((unsigned char *)rawvalue);
 									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {

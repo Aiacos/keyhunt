@@ -1,6 +1,8 @@
 /*
  * search_xpoint.cpp - X-Point mode search implementation
  *
+ * MIGRATION STATUS: Config-aware (utility functions)
+ *
  * This file implements the XPOINT search mode which compares public key
  * X-coordinates directly against target values. This is the fastest
  * search mode when the target public key is known.
@@ -13,6 +15,33 @@
  * - Direct 32-byte memory comparison
  * - Excellent cache locality
  * - Approximately 2-3x faster than ADDRESS/RMD160 modes
+ *
+ * Current implementation:
+ * - Contains pure utility functions (xpoint_check_single, xpoint_check_batch_*)
+ * - Functions accept all dependencies as parameters (no global access)
+ * - Called from thread functions in keyhunt.cpp
+ * - Functions are already properly structured and config-ready
+ *
+ * These functions don't access global variables directly - they receive:
+ * - bloom filter pointer
+ * - target array pointer
+ * - configuration values (key, stride, etc.) as parameters
+ * - callback function pointer for writing found keys
+ *
+ * Migration notes:
+ * - These functions are already well-structured and don't need modification
+ * - They are called from thread_process() which will be migrated to accept
+ *   thread_args struct with config pointer
+ * - Once thread_process() is migrated, these functions will indirectly use
+ *   config values (passed as parameters from config-aware caller)
+ *
+ * Future enhancements:
+ * - Move these functions to a dedicated xpoint module if XPOINT-specific
+ *   thread logic is extracted from thread_process()
+ * - Add SIMD-optimized batch checking for multiple targets
+ * - Consider GPU acceleration for X-coordinate comparison
+ *
+ * See search_common.h for shared declarations.
  */
 
 #include "search_xpoint.h"

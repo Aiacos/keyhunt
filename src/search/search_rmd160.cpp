@@ -1,6 +1,8 @@
 /*
  * search_rmd160.cpp - RIPEMD160 hash mode search implementation
  *
+ * MIGRATION STATUS: Config-aware (utility functions)
+ *
  * This file implements the RMD160 search mode which searches for known
  * RIPEMD160 hashes (HASH160) derived from public keys. This mode is
  * also used by ADDRESS mode since both use the same HASH160 pipeline.
@@ -11,6 +13,33 @@
  * - Compressed public keys (33 bytes: 02/03 prefix + X)
  * - Uncompressed public keys (65 bytes: 04 prefix + X + Y)
  * - Endomorphism optimization (6x keys per EC operation)
+ *
+ * Current implementation:
+ * - Contains pure utility functions for HASH160 checking
+ * - Functions accept all dependencies as parameters (no global access)
+ * - Called from thread functions in keyhunt.cpp
+ * - Functions are already properly structured and config-ready
+ *
+ * These functions don't access global variables directly - they receive:
+ * - bloom filter pointer
+ * - target array pointer
+ * - configuration values (key, stride, etc.) as parameters
+ * - callback function pointer for writing found keys
+ *
+ * Migration notes:
+ * - These functions are already well-structured and don't need modification
+ * - They are called from thread_process() which will be migrated to accept
+ *   thread_args struct with config pointer
+ * - Once thread_process() is migrated, these functions will indirectly use
+ *   config values (passed as parameters from config-aware caller)
+ *
+ * Future enhancements:
+ * - Move these functions to a dedicated rmd160 module if RMD160-specific
+ *   thread logic is extracted from thread_process()
+ * - Optimize bloom filter batching for better cache utilization
+ * - Consider AVX-512 optimizations for batch hash checking
+ *
+ * See search_common.h for shared declarations.
  */
 
 #include "search_rmd160.h"
