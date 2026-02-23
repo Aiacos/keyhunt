@@ -5325,7 +5325,7 @@ void *thread_process(void *vargp)	{
 			if(continue_flag)	{
 					count = 0;
 					uint64_t block_limit = N_SEQUENTIAL_MAX;
-					if (!local_random && stride.IsOne()) {
+					if (!FLAGRANDOM && stride.IsOne()) {
 						Int range_end_local;
 						if (g_work_pool.enabled && cpu_cached_block_valid) {
 							range_end_local.Set(&cpu_cached_block_end);
@@ -5337,14 +5337,14 @@ void *thread_process(void *vargp)	{
 							block_limit = rem_u64;
 						}
 				}
-				if(local_matrix)	{
+				if(FLAGMATRIX)	{
 						hextemp = key_mpz.GetBase16();
 						printf("Base key: %s thread %i\n",hextemp,thread_number);
 						fflush(stdout);
 					free(hextemp);
 			}
 			else	{
-				if(!local_quiet){
+				if(FLAGQUIET == 0){
 					hextemp = key_mpz.GetBase16();
 					printf("\rBase key: %s     \r",hextemp);
 					fflush(stdout);
@@ -5423,7 +5423,7 @@ void *thread_process(void *vargp)	{
 					pts[pp_offset] = pp;
 					pts[pn_offset] = pn;
 					
-					if(local_endomorphism)	{
+					if(FLAGENDOMORPHISM)	{
 						/*
 							Q = (x,y)
 							For any point Q
@@ -5447,7 +5447,7 @@ void *thread_process(void *vargp)	{
 				/*
 					Half point for endomorphism because pts[CPU_GRP_SIZE / 2] was not calcualte in the previous cycle
 				*/
-				if(local_endomorphism)	{
+				if(FLAGENDOMORPHISM)	{
 					if( calculate_y  )	{
 
 						endomorphism_beta[CPU_GRP_SIZE / 2].y.Set(&pts[CPU_GRP_SIZE / 2].y);
@@ -5481,7 +5481,7 @@ void *thread_process(void *vargp)	{
 				/*
 					First point for endomorphism because pts[0] was not calcualte previously
 				*/
-				if(local_endomorphism)	{
+				if(FLAGENDOMORPHISM)	{
 					if( calculate_y  )	{
 						endomorphism_beta[0].y.Set(&pn.y);
 						endomorphism_beta2[0].y.Set(&pn.y);
@@ -5491,18 +5491,18 @@ void *thread_process(void *vargp)	{
 				}
 								
 				if (prof) prof->ns_ec += (profile_now_ns() - ec_start);
-				if((local_mode == MODE_RMD160 || local_mode == MODE_ADDRESS) && local_crypto == CRYPTO_BTC && !local_endomorphism) {
+				if((FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) && FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM) {
 					process_rmd160_batch_btc_simple(key_mpz, pts, count);
 				}
 				else {
 				for(j = 0; j < CPU_GRP_SIZE/4;j++){
-					switch(local_mode)	{
+					switch(FLAGMODE)	{
 						case MODE_RMD160:
 						case MODE_ADDRESS:
-							if(local_crypto == CRYPTO_BTC){
+							if(FLAGCRYPTO == CRYPTO_BTC){
 								
-								if(local_search == SEARCH_COMPRESS || local_search == SEARCH_BOTH ){
-									if(local_endomorphism)	{
+								if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH ){
+									if(FLAGENDOMORPHISM)	{
 										secp->GetHash160_fromX(P2PKH,0x02,&pts[(j*4)].x,&pts[(j*4)+1].x,&pts[(j*4)+2].x,&pts[(j*4)+3].x,(uint8_t*)publickeyhashrmd160_endomorphism[0][0],(uint8_t*)publickeyhashrmd160_endomorphism[0][1],(uint8_t*)publickeyhashrmd160_endomorphism[0][2],(uint8_t*)publickeyhashrmd160_endomorphism[0][3]);
 										secp->GetHash160_fromX(P2PKH,0x03,&pts[(j*4)].x,&pts[(j*4)+1].x,&pts[(j*4)+2].x,&pts[(j*4)+3].x,(uint8_t*)publickeyhashrmd160_endomorphism[1][0],(uint8_t*)publickeyhashrmd160_endomorphism[1][1],(uint8_t*)publickeyhashrmd160_endomorphism[1][2],(uint8_t*)publickeyhashrmd160_endomorphism[1][3]);
 
@@ -5518,8 +5518,8 @@ void *thread_process(void *vargp)	{
 									}
 									
 								}
-								if(local_search == SEARCH_UNCOMPRESS || local_search == SEARCH_BOTH){
-									if(local_endomorphism)	{
+								if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH){
+									if(FLAGENDOMORPHISM)	{
 										for(l = 0; l < 4; l++)	{
 											endomorphism_negeted_point[l] = secp->Negation(pts[(j*4)+l]);
 										}
@@ -5544,8 +5544,8 @@ void *thread_process(void *vargp)	{
 									}
 								}
 							}								
-							else if(local_crypto == CRYPTO_ETH){
-								if(local_endomorphism)	{
+							else if(FLAGCRYPTO == CRYPTO_ETH){
+								if(FLAGENDOMORPHISM)	{
 									for(k = 0; k < 4;k++)	{
 										endomorphism_negeted_point[k] = secp->Negation(pts[(j*4)+k]);
 										generate_binaddress_eth(pts[(4*j)+k],(uint8_t*)publickeyhashrmd160_endomorphism[0][k]);
@@ -5569,14 +5569,14 @@ void *thread_process(void *vargp)	{
 					}
 
 
-					switch(local_mode)	{
+					switch(FLAGMODE)	{
 						case MODE_RMD160:
 						case MODE_ADDRESS:
-							if( local_crypto  == CRYPTO_BTC) {
+							if( FLAGCRYPTO  == CRYPTO_BTC) {
 								
 								for(k = 0; k < 4;k++)	{
-									if(local_search == SEARCH_COMPRESS || local_search == SEARCH_BOTH){
-										if(local_endomorphism)	{
+									if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH){
+										if(FLAGENDOMORPHISM)	{
 											for(l = 0;l < 6; l++)	{
 												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
@@ -5662,8 +5662,8 @@ void *thread_process(void *vargp)	{
 										}
 									}
 
-									if(local_search == SEARCH_UNCOMPRESS || local_search == SEARCH_BOTH)	{
-										if(local_endomorphism)	{
+									if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH)	{
+										if(FLAGENDOMORPHISM)	{
 											for(l = 6;l < 12; l++)	{	//We check the array from 6 to 12(excluded) because we save the uncompressed information there
 												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);	//Check in Bloom filter
 												if(r) {
@@ -5723,8 +5723,8 @@ void *thread_process(void *vargp)	{
 									}
 								}
 							}
-							else if( local_crypto == CRYPTO_ETH) {
-								if(local_endomorphism)	{
+							else if( FLAGCRYPTO == CRYPTO_ETH) {
+								if(FLAGENDOMORPHISM)	{
 									for(k = 0; k < 4;k++)	{
 										for(l = 0;l < 6; l++)	{
 											r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
@@ -5789,7 +5789,7 @@ void *thread_process(void *vargp)	{
 						break;
 						case MODE_XPOINT:
 							for(k = 0; k < 4;k++)	{
-								if(local_endomorphism)	{
+								if(FLAGENDOMORPHISM)	{
 									pts[(4*j)+k].x.Get32Bytes((unsigned char *)rawvalue);
 									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
