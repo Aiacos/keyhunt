@@ -18,6 +18,7 @@ email: albertobsd@gmail.com
 #include "core/util.h"
 #include "core/hashing.h"
 #include "core/workqueue.h"
+#include "bsgs/bsgs_sort.h"
 
 #include "gmp256k1/GMP256K1.h"
 #include "gmp256k1/Point.h"
@@ -67,11 +68,6 @@ static WorkQueue<Int> g_workQueue;
 struct checksumsha256	{
 	char data[32];
 	char backup[32];
-};
-
-struct bsgs_xvalue	{
-	uint8_t value[6];
-	uint64_t index;
 };
 
 struct address_value	{
@@ -154,15 +150,6 @@ int64_t _partition(struct address_value *arr, int64_t n);
 void _myheapsort(struct address_value	*arr, int64_t n);
 void _heapify(struct address_value *arr, int64_t n, int64_t i);
 
-void bsgs_sort(struct bsgs_xvalue *arr,int64_t n);
-void bsgs_myheapsort(struct bsgs_xvalue *arr, int64_t n);
-void bsgs_insertionsort(struct bsgs_xvalue *arr, int64_t n);
-void bsgs_introsort(struct bsgs_xvalue *arr,uint32_t depthLimit, int64_t n);
-void bsgs_swap(struct bsgs_xvalue *a,struct bsgs_xvalue *b);
-void bsgs_heapify(struct bsgs_xvalue *arr, int64_t n, int64_t i);
-int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n);
-
-int bsgs_searchbinary(struct bsgs_xvalue *arr,char *data,int64_t array_length,uint64_t *r_value);
 int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
 int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
 
@@ -319,7 +306,7 @@ char *range_end;
 char *str_stride;
 Int stride;
 
-uint64_t BSGS_XVALUE_RAM = 6;
+uint64_t BSGS_XVALUE_RAM = 8;
 uint64_t BSGS_BUFFERXPOINTLENGTH = 32;
 uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
 
@@ -333,7 +320,7 @@ bool *OriginalPointsBSGScompressed;
 uint64_t bytes;
 char checksum[32],checksum_backup[32];
 char buffer_bloom_file[1024];
-struct bsgs_xvalue *bPtable;
+bsgs_xvalue *bPtable;  // From bsgs/bsgs_sort.h
 struct address_value *addressTable;
 
 struct oldbloom oldbloom_bP;
@@ -1604,10 +1591,10 @@ int main(int argc, char **argv)	{
 			BSGS_AMP3[i].Reduce();
 		}
 
-		bytes = (uint64_t)bsgs_m3 * (uint64_t) sizeof(struct bsgs_xvalue);
+		bytes = (uint64_t)bsgs_m3 * (uint64_t) sizeof(bsgs_xvalue);
 		printf("[+] Allocating %.2f MB for %" PRIu64  " bP Points\n",(double)(bytes/1048576),bsgs_m3);
 		
-		bPtable = (struct bsgs_xvalue*) malloc(bytes);
+		bPtable = (bsgs_xvalue*) malloc(bytes);
 		checkpointer((void *)bPtable,__FILE__,"malloc","bPtable" ,__LINE__ -1 );
 		memset(bPtable,0,bytes);
 		
@@ -3846,140 +3833,6 @@ void _myheapsort(struct address_value	*arr, int64_t n)	{
 		_swap(&arr[0] , &arr[i]);
 		_heapify(arr, i, 0);
 	}
-}
-
-/*	OK	*/
-void bsgs_swap(struct bsgs_xvalue *a,struct bsgs_xvalue *b)	{
-	struct bsgs_xvalue t;
-	t	= *a;
-	*a = *b;
-	*b =	t;
-}
-
-/*	OK	*/
-void bsgs_sort(struct bsgs_xvalue *arr,int64_t n)	{
-	uint32_t depthLimit = ((uint32_t) ceil(log(n))) * 2;
-	bsgs_introsort(arr,depthLimit,n);
-}
-
-/*	OK	*/
-void bsgs_introsort(struct bsgs_xvalue *arr,uint32_t depthLimit, int64_t n) {
-	int64_t p;
-	if(n > 1)	{
-		if(n <= 16) {
-			bsgs_insertionsort(arr,n);
-		}
-		else	{
-			if(depthLimit == 0) {
-				bsgs_myheapsort(arr,n);
-			}
-			else	{
-				p = bsgs_partition(arr,n);
-				if(p > 0) bsgs_introsort(arr , depthLimit-1 , p);
-				if(p < n) bsgs_introsort(&arr[p+1],depthLimit-1,n-(p+1));
-			}
-		}
-	}
-}
-
-/*	OK	*/
-void bsgs_insertionsort(struct bsgs_xvalue *arr, int64_t n) {
-	int64_t j;
-	int64_t i;
-	struct bsgs_xvalue key;
-	for(i = 1; i < n ; i++ ) {
-		key = arr[i];
-		j= i-1;
-		while(j >= 0 && memcmp(arr[j].value,key.value,BSGS_XVALUE_RAM) > 0) {
-			arr[j+1] = arr[j];
-			j--;
-		}
-		arr[j+1] = key;
-	}
-}
-
-int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n)	{
-	struct bsgs_xvalue pivot;
-	int64_t r,left,right;
-	r = n/2;
-	pivot = arr[r];
-	left = 0;
-	right = n-1;
-	do {
-		while(left	< right && memcmp(arr[left].value,pivot.value,BSGS_XVALUE_RAM) <= 0 )	{
-			left++;
-		}
-		while(right >= left && memcmp(arr[right].value,pivot.value,BSGS_XVALUE_RAM) > 0)	{
-			right--;
-		}
-		if(left < right)	{
-			if(left == r || right == r)	{
-				if(left == r)	{
-					r = right;
-				}
-				if(right == r)	{
-					r = left;
-				}
-			}
-			bsgs_swap(&arr[right],&arr[left]);
-		}
-	}while(left < right);
-	if(right != r)	{
-		bsgs_swap(&arr[right],&arr[r]);
-	}
-	return right;
-}
-
-void bsgs_heapify(struct bsgs_xvalue *arr, int64_t n, int64_t i) {
-	int64_t largest = i;
-	int64_t l = 2 * i + 1;
-	int64_t r = 2 * i + 2;
-	if (l < n && memcmp(arr[l].value,arr[largest].value,BSGS_XVALUE_RAM) > 0)
-		largest = l;
-	if (r < n && memcmp(arr[r].value,arr[largest].value,BSGS_XVALUE_RAM) > 0)
-		largest = r;
-	if (largest != i) {
-		bsgs_swap(&arr[i],&arr[largest]);
-		bsgs_heapify(arr, n, largest);
-	}
-}
-
-void bsgs_myheapsort(struct bsgs_xvalue	*arr, int64_t n)	{
-	int64_t i;
-	for ( i = (n / 2) - 1; i >=	0; i--)	{
-		bsgs_heapify(arr, n, i);
-	}
-	for ( i = n - 1; i > 0; i--) {
-		bsgs_swap(&arr[0] , &arr[i]);
-		bsgs_heapify(arr, i, 0);
-	}
-}
-
-int bsgs_searchbinary(struct bsgs_xvalue *buffer,char *data,int64_t array_length,uint64_t *r_value) {
-	int64_t min,max,half,current;
-	int r = 0,rcmp;
-	min = 0;
-	current = 0;
-	max = array_length;
-	half = array_length;
-	while(!r && half >= 1) {
-		half = (max - min)/2;
-		rcmp = memcmp(data+16,buffer[current+half].value,BSGS_XVALUE_RAM);
-		if(rcmp == 0)	{
-			*r_value = buffer[current+half].index;
-			r = 1;
-		}
-		else	{
-			if(rcmp < 0) {
-				max = (max-half);
-			}
-			else	{
-				min = (min+half);
-			}
-			current = min;
-		}
-	}
-	return r;
 }
 
 #if defined(_WIN64) && !defined(__CYGWIN__)

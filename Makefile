@@ -73,7 +73,7 @@ SHA3_OBJS := $(OBJDIR)/sha3/sha3.o $(OBJDIR)/sha3/keccak.o
 PLATFORM_OBJS := $(OBJDIR)/platform/platform_thread.o $(OBJDIR)/platform/platform_mutex.o $(OBJDIR)/platform/platform_time.o
 SECP256K1_OBJS := $(OBJDIR)/secp256k1/Int.o $(OBJDIR)/secp256k1/Point.o $(OBJDIR)/secp256k1/SECP256K1.o $(OBJDIR)/secp256k1/IntMod.o $(OBJDIR)/secp256k1/Random.o $(OBJDIR)/secp256k1/IntGroup.o
 GMP256K1_OBJS := $(OBJDIR)/gmp256k1/Int.o $(OBJDIR)/gmp256k1/Point.o $(OBJDIR)/gmp256k1/GMP256K1.o $(OBJDIR)/gmp256k1/IntMod.o $(OBJDIR)/gmp256k1/Random.o $(OBJDIR)/gmp256k1/IntGroup.o
-BSGS_OBJS := $(OBJDIR)/bsgs/bsgs_ops.o $(OBJDIR)/bsgs/bsgs_fast.o
+BSGS_OBJS := $(OBJDIR)/bsgs/bsgs_ops.o $(OBJDIR)/bsgs/bsgs_fast.o $(OBJDIR)/bsgs/bsgs_sort.o
 HYBRID_OBJS := $(OBJDIR)/hybrid/adaptive_scheduler.o
 UTIL_OBJS := $(OBJDIR)/util/mempool.o
 DIST_OBJS := $(OBJDIR)/distributed/distributed.o
@@ -130,6 +130,7 @@ TEST_OBJDIR := $(OBJDIR)/tests
 TEST_INT_OBJ := $(TEST_OBJDIR)/test_int.o
 TEST_BLOOM_OBJ := $(TEST_OBJDIR)/test_bloom.o
 TEST_BSGS_OBJ := $(TEST_OBJDIR)/test_bsgs_integration.o
+TEST_BSGS_SORT_OBJ := $(TEST_OBJDIR)/test_bsgs_sort.o
 TEST_GPU_OBJ := $(TEST_OBJDIR)/test_gpu_backend.o
 TEST_DISTRIBUTED_OBJ := $(TEST_OBJDIR)/test_distributed.o
 TEST_WIZARD_OBJ := $(TEST_OBJDIR)/test_wizard.o
@@ -154,6 +155,9 @@ $(TEST_BLOOM_OBJ): tests/test_bloom.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_BSGS_OBJ): tests/test_bsgs_integration.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_BSGS_SORT_OBJ): tests/test_bsgs_sort.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_GPU_OBJ): tests/test_gpu_backend.cpp tests/test_framework.h | directories
@@ -181,7 +185,9 @@ $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # All test objects
-TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ)
+TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
+             $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
+             $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ)
 
 # Build test runner
 run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
