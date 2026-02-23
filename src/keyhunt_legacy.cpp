@@ -1932,7 +1932,6 @@ int main(int argc, char **argv)	{
 						platform_mutex_lock(&bPload_mutex[i]);
 						finished = bPload_temp_ptr[i].finished;
 						platform_mutex_unlock(&bPload_mutex[i]);
-#endif
 						if(finished)	{
 							bPload_temp_ptr[i].finished = 0;
 							bPload_threads_available[i] = 1;
@@ -2029,7 +2028,6 @@ int main(int argc, char **argv)	{
 						platform_mutex_lock(&bPload_mutex[i]);
 						finished = bPload_temp_ptr[i].finished;
 						platform_mutex_unlock(&bPload_mutex[i]);
-#endif
 						if(finished)	{
 							bPload_temp_ptr[i].finished = 0;
 							bPload_threads_available[i] = 1;
@@ -2560,12 +2558,10 @@ void *thread_process_minikeys(void *vargp)	{
 		else	{
 			if(FLAGBASEMINIKEY)	{
 				platform_mutex_lock(&write_random);
-#else
 				platform_mutex_lock(&write_random);
 				memcpy(buffer_b58,raw_baseminikey,21);
 				increment_minikey_N(raw_baseminikey);
 				platform_mutex_unlock(&write_random);
-#endif
 			}
 			else	{
 				platform_mutex_lock(&write_random);
@@ -4620,12 +4616,10 @@ void *thread_pub2rmd(void *vargp)	{
 		else	{
 			if(n_range_start.IsLower(&n_range_end))	{
 				platform_mutex_lock(&write_random);
-#else
 				platform_mutex_lock(&write_random);
 				key_mpz.Set(&n_range_start);
 				n_range_start.Add(N_SEQUENTIAL_MAX);
 				platform_mutex_lock(&write_random);
-#endif
 			}
 			else	{
 				pub2rmd_continue = 0;
@@ -4663,12 +4657,10 @@ void *thread_pub2rmd(void *vargp)	{
 						fd = fopen("KEYFOUNDKEYFOUND.txt","a+");
 						if(fd != NULL)	{
 							platform_mutex_lock(&write_keys);
-#else
 							platform_mutex_lock(&write_keys);
 							fprintf(fd,"Publickey found %s\n",temphex);
 							fclose(fd);
 							platform_mutex_unlock(&write_keys);
-#endif
 						}
 						else	{
 							fprintf(stderr,"\nPublickey found %s\nbut the file can't be open\n",temphex);
@@ -4853,7 +4845,6 @@ void *thread_bPload(void *vargp)	{
 					platform_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					platform_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
-#endif
 				}
 			}
 			if(i_counter < bsgs_m2 && !FLAGREADEDFILE2)	{
@@ -4861,14 +4852,12 @@ void *thread_bPload(void *vargp)	{
 				platform_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 				bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 				platform_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
-#endif	
 			}
 			if(i_counter < to && !FLAGREADEDFILE1 )	{
 				platform_mutex_lock(&bloom_bP_mutex[bloom_bP_index]);
 				platform_mutex_lock(&bloom_bP_mutex[bloom_bP_index]);
 				bloom_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
 				platform_mutex_unlock(&bloom_bP_mutex[bloom_bP_index]);
-#endif
 			}
 			i_counter++;
 		}
@@ -4894,7 +4883,6 @@ void *thread_bPload(void *vargp)	{
 	tt->finished = 1;
 	platform_mutex_unlock(&bPload_mutex[threadid]);
 	pthread_exit(NULL);
-#endif
 	return NULL;
 }
 
@@ -5019,7 +5007,6 @@ void *thread_bPload_2blooms(void *vargp)	{
 					platform_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					platform_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
-#endif
 				}
 			}
 			if(i_counter < bsgs_m2 && !FLAGREADEDFILE2)	{
@@ -5027,7 +5014,6 @@ void *thread_bPload_2blooms(void *vargp)	{
 					platform_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 					bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 					platform_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
-#endif			
 			}
 			i_counter++;
 		}
@@ -5053,7 +5039,6 @@ void *thread_bPload_2blooms(void *vargp)	{
 	tt->finished = 1;
 	platform_mutex_unlock(&bPload_mutex[threadid]);
 	pthread_exit(NULL);
-#endif
 	return NULL;
 }
 
