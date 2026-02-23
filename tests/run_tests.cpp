@@ -7,7 +7,9 @@
  * Usage:
  *   ./run_tests              # Run all tests
  *   ./run_tests int          # Run only Int tests
+ *   ./run_tests hash         # Run only hash/crypto tests
  *   ./run_tests bloom        # Run only Bloom filter tests
+ *   ./run_tests bsgs_ops     # Run only BSGS operations tests
  *   ./run_tests bsgs         # Run only BSGS tests
  *   ./run_tests gpu          # Run only GPU backend tests
  *   ./run_tests distributed  # Run only distributed mode tests
@@ -20,7 +22,9 @@
 
 /* Forward declarations for test modules (C++ linkage) */
 int run_int_tests(void);
+int run_hash_tests(void);
 int run_bloom_tests(void);
+int run_bsgs_ops_tests(void);
 int run_bsgs_tests(void);
 int run_gpu_backend_tests(void);
 int run_distributed_tests(void);
@@ -47,7 +51,9 @@ static void print_usage(const char *prog) {
     printf("Modules:\n");
     printf("  (none)       Run all tests\n");
     printf("  int          Run Int (256-bit integer) tests\n");
+    printf("  hash         Run hash and cryptographic function tests\n");
     printf("  bloom        Run Bloom filter tests\n");
+    printf("  bsgs_ops     Run BSGS operations tests\n");
     printf("  bsgs         Run BSGS integration tests\n");
     printf("  gpu          Run GPU backend tests\n");
     printf("  distributed  Run distributed mode tests\n");
@@ -77,9 +83,19 @@ int main(int argc, char *argv[]) {
         total_failures += run_int_tests();
     }
 
+    if (module == NULL || strcmp(module, "hash") == 0) {
+        printf(CLR_BOLD "\n>>> Running Hash Tests\n" CLR_RESET);
+        total_failures += run_hash_tests();
+    }
+
     if (module == NULL || strcmp(module, "bloom") == 0) {
         printf(CLR_BOLD "\n>>> Running Bloom Filter Tests\n" CLR_RESET);
         total_failures += run_bloom_tests();
+    }
+
+    if (module == NULL || strcmp(module, "bsgs_ops") == 0) {
+        printf(CLR_BOLD "\n>>> Running BSGS Operations Tests\n" CLR_RESET);
+        total_failures += run_bsgs_ops_tests();
     }
 
     if (module == NULL || strcmp(module, "bsgs") == 0) {
