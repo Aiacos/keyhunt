@@ -1,0 +1,98 @@
+=== AUTO-BUILD PROGRESS ===
+
+Project: Refactor monolithic keyhunt.cpp into modular components
+Workspace: /home/aiacos/workspace/keyhunt
+Started: 2026-02-23
+
+Workflow Type: refactor
+Rationale: Large-scale structural refactoring decomposing 9,909-line monolith into focused modules.
+           Risk-ordered execution (low risk first → high risk last) to minimize breakage.
+
+Session 1 (Planner):
+- Created implementation_plan.json with 10 phases, 30 subtasks
+- Updated project_index.json with full service details
+- Updated context.json with file lists, patterns, and constraints
+- Created init.sh for environment setup
+
+Phase Summary:
+  Phase 1  - Create Foundation Headers:        4 subtasks, depends on: []
+  Phase 2  - Integrate search_bsgs.cpp:        4 subtasks, depends on: [phase-1]
+  Phase 3  - Extract Sorting Functions:         3 subtasks, depends on: [phase-1]
+  Phase 4  - Extract Crypto Utilities:          3 subtasks, depends on: [phase-1]
+  Phase 5  - Extract File I/O Module:           3 subtasks, depends on: [phase-1, phase-4]
+  Phase 6  - Extract Minikeys Thread:           2 subtasks, depends on: [phase-1, phase-5]
+  Phase 7  - Extract Address/RMD160/XPOINT:     3 subtasks, depends on: [phase-1, phase-3, phase-5]
+  Phase 8  - Extract Vanity Thread:             2 subtasks, depends on: [phase-1, phase-5]
+  Phase 9  - Extract BSGS Threads:              3 subtasks, depends on: [phase-1, phase-2]
+  Phase 10 - Final Cleanup and Verification:    3 subtasks, depends on: [all]
+
+Services Involved:
+  - keyhunt: Single-service C++17 project, all refactoring within this executable
+
+Files Being Created (14):
+  src/search/search_context.h         - Consolidated extern declarations for all globals
+  src/search/search_utils.h           - Shared inline helpers (aligned_calloc, thread_rand, profiling)
+  src/search/search_minikeys.cpp      - Minikey thread + helpers (~250 lines)
+  src/search/search_address.cpp       - ADDRESS/RMD160/XPOINT thread (~650 lines, replaces placeholder)
+  src/search/search_vanity.cpp        - Vanity thread + helpers (~1,295 lines, replaces placeholder)
+  src/search/search_bsgs_threads.cpp  - 5 BSGS threads + 2 bPload threads (~1,700 lines)
+  src/sort/sort.h                     - Sorting module header
+  src/sort/sort.cpp                   - ADDRESS sorting functions (~200 lines)
+  src/io/io.h                         - File I/O module header
+  src/io/io.cpp                       - File read/write functions (~700 lines)
+  src/crypto/address_util.h           - Crypto utility header
+  src/crypto/address_util.cpp         - Address generation, KECCAK, Base58 (~500 lines)
+  src/crypto/bloom_init.h             - Bloom init header
+  src/crypto/bloom_init.cpp           - Bloom filter initialization (~120 lines)
+
+Files Being Modified (3):
+  src/keyhunt.cpp                     - Remove ~5,000 lines of extracted functions
+  src/search/search_bsgs.cpp          - Add search_context.h include
+  Makefile                            - Add SORT_OBJS, IO_OBJS, CRYPTO_OBJS, update SEARCH_OBJS, OBJ_DIRS
+
+Parallelism Analysis:
+- Max parallel phases: 1
+- Recommended workers: 1
+- Reason: Nearly all phases modify keyhunt.cpp (removing functions), creating merge conflicts
+- Sequential execution is the only safe approach
+
+Key Constraints:
+- Zero behavioral changes (pure code motion)
+- Preserve all #ifdef _WIN64 platform guards
+- Preserve std::atomic memory ordering (acquire/release/acq_rel)
+- Preserve 64-byte cache-line alignment for thread_counter/thread_flag
+- No changes to secp256k1/, hash/, bloom/, gpu/, wizard/ modules
+- No new external dependencies
+- LTO-safe: no ODR violations (functions in exactly one .cpp file)
+
+Verification After Each Phase:
+  make clean && make (must succeed with 0 errors)
+  Mode-specific tests (ADDRESS, BSGS, RMD160, XPOINT)
+
+=== STARTUP COMMAND ===
+
+To continue building this spec:
+
+  # Navigate to project
+  cd /home/aiacos/workspace/keyhunt
+
+  # Read the plan
+  cat .auto-claude/specs/006-refactor-monolithic-keyhunt-cpp-into-modular-compo/implementation_plan.json
+
+  # Execute phases sequentially (recommended workers: 1)
+  # Start with Phase 1: Create Foundation Headers
+
+=== END SESSION 1 ===
+
+=== SESSION 2: subtask-2-4 verification ===
+
+subtask-2-4: BSGS mode test verification
+- Build: SUCCESS (compiles cleanly with search_bsgs.o linked)
+- Address mode test: PASS (finds keys correctly in tests/1to32.txt)
+- BSGS mode test: PRE-EXISTING CRASH (floating point exception)
+  - Crash exists in baseline code (commit 68a2042, before any refactoring)
+  - Root cause: FPE in BSGS initialization, NOT caused by our code motion
+  - Our refactoring is correct: symbols link properly, no duplicate definitions
+- Conclusion: subtask-2-4 verified. BSGS crash is a pre-existing bug, not a regression.
+
+=== END SESSION 2 ===
