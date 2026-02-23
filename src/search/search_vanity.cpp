@@ -16,11 +16,37 @@
  * - 1Pizza...
  * - 1BTC...
  *
+ * ============================================================================
+ * Configuration Usage (src/config/config.h)
+ * ============================================================================
+ *
+ * Vanity mode uses the following configuration structures:
+ *
+ * SearchConfig (search_config_t):
+ *   - mode = MODE_VANITY               // Activates vanity search
+ *   - target_file                      // File with vanity prefixes
+ *   - key_format                       // KEY_COMPRESSED/UNCOMPRESSED/BOTH
+ *   - endomorphism                     // 6x throughput optimization
+ *   - random_mode                      // Random vs sequential search
+ *   - range_start / range_end          // Search space bounds
+ *
+ * RuntimeState (runtime_state_t):
+ *   - vanity_targets                   // Number of loaded prefixes
+ *   - vanity_total                     // Total pattern combinations
+ *   - vanity_bloom                     // Fast prefix matching filter
+ *   - num_threads                      // Parallel worker threads
+ *   - work_pool                        // Thread-safe work distribution
+ *   - output_file = "VANITYKEYFOUND.txt"
+ *
+ * GpuConfig (gpu_config_t):
+ *   - enabled                          // GPU acceleration (if available)
+ *   - hybrid_mode                      // GPU + CPU parallel search
+ *
  * Algorithm Overview:
  * 1. Acquire base key from work pool or sequential range
  * 2. Compute batch of CPU_GRP_SIZE public keys using EC group operations
  * 3. Hash all public keys to addresses (SHA256 + RIPEMD160)
- * 4. Check for prefix matches using bloom filter
+ * 4. Check for prefix matches using bloom filter (runtime_state.vanity_bloom)
  * 5. Write matching keys to VANITYKEYFOUND.txt
  *
  * Optimization Features:
@@ -40,8 +66,8 @@
  *
  * Performance depends on:
  * - CPU features (AVX512 > AVX2 > SSE > scalar)
- * - Endomorphism enabled (-e flag): 6x effective throughput
- * - Number of threads (-t flag)
+ * - Endomorphism enabled (search_config.endomorphism): 6x effective throughput
+ * - Number of threads (runtime_state.num_threads)
  * - Batch size (CPU_GRP_SIZE, default 1024)
  *
  * See search_common.h for shared declarations and keyhunt.cpp for implementation.
