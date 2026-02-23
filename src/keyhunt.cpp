@@ -47,6 +47,7 @@
 #include "core/parameter_validator.h"
 #include "gpu/gpu_backend.h"
 #include "core/config.h"
+#include "config/config.h"
 #include "hybrid/adaptive_scheduler.h"
 #include "wizard/wizard.h"
 #include "benchmark.h"
@@ -2030,6 +2031,12 @@ int main(int argc, char **argv)	{
 	if (g_profile_enabled) {
 		output_info("Profiling enabled (KEYHUNT_PROFILE=1)\n");
 	}
+
+	// -------------------------------------------------------------------------
+	// Initialize unified configuration structure
+	// -------------------------------------------------------------------------
+	keyhunt_config_t config;
+	kh_config_init(&config);
 
 	// Auto-detect system configuration and optimize parameters
 	// (sysinfo is now a global variable for memory checks)
