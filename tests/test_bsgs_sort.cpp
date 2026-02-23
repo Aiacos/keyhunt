@@ -8,7 +8,7 @@
  */
 
 #include "test_framework.h"
-#include "src/bsgs/bsgs_sort.h"
+#include "bsgs/bsgs_sort.h"
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -79,9 +79,9 @@ TEST(bsgs_swap_basic) {
     bsgs_swap(&a, &b);
 
     ASSERT_EQ(200, a.value);
-    ASSERT_EQ(1, a.index);
+    ASSERT_EQ(2, a.index);   /* index also swapped */
     ASSERT_EQ(100, b.value);
-    ASSERT_EQ(2, b.index);
+    ASSERT_EQ(1, b.index);   /* index also swapped */
 }
 
 TEST(bsgs_swap_same_element) {
@@ -545,7 +545,8 @@ TEST(bsgs_large_sort_and_multiple_searches) {
  * Main Test Runner
  * ============================================================================ */
 
-int main(int argc, char *argv[]) {
+/* Exported function for test runner */
+int run_bsgs_sort_tests(void) {
     TEST_INIT();
 
     TEST_SECTION("Swap Operations");
@@ -601,3 +602,12 @@ int main(int argc, char *argv[]) {
 
     return TEST_RESULTS();
 }
+
+/* Standalone main for individual testing */
+#ifdef TEST_STANDALONE
+int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+    return run_bsgs_sort_tests();
+}
+#endif

@@ -9,6 +9,7 @@
  *   ./run_tests int          # Run only Int tests
  *   ./run_tests bloom        # Run only Bloom filter tests
  *   ./run_tests bsgs         # Run only BSGS tests
+ *   ./run_tests bsgs_sort    # Run only BSGS sort tests
  *   ./run_tests gpu          # Run only GPU backend tests
  *   ./run_tests distributed  # Run only distributed mode tests
  *   ./run_tests wizard       # Run only wizard tests
@@ -22,6 +23,7 @@
 int run_int_tests(void);
 int run_bloom_tests(void);
 int run_bsgs_tests(void);
+int run_bsgs_sort_tests(void);
 int run_gpu_backend_tests(void);
 int run_distributed_tests(void);
 int run_wizard_tests(void);
@@ -49,6 +51,7 @@ static void print_usage(const char *prog) {
     printf("  int          Run Int (256-bit integer) tests\n");
     printf("  bloom        Run Bloom filter tests\n");
     printf("  bsgs         Run BSGS integration tests\n");
+    printf("  bsgs_sort    Run BSGS sort and search tests\n");
     printf("  gpu          Run GPU backend tests\n");
     printf("  distributed  Run distributed mode tests\n");
     printf("  wizard       Run wizard tests\n");
@@ -85,6 +88,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "bsgs") == 0) {
         printf(CLR_BOLD "\n>>> Running BSGS Integration Tests\n" CLR_RESET);
         total_failures += run_bsgs_tests();
+    }
+
+    if (module == NULL || strcmp(module, "bsgs_sort") == 0) {
+        printf(CLR_BOLD "\n>>> Running BSGS Sort Tests\n" CLR_RESET);
+        total_failures += run_bsgs_sort_tests();
     }
 
     if (module == NULL || strcmp(module, "gpu") == 0) {
