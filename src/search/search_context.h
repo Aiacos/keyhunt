@@ -152,8 +152,8 @@ extern int vanity_rmd_minimun_bytes_check_length;
 extern char **vanity_address_targets;
 extern struct bloom *vanity_bloom;
 
-/* General bloom */
-extern struct bloom bloom;
+/* General bloom (bloom_extended_t wraps struct bloom with fast-bloom support) */
+extern bloom_extended_t bloom;
 
 /* Data arrays */
 extern uint64_t *steps;
