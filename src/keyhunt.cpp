@@ -33,9 +33,6 @@
 #include <algorithm>
 #include <atomic>
 #include <inttypes.h>
-#ifndef _WIN64
-// time.h already included above
-#endif
 #include "base58/libbase58.h"
 #include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
@@ -59,23 +56,7 @@
 #include "crypto/address_util.h"
 #include "crypto/bloom_init.h"
 #include "io/io.h"
-
-/*
- * NOTE: search/search_context.h and search/search_utils.h provide the
- * authoritative definitions of MODE_*, CRYPTO_*, SEARCH_* constants,
- * shared structs, and utility functions for extracted search modules.
- * keyhunt.cpp cannot yet include them directly because the extern
- * declarations and struct definitions in those headers were written for
- * the target (post-extraction) state and conflict with definitions that
- * still live here.  As functions are extracted out of keyhunt.cpp in
- * later subtasks, these includes will be enabled.
- *
- * Duplicate macro definitions (CRYPTO_NONE/BTC/ETH/ALL, MODE_*,
- * SEARCH_UNCOMPRESS/COMPRESS/BOTH) have already been removed from this
- * file; the canonical definitions now live in search_context.h.
- * Until keyhunt.cpp includes that header, the macros are picked up
- * transitively through config/config.h or the build's -Isrc path.
- */
+#include "search/search_common.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -146,7 +127,7 @@ static inline void thread_rand_init(void) {
 }
 
 /* Thread-safe replacement for rand() */
-static inline int thread_rand(void) {
+int thread_rand(void) {
     thread_rand_init();
     /* Simple LCG (same as glibc rand) */
     g_thread_rand_state = g_thread_rand_state * 1103515245 + 12345;
@@ -154,39 +135,12 @@ static inline int thread_rand(void) {
 }
 
 /* Thread-safe random in range [0, n) */
-static inline int thread_rand_n(int n) {
+int thread_rand_n(int n) {
     if (n <= 0) return 0;
     return thread_rand() % n;
 }
 
-/*
- * Mode, crypto, and search constants — canonical definitions are in
- * search/search_context.h.  Duplicated here with #ifndef guards until
- * keyhunt.cpp can include that header directly (blocked by struct/extern
- * conflicts that will be resolved as code is extracted in later subtasks).
- */
-#ifndef CRYPTO_NONE
-#define CRYPTO_NONE 0
-#define CRYPTO_BTC 1
-#define CRYPTO_ETH 2
-#define CRYPTO_ALL 3
-#endif
-
-#ifndef MODE_XPOINT
-#define MODE_XPOINT 0
-#define MODE_ADDRESS 1
-#define MODE_BSGS 2
-#define MODE_RMD160 3
-#define MODE_PUB2RMD 4
-#define MODE_MINIKEYS 5
-#define MODE_VANITY 6
-#endif
-
-#ifndef SEARCH_UNCOMPRESS
-#define SEARCH_UNCOMPRESS 0
-#define SEARCH_COMPRESS 1
-#define SEARCH_BOTH 2
-#endif
+/* Mode, crypto, and search constants now provided by search/search_common.h */
 
 // NOTE: Global variables migration in progress to keyhunt_config_t (see src/config/config.h)
 // Many variables still use global state until migration is complete
@@ -478,25 +432,7 @@ struct tothread {
 	char *rpt;  //rng per thread
 };
 
-/*
- * thread_args - New unified thread argument structure
- *
- * This struct replaces the legacy tothread struct and provides a clean
- * way to pass configuration to thread functions. It contains:
- *   - config: Pointer to the global keyhunt_config_t struct
- *   - thread_id: Thread identifier (0-based index)
- *
- * Usage:
- *   thread_args args = { .config = &g_config, .thread_id = i };
- *   pthread_create(&tid, NULL, thread_func, &args);
- *
- * Migration: During the migration phase, both tothread and thread_args
- * coexist. Eventually, tothread will be removed.
- */
-struct thread_args {
-	keyhunt_config_t *config;   /* Pointer to global configuration */
-	int thread_id;              /* Thread number (0-based) */
-};
+/* thread_args now defined in search/search_common.h */
 
 struct bPload	{
 	uint32_t threadid;
@@ -553,7 +489,7 @@ std::vector<Point> GSn;
 Point _2GSn;
 
 void menu();
-void init_generator();
+/* init_generator() declared in search/search_common.h */
 
 // Helper function to get mode name string for output module
 static const char *get_mode_name(int mode) {
@@ -583,13 +519,13 @@ void sleep_ms(int milliseconds);
 int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
 int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
 
-/* vanityrmdmatch, writevanitykey, addvanity, minimum_same_bytes moved to search/search_vanity.cpp */
+/* Vanity functions (defined in search/search_vanity.cpp) */
 bool vanityrmdmatch(unsigned char *rmdhash);
 void writevanitykey(bool compress,Int *key);
 int addvanity(char *target);
 int minimum_same_bytes(unsigned char* A,unsigned char* B, int length);
 
-/* writekey, writekeyeth, checkpointer moved to io/io.cpp */
+/* writekey, writekeyeth, checkpointer declared in io/io.h */
 
 // GPU Full Search helper functions (forward declarations)
 static int gpu_upload_gtable_from_secp();
@@ -614,29 +550,10 @@ static void *gpu_hybrid_thread(void *arg);
    forceReadFileXPoint, processOneVanity, writeFileIfNeeded moved to io/io.cpp */
 
 void calcualteindex(int i,Int *key);
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_minikeys(LPVOID vargp);  /* search/search_minikeys.cpp */
-DWORD WINAPI thread_process_vanity(LPVOID vargp);
-DWORD WINAPI thread_process(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_backward(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_both(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_random(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_dance(LPVOID vargp);
-DWORD WINAPI thread_bPload(LPVOID vargp);
-DWORD WINAPI thread_bPload_2blooms(LPVOID vargp);
-#else
-void *thread_process_minikeys(void *vargp);  /* search/search_minikeys.cpp */
-void *thread_process_vanity(void *vargp);
-void *thread_process(void *vargp);
-void *thread_process_bsgs(void *vargp);
-void *thread_process_bsgs_backward(void *vargp);
-void *thread_process_bsgs_both(void *vargp);
-void *thread_process_bsgs_random(void *vargp);
-void *thread_process_bsgs_dance(void *vargp);
+/* Thread entry points declared in search/search_common.h */
+/* BSGS loading threads (defined in search/search_bsgs_threads.cpp) */
 void *thread_bPload(void *vargp);
 void *thread_bPload_2blooms(void *vargp);
-#endif
 
 int THREADOUTPUT = 0;
 char *bit_range_str_min;
@@ -675,16 +592,7 @@ char **vanity_address_targets = NULL;
 struct bloom *vanity_bloom = NULL;
 bloom_extended_t bloom;
 
-/* Pad shared counters to separate cache lines and reduce false sharing between threads. */
-struct thread_counter {
-	uint64_t value;
-	uint8_t padding[56];
-};
-
-struct thread_flag {
-	unsigned int value;
-	uint8_t padding[60];
-};
+/* thread_counter and thread_flag now defined in search/search_common.h */
 
 struct thread_counter *steps = NULL;
 struct thread_flag *ends = NULL;
