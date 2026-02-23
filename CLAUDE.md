@@ -144,6 +144,30 @@ Test files are in `tests/` directory:
 
 ## Architecture
 
+### Configuration System
+
+**NEW**: The codebase has migrated from 50+ global variables to a structured configuration system (`src/config/config.h`) for better maintainability, testability, and thread-safety.
+
+#### Configuration Structure Hierarchy
+
+```
+keyhunt_config_t (top-level container)
+├── search_config_t       - Search mode, range, flags
+├── bsgs_config_t         - BSGS algorithm parameters
+├── gpu_config_t          - GPU acceleration settings
+├── autotune_config_t     - Auto-detected system info
+└── runtime_state_t       - Mutable execution state
+```
+
+**Benefits**:
+- ✅ Explicit dependency injection (functions receive config as parameter)
+- ✅ Thread-safe configuration passing
+- ✅ Type-safe enums instead of magic numbers
+- ✅ Grouped, logical organization
+- ✅ Easier unit testing and code comprehension
+
+**Developer Guide**: See `MIGRATION_GUIDE.md` for complete mapping of legacy globals to config fields (e.g., `FLAGMODE` → `config->search.mode`, `NTHREADS` → `config->runtime.thread_count`).
+
 ### Core Search Modes (MODE_*)
 
 The tool operates in 6 distinct modes, each optimized for different search scenarios:
@@ -166,7 +190,7 @@ The tool operates in 6 distinct modes, each optimized for different search scena
 - `ripemd160_avx512.cpp`: AVX-512 16-way parallel (512-bit SIMD) - cutting-edge CPUs
 - `sha256.cpp`, `sha256_sse.cpp`: SHA256 implementations (SHA-NI available)
 
-**Runtime CPU feature detection**: The program automatically selects the best implementation based on detected CPU features. See `g_avx2_available` in keyhunt.cpp:66.
+**Runtime CPU feature detection**: The program automatically selects the best implementation based on detected CPU features stored in `config->autotune.avx2_available`.
 
 #### Secp256k1 Elliptic Curve Operations
 
