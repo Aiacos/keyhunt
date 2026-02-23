@@ -115,6 +115,9 @@ extern bloom_extended_t bloom;
 /* BSGS-specific globals */
 extern Int BSGS_M;
 extern Int BSGS_M_double;
+extern Int BSGS_M2_double;
+extern Int BSGS_M3;
+extern Int BSGS_M3_double;
 extern Int BSGS_CURRENT;
 extern Point BSGS_P;
 extern Point BSGS_MP;
@@ -122,6 +125,26 @@ extern Point BSGS_MP2;
 extern struct bloom *bloom_bP;
 extern struct bloom *bloom_bP2;
 extern struct bloom *bloom_bP3;
+
+/* BSGS algorithm state (defined in keyhunt.cpp) */
+#include <vector>
+extern std::vector<Point> BSGS_AMP2;          /* Amplification points for 2nd check */
+extern std::vector<Point> BSGS_AMP3;          /* Amplification points for 3rd check */
+extern std::vector<Point> OriginalPointsBSGS; /* Target public keys */
+
+/* BSGS data structures */
+struct bsgs_xvalue {
+    uint64_t value;    /* 8 bytes (last 8 bytes of X coordinate) */
+    uint64_t index;    /* Index in bPtable */
+};
+
+extern struct bsgs_xvalue *bPtable;           /* Baby step point table */
+extern uint64_t bsgs_m3;                      /* M3 value for table size */
+extern uint64_t BSGS_BUFFERXPOINTLENGTH;      /* X-point buffer length (16) */
+
+/* BSGS extended bloom filters (bloom_wrapper.h) */
+extern bloom_extended_t *bloom_bPx2nd;        /* 2nd level bloom filter */
+extern bloom_extended_t *bloom_bPx3rd;        /* 3rd level bloom filter */
 
 /* Byte encode for address generation */
 extern uint8_t byte_encode_crypto;

@@ -1,11 +1,35 @@
 /*
  * search_bsgs.cpp - Baby Step Giant Step (BSGS) mode search implementation
  *
+ * MIGRATION STATUS: Config-aware (extern globals)
+ *
  * This file contains the BSGS helper functions: sorting, binary search,
  * and verification checks (secondcheck, thirdcheck).
  *
+ * Current implementation:
+ * - Uses extern BSGS algorithm state variables (BSGS_M*, BSGS_AMP*, etc.)
+ * - These are defined in keyhunt.cpp and declared in search_common.h
+ * - Sorting functions are pure utilities (no globals, config-independent)
+ * - Helper functions (calcualteindex, bsgs_secondcheck, bsgs_thirdcheck)
+ *   use extern BSGS state and will be migrated to accept config parameter
+ *
  * The main BSGS thread functions remain in keyhunt.cpp due to extensive
  * global variable dependencies, but will be migrated here incrementally.
+ *
+ * Extern BSGS globals used:
+ * - BSGS_M_double, BSGS_M2_double, BSGS_M3, BSGS_M3_double (Int types)
+ * - OriginalPointsBSGS (target public keys)
+ * - BSGS_AMP2, BSGS_AMP3 (amplification point vectors)
+ * - bloom_bPx2nd, bloom_bPx3rd (extended bloom filters)
+ * - bPtable (baby step point table)
+ * - bsgs_m3 (M3 value for table size)
+ * - BSGS_BUFFERXPOINTLENGTH (X-point buffer length constant)
+ * - secp (SECP256K1 instance for elliptic curve operations)
+ *
+ * Future migration:
+ * - Move BSGS algorithm state into keyhunt_config_t->runtime.bsgs_*
+ * - Update helper functions to accept config parameter
+ * - Move main BSGS thread functions from keyhunt.cpp to this file
  *
  * BSGS Algorithm Overview:
  * - Time complexity: O(sqrt(N)) instead of O(N)
