@@ -439,6 +439,152 @@ Integrated performance benchmark:
 - Tests CPU, GPU, and hybrid performance
 - Provides recommendations for optimal settings
 
+## Platform Abstraction Layer (src/platform/)
+
+The platform abstraction layer provides a unified, cross-platform API for system-level operations, eliminating the need for scattered `#ifdef` blocks throughout the codebase. It enables seamless compilation on Windows (64-bit) and POSIX-compliant systems (Linux, macOS).
+
+### Design Principles
+
+1. **Single Include Point**: `#include "platform/platform.h"` provides all platform functionality
+2. **Opaque Types**: Platform-specific handles (threads, mutexes) are wrapped in unified types
+3. **Zero External Dependencies**: Uses only native OS APIs (Windows API, pthread, clock_gettime)
+4. **Runtime Detection**: Platform is detected at compile-time via preprocessor macros
+5. **Clean API**: Return value convention: 0 = success, non-zero = error code
+
+### Architecture
+
+```
+src/platform/
+├── platform.h              # Main entry point (includes all sub-headers)
+├── platform_types.h        # Opaque type definitions and platform detection
+├── platform_thread.h/c     # Thread operations (create, join, detach)
+├── platform_mutex.h/c      # Mutex operations (init, lock, unlock, destroy)
+└── platform_time.h/c       # High-resolution monotonic time
+```
+
+### Platform Detection (platform_types.h)
+
+**Compile-time platform detection**:
+```c
+#if defined(_WIN64) && !defined(__CYGWIN__)
+    #define PLATFORM_WINDOWS 1
+    #define PLATFORM_POSIX 0
+#else
+    #define PLATFORM_WINDOWS 0
+    #define PLATFORM_POSIX 1
+#endif
+```
+
+**Opaque type mappings**:
+- `platform_thread_t`: Windows `HANDLE` or POSIX `pthread_t`
+- `platform_mutex_t`: Windows `HANDLE` or POSIX `pthread_mutex_t`
+- `platform_thread_func_t`: Unified thread function signature across platforms
+- `platform_thread_return_t`: Windows `DWORD` or POSIX `void*`
+
+### Thread Operations (platform_thread.h/c)
+
+**API Functions**:
+- `platform_thread_create()`: Create and start a new thread
+- `platform_thread_join()`: Wait for thread termination, retrieve exit value
+- `platform_thread_detach()`: Detach thread for independent execution
+
+**Windows Implementation**:
+- Uses `CreateThread` with default stack size and immediate start
+- `WaitForSingleObject(INFINITE)` for blocking join
+- `GetExitCodeThread` to retrieve exit code
+- `CloseHandle` for detaching
+
+**POSIX Implementation**:
+- Uses `pthread_create` with default attributes
+- `pthread_join` for blocking wait and return value retrieval
+- `pthread_detach` for independent thread execution
+
+### Mutex Operations (platform_mutex.h/c)
+
+**API Functions**:
+- `platform_mutex_init()`: Initialize a mutex
+- `platform_mutex_lock()`: Acquire lock (blocking)
+- `platform_mutex_unlock()`: Release lock
+- `platform_mutex_destroy()`: Destroy mutex and free resources
+
+**Windows Implementation**:
+- Uses `CreateMutex` with NULL security, unnamed, not initially owned
+- `WaitForSingleObject(INFINITE)` for blocking lock acquisition
+- `ReleaseMutex` to release ownership
+- `CloseHandle` to destroy
+
+**POSIX Implementation**:
+- Uses `pthread_mutex_init` with default attributes
+- `pthread_mutex_lock` for blocking lock acquisition
+- `pthread_mutex_unlock` to release lock
+- `pthread_mutex_destroy` to free resources
+
+### Time Operations (platform_time.h/c)
+
+**API Function**:
+- `platform_time_now_ns()`: Get monotonic timestamp in nanoseconds
+
+**Windows Implementation**:
+- Uses `QueryPerformanceCounter` for high-resolution timestamps
+- Uses `QueryPerformanceFrequency` to get timer frequency (cached on first call)
+- Converts ticks to nanoseconds: `(ticks * 1,000,000,000) / frequency`
+- Two-step conversion to avoid overflow: ticks → microseconds → nanoseconds
+
+**POSIX Implementation**:
+- Prefers `CLOCK_MONOTONIC_RAW` (not affected by NTP adjustments)
+- Falls back to `CLOCK_MONOTONIC` if `CLOCK_MONOTONIC_RAW` unavailable
+- Converts `timespec` (seconds + nanoseconds) to total nanoseconds
+- Provides true nanosecond resolution (1e-9 seconds)
+
+**Use Cases**:
+- Performance measurements and benchmarking
+- Elapsed time calculations
+- Not suitable for wall-clock time or absolute timestamps
+
+### Usage Example
+
+```c
+#include "platform/platform.h"
+
+/* Thread example */
+platform_thread_t thread;
+platform_thread_create(&thread, my_thread_func, user_data);
+platform_thread_join(thread, NULL);
+
+/* Mutex example */
+platform_mutex_t mutex;
+platform_mutex_init(&mutex);
+platform_mutex_lock(&mutex);
+/* Critical section */
+platform_mutex_unlock(&mutex);
+platform_mutex_destroy(&mutex);
+
+/* Timing example */
+uint64_t start = platform_time_now_ns();
+/* ... do work ... */
+uint64_t elapsed = platform_time_now_ns() - start;
+double elapsed_seconds = elapsed / 1e9;
+```
+
+### Integration Notes
+
+- **Replaces direct platform APIs**: No need for `pthread.h`, `windows.h`, or `time.h` includes in application code
+- **Thread-safe**: All operations are thread-safe and can be called concurrently
+- **Error handling**: All functions return 0 on success, non-zero error codes on failure
+- **No cleanup overhead**: Uses native OS primitives directly without wrappers or allocations
+
+### Testing Platform Abstraction
+
+```bash
+# Linux/macOS build
+make clean && make
+./keyhunt -m address -f tests/1to32.txt -t 4
+
+# Windows build (requires MinGW-w64 or MSVC)
+make clean && make CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++
+./keyhunt.exe -m address -f tests/1to32.txt -t 4
+```
+
 ## Documentation Files
 
 - **README.md**: User documentation, examples, FAQ
