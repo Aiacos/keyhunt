@@ -39,10 +39,10 @@
  * - Space complexity: O(sqrt(N))
  * - Requires known public key (X-coordinate)
  *
- * See search_common.h for shared declarations.
+ * See search_context.h for shared declarations and extern globals.
  */
 
-#include "search_common.h"
+#include "search_context.h"
 #include "../bsgs/bsgs_sort.h"
 #include "../output.h"
 #include <cstdio>
