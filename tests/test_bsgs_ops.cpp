@@ -1,0 +1,505 @@
+/*
+ * test_bsgs_ops.cpp - Unit tests for the BSGS Operations module
+ *
+ * Tests batch operations for Baby Step Giant Step algorithm:
+ * - Batch context initialization and cleanup
+ * - Memory allocation and alignment
+ * - Bloom filter integration
+ * - SIMD capability detection
+ */
+
+#include "test_framework.h"
+#include "bsgs/bsgs_ops.h"
+#include "bloom/bloom.h"
+#include <cstdlib>
+#include <cstring>
+
+/* ============================================================================
+ * Batch Context Initialization Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_init) {
+    bsgs_batch_ctx_t ctx;
+    int result = bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    ASSERT_EQ(0, result);
+    ASSERT_TRUE(ctx.initialized);
+    ASSERT_EQ(BSGS_BATCH_SIZE, ctx.batch_size);
+    ASSERT_EQ(BSGS_HALF_BATCH, ctx.half_batch);
+    ASSERT_NOT_NULL(ctx.bloom_results);
+    ASSERT_NOT_NULL(ctx.xpoint_raw);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_init_custom_size) {
+    bsgs_batch_ctx_t ctx;
+    int batch_size = 512;
+    int result = bsgs_batch_init(&ctx, batch_size);
+
+    ASSERT_EQ(0, result);
+    ASSERT_TRUE(ctx.initialized);
+    ASSERT_EQ(batch_size, ctx.batch_size);
+    ASSERT_EQ(batch_size / 2, ctx.half_batch);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_init_null_context) {
+    int result = bsgs_batch_init(NULL, BSGS_BATCH_SIZE);
+    ASSERT_EQ(-1, result);
+}
+
+TEST(bsgs_batch_init_invalid_size) {
+    bsgs_batch_ctx_t ctx;
+    /* Batch size must be >= 64 */
+    int result = bsgs_batch_init(&ctx, 32);
+    ASSERT_EQ(-1, result);
+}
+
+TEST(bsgs_batch_init_minimum_size) {
+    bsgs_batch_ctx_t ctx;
+    /* Minimum valid batch size is 64 */
+    int result = bsgs_batch_init(&ctx, 64);
+
+    ASSERT_EQ(0, result);
+    ASSERT_TRUE(ctx.initialized);
+    ASSERT_EQ(64, ctx.batch_size);
+    ASSERT_EQ(32, ctx.half_batch);
+
+    bsgs_batch_free(&ctx);
+}
+
+/* ============================================================================
+ * Batch Context Cleanup Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_free) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    bsgs_batch_free(&ctx);
+
+    /* After free, all pointers should be NULL and initialized should be false */
+    ASSERT_FALSE(ctx.initialized);
+    ASSERT_NULL(ctx.bloom_results);
+    ASSERT_NULL(ctx.xpoint_raw);
+}
+
+TEST(bsgs_batch_free_null) {
+    /* Should not crash with NULL context */
+    bsgs_batch_free(NULL);
+    ASSERT_TRUE(1);  /* If we get here, it didn't crash */
+}
+
+TEST(bsgs_batch_free_uninitialized) {
+    bsgs_batch_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+
+    /* Should not crash with uninitialized context */
+    bsgs_batch_free(&ctx);
+    ASSERT_TRUE(1);
+}
+
+TEST(bsgs_batch_double_free) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    bsgs_batch_free(&ctx);
+    /* Double free should be safe */
+    bsgs_batch_free(&ctx);
+
+    ASSERT_TRUE(1);  /* If we get here, it didn't crash */
+}
+
+/* ============================================================================
+ * Memory Allocation Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_memory_alignment) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* Check that allocations are cache-line aligned (64 bytes) */
+    uintptr_t bloom_addr = (uintptr_t)ctx.bloom_results;
+    uintptr_t xpoint_addr = (uintptr_t)ctx.xpoint_raw;
+
+    ASSERT_EQ(0, bloom_addr % CACHE_LINE_SIZE);
+    ASSERT_EQ(0, xpoint_addr % CACHE_LINE_SIZE);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_memory_size) {
+    bsgs_batch_ctx_t ctx;
+    int batch_size = 256;
+    bsgs_batch_init(&ctx, batch_size);
+
+    /* Verify batch size is stored correctly */
+    ASSERT_EQ(batch_size, ctx.batch_size);
+    ASSERT_EQ(batch_size / 2, ctx.half_batch);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_multiple_contexts) {
+    bsgs_batch_ctx_t ctx1, ctx2, ctx3;
+
+    /* Initialize multiple contexts */
+    ASSERT_EQ(0, bsgs_batch_init(&ctx1, 128));
+    ASSERT_EQ(0, bsgs_batch_init(&ctx2, 256));
+    ASSERT_EQ(0, bsgs_batch_init(&ctx3, 512));
+
+    /* All should be properly initialized */
+    ASSERT_TRUE(ctx1.initialized);
+    ASSERT_TRUE(ctx2.initialized);
+    ASSERT_TRUE(ctx3.initialized);
+
+    /* Each should have correct sizes */
+    ASSERT_EQ(128, ctx1.batch_size);
+    ASSERT_EQ(256, ctx2.batch_size);
+    ASSERT_EQ(512, ctx3.batch_size);
+
+    /* Clean up */
+    bsgs_batch_free(&ctx1);
+    bsgs_batch_free(&ctx2);
+    bsgs_batch_free(&ctx3);
+}
+
+/* ============================================================================
+ * Bloom Filter Integration Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_bloom_check_null_context) {
+    struct bloom bloom_array[256];
+    int result = bsgs_batch_bloom_check(NULL, bloom_array, 100);
+    ASSERT_EQ(0, result);
+}
+
+TEST(bsgs_batch_bloom_check_uninitialized) {
+    bsgs_batch_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    struct bloom bloom_array[256];
+
+    int result = bsgs_batch_bloom_check(&ctx, bloom_array, 100);
+    ASSERT_EQ(0, result);
+}
+
+TEST(bsgs_batch_bloom_check_null_bloom) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    int result = bsgs_batch_bloom_check(&ctx, NULL, 100);
+    ASSERT_EQ(0, result);
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_empty) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* Initialize bloom filters */
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Clear xpoint data */
+    memset(ctx.xpoint_raw, 0, ctx.batch_size * 32);
+
+    /* Check with empty bloom filters - should find no hits */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, 10);
+    ASSERT_EQ(0, hits);
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_with_hits) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* Initialize bloom filters */
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Add some test data to xpoint_raw and corresponding bloom filter */
+    int num_test_points = 5;
+    for (int i = 0; i < num_test_points; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        /* Create test xpoint data */
+        xpoint[0] = i;  /* Bloom filter index */
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = (i * 10 + j) & 0xFF;
+        }
+        /* Add to corresponding bloom filter */
+        bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+    }
+
+    /* Check - should find all 5 hits */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, num_test_points);
+    ASSERT_EQ(num_test_points, hits);
+
+    /* Verify bloom_results array is set correctly */
+    for (int i = 0; i < num_test_points; i++) {
+        ASSERT_EQ(1, ctx.bloom_results[i]);
+    }
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_zero_points) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Check with 0 points */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, 0);
+    ASSERT_EQ(0, hits);
+
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+/* ============================================================================
+ * X-Point Extraction Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_extract_xpoints_basic) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* This function is a stub in the current implementation */
+    /* It should not crash when called */
+    bsgs_batch_extract_xpoints(&ctx, 100);
+
+    ASSERT_TRUE(1);  /* If we get here, it didn't crash */
+
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_extract_xpoints_zero) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    bsgs_batch_extract_xpoints(&ctx, 0);
+
+    ASSERT_TRUE(1);
+
+    bsgs_batch_free(&ctx);
+}
+
+/* ============================================================================
+ * SIMD Capability Tests
+ * ============================================================================ */
+
+TEST(bsgs_ops_simd_available) {
+    int simd = bsgs_ops_simd_available();
+
+    /* Return value should be 0 (no SIMD), 1 (AVX2), or 2 (AVX-512) */
+    ASSERT_TRUE(simd >= 0 && simd <= 2);
+}
+
+TEST(bsgs_ops_print_caps) {
+    /* Should not crash when called */
+    bsgs_ops_print_caps();
+    ASSERT_TRUE(1);
+}
+
+/* ============================================================================
+ * Batch Size Configuration Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_size_power_of_two) {
+    /* Test various power-of-2 batch sizes */
+    int sizes[] = {64, 128, 256, 512, 1024, 2048};
+
+    for (int i = 0; i < 6; i++) {
+        bsgs_batch_ctx_t ctx;
+        int result = bsgs_batch_init(&ctx, sizes[i]);
+
+        ASSERT_EQ(0, result);
+        ASSERT_EQ(sizes[i], ctx.batch_size);
+        ASSERT_EQ(sizes[i] / 2, ctx.half_batch);
+
+        bsgs_batch_free(&ctx);
+    }
+}
+
+TEST(bsgs_batch_size_non_power_of_two) {
+    /* Non-power-of-2 sizes should still work */
+    int sizes[] = {100, 200, 300, 500, 1000};
+
+    for (int i = 0; i < 5; i++) {
+        bsgs_batch_ctx_t ctx;
+        int result = bsgs_batch_init(&ctx, sizes[i]);
+
+        ASSERT_EQ(0, result);
+        ASSERT_EQ(sizes[i], ctx.batch_size);
+        ASSERT_EQ(sizes[i] / 2, ctx.half_batch);
+
+        bsgs_batch_free(&ctx);
+    }
+}
+
+TEST(bsgs_batch_size_large) {
+    /* Test with a large batch size */
+    bsgs_batch_ctx_t ctx;
+    int result = bsgs_batch_init(&ctx, 8192);
+
+    ASSERT_EQ(0, result);
+    ASSERT_EQ(8192, ctx.batch_size);
+    ASSERT_NOT_NULL(ctx.bloom_results);
+    ASSERT_NOT_NULL(ctx.xpoint_raw);
+
+    bsgs_batch_free(&ctx);
+}
+
+/* ============================================================================
+ * Constants Verification Tests
+ * ============================================================================ */
+
+TEST(bsgs_constants) {
+    /* Verify that constants are defined with expected values */
+    ASSERT_EQ(1024, BSGS_BATCH_SIZE);
+    ASSERT_EQ(512, BSGS_HALF_BATCH);
+    ASSERT_EQ(64, CACHE_LINE_SIZE);
+    ASSERT_EQ(8, PREFETCH_DISTANCE);
+}
+
+TEST(bsgs_half_batch_calculation) {
+    /* Verify half_batch is always batch_size / 2 */
+    bsgs_batch_ctx_t ctx;
+
+    int sizes[] = {64, 128, 256, 512, 1024};
+    for (int i = 0; i < 5; i++) {
+        bsgs_batch_init(&ctx, sizes[i]);
+        ASSERT_EQ(sizes[i] / 2, ctx.half_batch);
+        bsgs_batch_free(&ctx);
+    }
+}
+
+/* ============================================================================
+ * Edge Case Tests
+ * ============================================================================ */
+
+TEST(bsgs_batch_bloom_check_max_batch) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Check with full batch size */
+    memset(ctx.xpoint_raw, 0, ctx.batch_size * 32);
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, ctx.batch_size);
+
+    /* With empty data and empty bloom, should be 0 hits */
+    ASSERT_EQ(0, hits);
+
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_reuse) {
+    bsgs_batch_ctx_t ctx;
+
+    /* Initialize, use, free, and re-initialize */
+    bsgs_batch_init(&ctx, 128);
+    ASSERT_TRUE(ctx.initialized);
+    ASSERT_EQ(128, ctx.batch_size);
+    bsgs_batch_free(&ctx);
+
+    /* Re-initialize with different size */
+    bsgs_batch_init(&ctx, 256);
+    ASSERT_TRUE(ctx.initialized);
+    ASSERT_EQ(256, ctx.batch_size);
+    bsgs_batch_free(&ctx);
+}
+
+/* ============================================================================
+ * Main Entry Point
+ * ============================================================================ */
+
+/* Exported function for test runner */
+int run_bsgs_ops_tests(void) {
+    TEST_INIT();
+
+    TEST_SECTION("Batch Context Initialization");
+    RUN_TEST(bsgs_batch_init);
+    RUN_TEST(bsgs_batch_init_custom_size);
+    RUN_TEST(bsgs_batch_init_null_context);
+    RUN_TEST(bsgs_batch_init_invalid_size);
+    RUN_TEST(bsgs_batch_init_minimum_size);
+
+    TEST_SECTION("Batch Context Cleanup");
+    RUN_TEST(bsgs_batch_free);
+    RUN_TEST(bsgs_batch_free_null);
+    RUN_TEST(bsgs_batch_free_uninitialized);
+    RUN_TEST(bsgs_batch_double_free);
+
+    TEST_SECTION("Memory Allocation");
+    RUN_TEST(bsgs_batch_memory_alignment);
+    RUN_TEST(bsgs_batch_memory_size);
+    RUN_TEST(bsgs_batch_multiple_contexts);
+
+    TEST_SECTION("Bloom Filter Integration");
+    RUN_TEST(bsgs_batch_bloom_check_null_context);
+    RUN_TEST(bsgs_batch_bloom_check_uninitialized);
+    RUN_TEST(bsgs_batch_bloom_check_null_bloom);
+    RUN_TEST(bsgs_batch_bloom_check_empty);
+    RUN_TEST(bsgs_batch_bloom_check_with_hits);
+    RUN_TEST(bsgs_batch_bloom_check_zero_points);
+
+    TEST_SECTION("X-Point Extraction");
+    RUN_TEST(bsgs_batch_extract_xpoints_basic);
+    RUN_TEST(bsgs_batch_extract_xpoints_zero);
+
+    TEST_SECTION("SIMD Capabilities");
+    RUN_TEST(bsgs_ops_simd_available);
+    RUN_TEST(bsgs_ops_print_caps);
+
+    TEST_SECTION("Batch Size Configuration");
+    RUN_TEST(bsgs_batch_size_power_of_two);
+    RUN_TEST(bsgs_batch_size_non_power_of_two);
+    RUN_TEST(bsgs_batch_size_large);
+
+    TEST_SECTION("Constants Verification");
+    RUN_TEST(bsgs_constants);
+    RUN_TEST(bsgs_half_batch_calculation);
+
+    TEST_SECTION("Edge Cases");
+    RUN_TEST(bsgs_batch_bloom_check_max_batch);
+    RUN_TEST(bsgs_batch_reuse);
+
+    return TEST_RESULTS();
+}
+
+/* Standalone main for individual testing */
+#ifdef TEST_STANDALONE
+int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+    return run_bsgs_ops_tests();
+}
+#endif
