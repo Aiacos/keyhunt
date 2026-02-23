@@ -392,6 +392,349 @@ TEST(intgroup_modinv_optimized_large_values) {
 }
 
 /* ============================================================================
+ * Modular Arithmetic Correctness Tests (IntMod Operations)
+ * ============================================================================ */
+
+TEST(modular_arithmetic_modadd_basic) {
+    setup_secp256k1();
+
+    Int a, b, result, expected;
+
+    /* Test: (5 + 7) mod p = 12 mod p */
+    a.SetInt64(5);
+    b.SetInt64(7);
+    result.Set(&a);
+    result.ModAdd(&b);
+    expected.SetInt64(12);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modadd_two_operands) {
+    setup_secp256k1();
+
+    Int a, b, result, expected;
+
+    /* Test: ModAdd(a, b) where result = (a + b) mod p */
+    a.SetInt64(100);
+    b.SetInt64(200);
+    result.ModAdd(&a, &b);
+    expected.SetInt64(300);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modadd_uint64) {
+    setup_secp256k1();
+
+    Int a, result, expected;
+
+    /* Test: (50 + 25) mod p */
+    a.SetInt64(50);
+    result.Set(&a);
+    result.ModAdd(25);
+    expected.SetInt64(75);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modadd_overflow) {
+    setup_secp256k1();
+
+    Int a, b, result;
+
+    /* Test: Addition that exceeds P should wrap correctly */
+    /* Use values near P to test overflow handling */
+    a.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");  /* P - 1 */
+    b.SetInt64(10);
+    result.Set(&a);
+    result.ModAdd(&b);
+
+    /* Result should wrap around: (P - 1 + 10) mod P = 9 */
+    Int expected;
+    expected.SetInt64(9);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_moddouble_basic) {
+    setup_secp256k1();
+
+    Int a, result, expected;
+
+    /* Test: (7 * 2) mod p = 14 mod p */
+    a.SetInt64(7);
+    result.Set(&a);
+    result.ModDouble();
+    expected.SetInt64(14);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_moddouble_large) {
+    setup_secp256k1();
+
+    Int a, result, expected;
+
+    /* Test: Doubling a large value */
+    a.SetBase16("123456789ABCDEF123456789ABCDEF123456789ABCDEF123456789ABCDEF1");
+    result.Set(&a);
+    result.ModDouble();
+
+    /* Verify by adding to itself */
+    expected.Set(&a);
+    expected.ModAdd(&a);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_moddouble_overflow) {
+    setup_secp256k1();
+
+    Int a, result;
+
+    /* Test: Doubling a value near P/2 */
+    a.SetBase16("7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7FFFFE17");
+    result.Set(&a);
+    result.ModDouble();
+
+    /* Result should be less than P (wrap occurs) */
+    Int p;
+    p.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+    ASSERT_TRUE(result.IsLower(&p));
+}
+
+TEST(modular_arithmetic_modsub_basic) {
+    setup_secp256k1();
+
+    Int a, b, result, expected;
+
+    /* Test: (10 - 3) mod p = 7 mod p */
+    a.SetInt64(10);
+    b.SetInt64(3);
+    result.Set(&a);
+    result.ModSub(&b);
+    expected.SetInt64(7);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modsub_two_operands) {
+    setup_secp256k1();
+
+    Int a, b, result, expected;
+
+    /* Test: ModSub(a, b) where result = (a - b) mod p */
+    a.SetInt64(500);
+    b.SetInt64(100);
+    result.ModSub(&a, &b);
+    expected.SetInt64(400);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modsub_uint64) {
+    setup_secp256k1();
+
+    Int a, result, expected;
+
+    /* Test: (100 - 25) mod p */
+    a.SetInt64(100);
+    result.Set(&a);
+    result.ModSub(25);
+    expected.SetInt64(75);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modsub_underflow) {
+    setup_secp256k1();
+
+    Int a, b, result;
+
+    /* Test: Subtraction that goes negative should wrap to P + (a - b) */
+    a.SetInt64(5);
+    b.SetInt64(10);
+    result.Set(&a);
+    result.ModSub(&b);
+
+    /* Result should be P + (5 - 10) = P - 5 */
+    Int p;
+    p.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+    Int expected;
+    expected.Set(&p);
+    expected.Sub(5);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modsub_large_values) {
+    setup_secp256k1();
+
+    Int a, b, result;
+
+    /* Test: Subtraction of large values */
+    a.SetBase16("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    b.SetBase16("5555555555555555555555555555555555555555555555555555555555555555");
+    result.Set(&a);
+    result.ModSub(&b);
+
+    /* Verify by adding back */
+    Int verify;
+    verify.Set(&result);
+    verify.ModAdd(&b);
+    ASSERT_TRUE(verify.IsEqual(&a));
+}
+
+TEST(modular_arithmetic_modneg_basic) {
+    setup_secp256k1();
+
+    Int a, result;
+
+    /* Test: -5 mod p = P - 5 */
+    a.SetInt64(5);
+    result.Set(&a);
+    result.ModNeg();
+
+    Int p;
+    p.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+    Int expected;
+    expected.Set(&p);
+    expected.Sub(5);
+    ASSERT_TRUE(result.IsEqual(&expected));
+}
+
+TEST(modular_arithmetic_modneg_zero) {
+    setup_secp256k1();
+
+    Int a, result;
+
+    /* Test: -0 mod p = P (but should be normalized to P) */
+    a.SetInt64(0);
+    result.Set(&a);
+    result.ModNeg();
+
+    /* Result should be P */
+    Int p;
+    p.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+    ASSERT_TRUE(result.IsEqual(&p));
+}
+
+TEST(modular_arithmetic_modneg_large) {
+    setup_secp256k1();
+
+    Int a, result;
+
+    /* Test: Negation of large value */
+    a.SetBase16("123456789ABCDEF123456789ABCDEF123456789ABCDEF123456789ABCDEF1");
+    result.Set(&a);
+    result.ModNeg();
+
+    /* Verify: a + (-a) = 0 mod p */
+    Int verify;
+    verify.Set(&a);
+    verify.ModAdd(&result);
+
+    /* verify should be 0 or P (both represent 0 mod p) */
+    Int p;
+    p.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+    ASSERT_TRUE(verify.IsZero() || verify.IsEqual(&p));
+}
+
+TEST(modular_arithmetic_modneg_double_negation) {
+    setup_secp256k1();
+
+    Int a, result, original;
+
+    /* Test: -(-a) = a mod p */
+    a.SetInt64(12345);
+    original.Set(&a);
+    result.Set(&a);
+    result.ModNeg();
+    result.ModNeg();
+
+    ASSERT_TRUE(result.IsEqual(&original));
+}
+
+TEST(modular_arithmetic_add_sub_inverse) {
+    setup_secp256k1();
+
+    Int a, b, result, original;
+
+    /* Test: (a + b) - b = a mod p */
+    a.SetInt64(777);
+    b.SetInt64(888);
+    original.Set(&a);
+
+    result.Set(&a);
+    result.ModAdd(&b);
+    result.ModSub(&b);
+
+    ASSERT_TRUE(result.IsEqual(&original));
+}
+
+TEST(modular_arithmetic_properties_commutativity) {
+    setup_secp256k1();
+
+    Int a, b, result1, result2;
+
+    /* Test: a + b = b + a (mod p) */
+    a.SetInt64(123);
+    b.SetInt64(456);
+
+    result1.ModAdd(&a, &b);
+    result2.ModAdd(&b, &a);
+
+    ASSERT_TRUE(result1.IsEqual(&result2));
+}
+
+TEST(modular_arithmetic_properties_associativity) {
+    setup_secp256k1();
+
+    Int a, b, c, result1, result2, temp;
+
+    /* Test: (a + b) + c = a + (b + c) (mod p) */
+    a.SetInt64(111);
+    b.SetInt64(222);
+    c.SetInt64(333);
+
+    /* Calculate (a + b) + c */
+    result1.ModAdd(&a, &b);
+    result1.ModAdd(&c);
+
+    /* Calculate a + (b + c) */
+    temp.ModAdd(&b, &c);
+    result2.Set(&a);
+    result2.ModAdd(&temp);
+
+    ASSERT_TRUE(result1.IsEqual(&result2));
+}
+
+TEST(modular_arithmetic_properties_identity) {
+    setup_secp256k1();
+
+    Int a, result, zero;
+
+    /* Test: a + 0 = a (mod p) */
+    a.SetInt64(99999);
+    zero.SetInt64(0);
+
+    result.Set(&a);
+    result.ModAdd(&zero);
+
+    ASSERT_TRUE(result.IsEqual(&a));
+}
+
+TEST(modular_arithmetic_properties_additive_inverse) {
+    setup_secp256k1();
+
+    Int a, neg_a, result;
+
+    /* Test: a + (-a) = 0 (mod p) */
+    a.SetInt64(54321);
+    neg_a.Set(&a);
+    neg_a.ModNeg();
+
+    result.Set(&a);
+    result.ModAdd(&neg_a);
+
+    /* Result should be 0 or P (both represent 0 mod p) */
+    Int p;
+    p.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+    ASSERT_TRUE(result.IsZero() || result.IsEqual(&p));
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -427,6 +770,29 @@ int run_intgroup_tests(void) {
     TEST_SECTION("Large Value Tests");
     RUN_TEST(intgroup_modinv_large_values);
     RUN_TEST(intgroup_modinv_optimized_large_values);
+
+    TEST_SECTION("Modular Arithmetic Correctness (IntMod Operations)");
+    RUN_TEST(modular_arithmetic_modadd_basic);
+    RUN_TEST(modular_arithmetic_modadd_two_operands);
+    RUN_TEST(modular_arithmetic_modadd_uint64);
+    RUN_TEST(modular_arithmetic_modadd_overflow);
+    RUN_TEST(modular_arithmetic_moddouble_basic);
+    RUN_TEST(modular_arithmetic_moddouble_large);
+    RUN_TEST(modular_arithmetic_moddouble_overflow);
+    RUN_TEST(modular_arithmetic_modsub_basic);
+    RUN_TEST(modular_arithmetic_modsub_two_operands);
+    RUN_TEST(modular_arithmetic_modsub_uint64);
+    RUN_TEST(modular_arithmetic_modsub_underflow);
+    RUN_TEST(modular_arithmetic_modsub_large_values);
+    RUN_TEST(modular_arithmetic_modneg_basic);
+    RUN_TEST(modular_arithmetic_modneg_zero);
+    RUN_TEST(modular_arithmetic_modneg_large);
+    RUN_TEST(modular_arithmetic_modneg_double_negation);
+    RUN_TEST(modular_arithmetic_add_sub_inverse);
+    RUN_TEST(modular_arithmetic_properties_commutativity);
+    RUN_TEST(modular_arithmetic_properties_associativity);
+    RUN_TEST(modular_arithmetic_properties_identity);
+    RUN_TEST(modular_arithmetic_properties_additive_inverse);
 
     cleanup_secp256k1();
 
