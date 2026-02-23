@@ -172,9 +172,7 @@ $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # All test objects
-TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
-             $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
-             $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ)
+TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ)
 
 # Build test runner
 run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
