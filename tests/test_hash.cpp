@@ -351,6 +351,42 @@ TEST(sha256_abc) {
     ASSERT_MEM_EQ(expected, digest, 32);
 }
 
+TEST(sha256_message_digest) {
+    unsigned char input[] = "message digest";
+    unsigned char digest[32];
+    unsigned char expected[32];
+
+    /* SHA256("message digest") = f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650 */
+    hex_to_bytes("f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650", expected, 32);
+
+    sha256(input, 14, digest);
+    ASSERT_MEM_EQ(expected, digest, 32);
+}
+
+TEST(sha256_alphabet) {
+    unsigned char input[] = "abcdefghijklmnopqrstuvwxyz";
+    unsigned char digest[32];
+    unsigned char expected[32];
+
+    /* SHA256("abcdefghijklmnopqrstuvwxyz") = 71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73 */
+    hex_to_bytes("71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73", expected, 32);
+
+    sha256(input, 26, digest);
+    ASSERT_MEM_EQ(expected, digest, 32);
+}
+
+TEST(sha256_alphanumeric_long) {
+    unsigned char input[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    unsigned char digest[32];
+    unsigned char expected[32];
+
+    /* SHA256("ABCD...xyz0123456789") = db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0 */
+    hex_to_bytes("db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0", expected, 32);
+
+    sha256(input, strlen((char*)input), digest);
+    ASSERT_MEM_EQ(expected, digest, 32);
+}
+
 TEST(sha256_long_string) {
     unsigned char input[] = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
     unsigned char digest[32];
