@@ -278,6 +278,272 @@ TEST(bsgs_batch_bloom_check_zero_points) {
     bsgs_batch_free(&ctx);
 }
 
+TEST(bsgs_batch_bloom_check_partial_matches) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* Initialize bloom filters */
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Add 10 test points, but only add 5 to bloom filter */
+    int num_test_points = 10;
+    int num_added = 5;
+
+    for (int i = 0; i < num_test_points; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        xpoint[0] = i;
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = (i * 10 + j) & 0xFF;
+        }
+        /* Only add first 5 to bloom filter */
+        if (i < num_added) {
+            bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+        }
+    }
+
+    /* Check - should find 5 hits */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, num_test_points);
+    ASSERT_EQ(num_added, hits);
+
+    /* Verify bloom_results array */
+    for (int i = 0; i < num_added; i++) {
+        ASSERT_EQ(1, ctx.bloom_results[i]);
+    }
+    for (int i = num_added; i < num_test_points; i++) {
+        ASSERT_EQ(0, ctx.bloom_results[i]);
+    }
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_all_filters) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* Initialize bloom filters */
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Add points distributed across all 256 bloom filters */
+    int num_test_points = 256;
+    for (int i = 0; i < num_test_points; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        xpoint[0] = i;  /* Use i as first byte to distribute across all filters */
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = (i + j) & 0xFF;
+        }
+        /* Add to corresponding bloom filter */
+        bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+    }
+
+    /* Check - should find all 256 hits */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, num_test_points);
+    ASSERT_EQ(num_test_points, hits);
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_different_batch_sizes) {
+    int batch_sizes[] = {64, 128, 256, 512};
+
+    for (int b = 0; b < 4; b++) {
+        bsgs_batch_ctx_t ctx;
+        bsgs_batch_init(&ctx, batch_sizes[b]);
+
+        struct bloom bloom_array[256];
+        for (int i = 0; i < 256; i++) {
+            bloom_init2(&bloom_array[i], 1000000, 0.000001);
+        }
+
+        /* Add a few test points */
+        int num_test_points = 10;
+        for (int i = 0; i < num_test_points; i++) {
+            uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+            xpoint[0] = i;
+            for (int j = 1; j < 32; j++) {
+                xpoint[j] = (i * 10 + j) & 0xFF;
+            }
+            bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+        }
+
+        /* Check */
+        int hits = bsgs_batch_bloom_check(&ctx, bloom_array, num_test_points);
+        ASSERT_EQ(num_test_points, hits);
+
+        /* Clean up */
+        for (int i = 0; i < 256; i++) {
+            bloom_free(&bloom_array[i]);
+        }
+        bsgs_batch_free(&ctx);
+    }
+}
+
+TEST(bsgs_batch_bloom_check_sequential_calls) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* First batch of points */
+    for (int i = 0; i < 5; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        xpoint[0] = i;
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = (i * 10 + j) & 0xFF;
+        }
+        bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+    }
+
+    int hits1 = bsgs_batch_bloom_check(&ctx, bloom_array, 5);
+    ASSERT_EQ(5, hits1);
+
+    /* Second batch with different data */
+    for (int i = 0; i < 3; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        xpoint[0] = i + 10;
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = ((i + 10) * 10 + j) & 0xFF;
+        }
+        bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+    }
+
+    int hits2 = bsgs_batch_bloom_check(&ctx, bloom_array, 3);
+    ASSERT_EQ(3, hits2);
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_no_matches) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    /* Initialize bloom filters */
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Add some data to bloom filters */
+    for (int i = 0; i < 10; i++) {
+        unsigned char data[32];
+        data[0] = i;
+        for (int j = 1; j < 32; j++) {
+            data[j] = (i + j) & 0xFF;
+        }
+        bloom_add(&bloom_array[data[0]], (char*)data, 32);
+    }
+
+    /* Add different data to xpoint_raw that won't match */
+    int num_test_points = 10;
+    for (int i = 0; i < num_test_points; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        xpoint[0] = i + 100;  /* Different first byte */
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = ((i + 100) * 20 + j) & 0xFF;
+        }
+    }
+
+    /* Check - should find 0 hits (or very few due to false positives) */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, num_test_points);
+
+    /* Allow for some false positives but should be very rare */
+    ASSERT_TRUE(hits <= 2);
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_single_point) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Add single test point */
+    uint8_t *xpoint = ctx.xpoint_raw;
+    xpoint[0] = 42;
+    for (int j = 1; j < 32; j++) {
+        xpoint[j] = j & 0xFF;
+    }
+    bloom_add(&bloom_array[xpoint[0]], (char*)xpoint, 32);
+
+    /* Check with 1 point */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, 1);
+    ASSERT_EQ(1, hits);
+    ASSERT_EQ(1, ctx.bloom_results[0]);
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
+TEST(bsgs_batch_bloom_check_results_array_cleared) {
+    bsgs_batch_ctx_t ctx;
+    bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
+
+    struct bloom bloom_array[256];
+    for (int i = 0; i < 256; i++) {
+        bloom_init2(&bloom_array[i], 1000000, 0.000001);
+    }
+
+    /* Set bloom_results to all 1s initially */
+    memset(ctx.bloom_results, 1, ctx.batch_size);
+
+    /* Add no points to bloom filter, add some to xpoint_raw */
+    int num_test_points = 10;
+    for (int i = 0; i < num_test_points; i++) {
+        uint8_t *xpoint = ctx.xpoint_raw + i * 32;
+        xpoint[0] = i;
+        for (int j = 1; j < 32; j++) {
+            xpoint[j] = (i * 10 + j) & 0xFF;
+        }
+        /* Don't add to bloom filter */
+    }
+
+    /* Check - should find 0 hits */
+    int hits = bsgs_batch_bloom_check(&ctx, bloom_array, num_test_points);
+    ASSERT_EQ(0, hits);
+
+    /* bloom_results should be cleared (0) for all checked points */
+    for (int i = 0; i < num_test_points; i++) {
+        ASSERT_EQ(0, ctx.bloom_results[i]);
+    }
+
+    /* Clean up */
+    for (int i = 0; i < 256; i++) {
+        bloom_free(&bloom_array[i]);
+    }
+    bsgs_batch_free(&ctx);
+}
+
 /* ============================================================================
  * X-Point Extraction Tests
  * ============================================================================ */
@@ -622,6 +888,13 @@ int run_bsgs_ops_tests(void) {
     RUN_TEST(bsgs_batch_bloom_check_empty);
     RUN_TEST(bsgs_batch_bloom_check_with_hits);
     RUN_TEST(bsgs_batch_bloom_check_zero_points);
+    RUN_TEST(bsgs_batch_bloom_check_partial_matches);
+    RUN_TEST(bsgs_batch_bloom_check_all_filters);
+    RUN_TEST(bsgs_batch_bloom_check_different_batch_sizes);
+    RUN_TEST(bsgs_batch_bloom_check_sequential_calls);
+    RUN_TEST(bsgs_batch_bloom_check_no_matches);
+    RUN_TEST(bsgs_batch_bloom_check_single_point);
+    RUN_TEST(bsgs_batch_bloom_check_results_array_cleared);
 
     TEST_SECTION("X-Point Extraction");
     RUN_TEST(bsgs_batch_extract_xpoints_basic);
