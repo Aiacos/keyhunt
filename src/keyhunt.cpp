@@ -225,12 +225,12 @@ typedef struct {
 	uint64_t keys;
 } profile_counters_t;
 
-static bool g_profile_enabled = false;
+bool g_profile_enabled = false;
 static profile_counters_t *g_profile_counters = NULL;
 static int g_profile_thread_count = 0;
 static profile_counters_t g_profile_prev_agg;
 
-static thread_local profile_counters_t *tls_prof = NULL;
+thread_local profile_counters_t *tls_prof = NULL;
 
 static inline uint64_t profile_now_ns() {
 	return platform_time_now_ns();
@@ -265,7 +265,7 @@ static inline void profile_init_threads(int nthreads) {
 	memset(&g_profile_prev_agg, 0, sizeof(g_profile_prev_agg));
 }
 
-static inline void profile_set_thread(int idx) {
+void profile_set_thread(int idx) {
 	if (!g_profile_enabled || !g_profile_counters || idx < 0 || idx >= g_profile_thread_count) {
 		tls_prof = NULL;
 		return;
@@ -1464,7 +1464,7 @@ static thread_local Int cpu_cached_block_start;
 static thread_local Int cpu_cached_block_end;
 static thread_local bool cpu_cached_block_valid = false;
 
-static bool acquire_base_key(Int &key) {
+bool acquire_base_key(Int &key) {
 	// Work pool mode for hybrid (work-stealing)
 	if (g_work_pool.enabled.load(std::memory_order_acquire)) {
 		// Check if we have a valid cached block with remaining work
@@ -4789,7 +4789,7 @@ int main(int argc, char **argv)	{
 
 /* cmp_hash20, load_u64_be, load_u32_be moved to sort/sort.cpp */
 
-static inline bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
+bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
 	// Compute (a - b) if it fits in uint64_t. Return false otherwise.
 	// Assumes Int represents non-negative values here.
 	if (!out) return false;

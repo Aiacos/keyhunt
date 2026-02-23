@@ -331,6 +331,15 @@ extern Point point_temp;
 extern Point point_temp2;
 
 /* ------------------------------------------------------------------ */
+/*  Utility function declarations                                     */
+/* ------------------------------------------------------------------ */
+
+/* Thread-safe acquisition of the next base key to search from.
+ * Defined in keyhunt.cpp. Supports work pool, work queue, random,
+ * and sequential modes. Returns false when no more work is available. */
+extern bool acquire_base_key(Int &key);
+
+/* ------------------------------------------------------------------ */
 /*  Thread function declarations                                      */
 /* ------------------------------------------------------------------ */
 
