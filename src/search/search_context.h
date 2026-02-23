@@ -9,6 +9,7 @@
 #include "secp256k1/Point.h"
 #include "secp256k1/Int.h"
 #include "bloom/bloom.h"
+#include "bloom/bloom_wrapper.h"
 #include "oldbloom/oldbloom.h"
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -57,10 +58,8 @@ struct checksumsha256 {
 	char backup[32];
 };
 
-struct bsgs_xvalue {
-	uint8_t value[6];
-	uint64_t index;
-};
+/* struct bsgs_xvalue defined in bsgs/bsgs_sort.h */
+#include "bsgs/bsgs_sort.h"
 
 struct address_value {
 	uint8_t value[20];
@@ -262,8 +261,8 @@ extern struct address_value *addressTable;
 extern struct oldbloom oldbloom_bP;
 
 extern struct bloom *bloom_bP;
-extern struct bloom *bloom_bPx2nd;
-extern struct bloom *bloom_bPx3rd;
+extern bloom_extended_t *bloom_bPx2nd;
+extern bloom_extended_t *bloom_bPx3rd;
 
 extern struct checksumsha256 *bloom_bP_checksums;
 extern struct checksumsha256 *bloom_bPx2nd_checksums;
@@ -358,16 +357,9 @@ void *thread_bPload_2blooms(void *vargp);
 
 /* ------------------------------------------------------------------ */
 /*  BSGS helper function declarations                                 */
+/*  Sort/search functions declared in bsgs/bsgs_sort.h (extern "C")   */
 /* ------------------------------------------------------------------ */
 
-void bsgs_sort(struct bsgs_xvalue *arr, int64_t n);
-void bsgs_myheapsort(struct bsgs_xvalue *arr, int64_t n);
-void bsgs_insertionsort(struct bsgs_xvalue *arr, int64_t n);
-void bsgs_introsort(struct bsgs_xvalue *arr, uint32_t depthLimit, int64_t n);
-void bsgs_swap(struct bsgs_xvalue *a, struct bsgs_xvalue *b);
-void bsgs_heapify(struct bsgs_xvalue *arr, int64_t n, int64_t i);
-int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n);
-int bsgs_searchbinary(struct bsgs_xvalue *arr, char *data, int64_t array_length, uint64_t *r_value);
 int bsgs_secondcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privatekey);
 int bsgs_thirdcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privatekey);
 void calcualteindex(int i, Int *key);

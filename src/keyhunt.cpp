@@ -6842,110 +6842,7 @@ platform_mutex_unlock(&write_keys);
 	return NULL;
 }
 
-
-/*
-	The bsgs_secondcheck function is made to perform a second BSGS search in a Range of less size.
-	This funtion is made with the especific purpouse to USE a smaller bPtable in RAM.
-*/
-int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey)	{
-	int i = 0,found = 0,r = 0;
-	Int base_key;
-	Point base_point,point_aux;
-	Point BSGS_Q, BSGS_S,BSGS_Q_AMP;
-	uint8_t xpoint_raw[16];
-
-
-	base_key.Set(&BSGS_M_double);
-	base_key.Mult((uint64_t) a);
-	base_key.Add(start_range);
-
-	base_point = secp->ComputePublicKey(&base_key);
-	point_aux = secp->Negation(base_point);
-
-	/*
-		BSGS_S = Q - base_key
-				 Q is the target Key
-		base_key is the Start range + a*BSGS_M
-	*/
-	BSGS_S = secp->AddDirect(OriginalPointsBSGS[k_index],point_aux);
-	BSGS_Q.Set(BSGS_S);
-	do {
-		BSGS_Q_AMP = secp->AddDirect(BSGS_Q,BSGS_AMP2[i]);
-		BSGS_S.Set(BSGS_Q_AMP);
-		BSGS_S.x.GetHi16Bytes(xpoint_raw);
-		r = bloom_ext_check(&bloom_bPx2nd[(uint8_t)xpoint_raw[0]], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
-		if(r)	{
-			found = bsgs_thirdcheck(&base_key,i,k_index,privatekey);
-		}
-		i++;
-	}while(i < 32 && !found);
-	return found;
-}
-
-int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey)	{
-	uint64_t j = 0;
-	int i = 0,found = 0,r = 0;
-	Int base_key,calculatedkey;
-	Point base_point,point_aux;
-	Point BSGS_Q, BSGS_S,BSGS_Q_AMP;
-	uint8_t xpoint_raw[32];
-
-	base_key.SetInt32(a);
-	base_key.Mult(&BSGS_M2_double);
-	base_key.Add(start_range);
-
-	base_point = secp->ComputePublicKey(&base_key);
-	point_aux = secp->Negation(base_point);
-	
-	BSGS_S = secp->AddDirect(OriginalPointsBSGS[k_index],point_aux);
-	BSGS_Q.Set(BSGS_S);
-	
-	do {
-		BSGS_Q_AMP = secp->AddDirect(BSGS_Q,BSGS_AMP3[i]);
-		BSGS_S.Set(BSGS_Q_AMP);
-		BSGS_S.x.GetHi16Bytes(xpoint_raw);
-		r = bloom_ext_check(&bloom_bPx3rd[(uint8_t)xpoint_raw[0]], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
-		if(r)	{
-			BSGS_S.x.GetLo16Bytes(xpoint_raw + 16);
-			r = bsgs_searchbinary(bPtable, (char*)xpoint_raw, bsgs_m3, &j);
-			if(r)	{
-				calcualteindex(i,&calculatedkey);
-				privatekey->Set(&calculatedkey);
-				privatekey->Add((uint64_t)(j+1));
-				privatekey->Add(&base_key);
-				point_aux = secp->ComputePublicKey(privatekey);
-				if(point_aux.x.IsEqual(&OriginalPointsBSGS[k_index].x))	{
-					found = 1;
-				}
-				else	{
-					calcualteindex(i,&calculatedkey);
-					privatekey->Set(&calculatedkey);
-					privatekey->Sub((uint64_t)(j+1));
-					privatekey->Add(&base_key);
-					point_aux = secp->ComputePublicKey(privatekey);
-					if(point_aux.x.IsEqual(&OriginalPointsBSGS[k_index].x))	{
-						found = 1;
-					}
-				}
-			}
-		}
-		else	{
-			/*
-				For some reason the AddDirect don't return 000000... value when the publickeys are the negated values from each other
-				Why JLP?
-				This is is an special case
-			*/
-			if(BSGS_Q.x.IsEqual(&BSGS_AMP3[i].x))	{
-				calcualteindex(i,&calculatedkey);
-				privatekey->Set(&calculatedkey);
-				privatekey->Add(&base_key);
-				found = 1;
-			}
-		}
-		i++;
-	}while(i < 32 && !found);
-	return found;
-}
+/* bsgs_secondcheck and bsgs_thirdcheck definitions moved to search/search_bsgs.cpp */
 
 void sleep_ms(int milliseconds)	{ // cross-platform sleep function
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -9496,13 +9393,4 @@ void writeFileIfNeeded(const char *fileName)	{
 	}
 }
 
-void calcualteindex(int i,Int *key)	{
-	if(i == 0)	{
-		key->Set(&BSGS_M3);
-	}
-	else	{
-		key->SetInt32(i);
-		key->Mult(&BSGS_M3_double);
-		key->Add(&BSGS_M3);
-	}
-}
+/* calcualteindex definition moved to search/search_bsgs.cpp */
