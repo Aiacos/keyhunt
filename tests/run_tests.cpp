@@ -14,6 +14,8 @@
  *   ./run_tests gpu          # Run only GPU backend tests
  *   ./run_tests distributed  # Run only distributed mode tests
  *   ./run_tests wizard       # Run only wizard tests
+ *   ./run_tests point        # Run only Point tests
+ *   ./run_tests intgroup     # Run only IntGroup tests
  */
 
 #include <stdio.h>
@@ -29,6 +31,8 @@ int run_bsgs_tests(void);
 int run_gpu_backend_tests(void);
 int run_distributed_tests(void);
 int run_wizard_tests(void);
+int run_point_tests(void);
+int run_intgroup_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -58,6 +62,8 @@ static void print_usage(const char *prog) {
     printf("  gpu          Run GPU backend tests\n");
     printf("  distributed  Run distributed mode tests\n");
     printf("  wizard       Run wizard tests\n");
+    printf("  point        Run Point operation tests\n");
+    printf("  intgroup     Run IntGroup batch inversion tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -116,6 +122,16 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "wizard") == 0) {
         printf(CLR_BOLD "\n>>> Running Wizard Tests\n" CLR_RESET);
         total_failures += run_wizard_tests();
+    }
+
+    if (module == NULL || strcmp(module, "point") == 0) {
+        printf(CLR_BOLD "\n>>> Running Point Tests\n" CLR_RESET);
+        total_failures += run_point_tests();
+    }
+
+    if (module == NULL || strcmp(module, "intgroup") == 0) {
+        printf(CLR_BOLD "\n>>> Running IntGroup Tests\n" CLR_RESET);
+        total_failures += run_intgroup_tests();
     }
 
     /* Final summary */
