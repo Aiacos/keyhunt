@@ -12,11 +12,19 @@
 #include <stdbool.h>
 #include <atomic>
 
+#include "../platform/platform.h"
 #include "../secp256k1/SECP256k1.h"
 #include "../secp256k1/Point.h"
 #include "../secp256k1/Int.h"
 #include "../secp256k1/IntGroup.h"
 #include "../bloom/bloom_wrapper.h"
+
+/* Thread calling convention helper */
+#if defined(_WIN64) && !defined(__CYGWIN__)
+    #define PLATFORM_THREAD_CALL WINAPI
+#else
+    #define PLATFORM_THREAD_CALL
+#endif
 
 /* ============================================================================
  * Search Mode Constants
@@ -108,17 +116,9 @@ extern char **vanity_address_targets;
 extern struct bloom *vanity_bloom;
 
 /* Thread synchronization */
-#if defined(_WIN64) && !defined(__CYGWIN__)
-#include <windows.h>
-extern HANDLE write_keys;
-extern HANDLE write_random;
-extern HANDLE bsgs_thread;
-#else
-#include <pthread.h>
-extern pthread_mutex_t write_keys;
-extern pthread_mutex_t write_random;
-extern pthread_mutex_t bsgs_thread;
-#endif
+extern platform_mutex_t write_keys;
+extern platform_mutex_t write_random;
+extern platform_mutex_t bsgs_thread;
 
 /* Output control */
 extern Int OUTPUTSECONDS;
@@ -157,26 +157,13 @@ int thread_rand_n(int n);
  * Thread Entry Points (search mode implementations)
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-/* Windows thread entry points */
-DWORD WINAPI thread_process(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_backward(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_both(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_random(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_dance(LPVOID vargp);
-DWORD WINAPI thread_process_vanity(LPVOID vargp);
-DWORD WINAPI thread_process_minikeys(LPVOID vargp);
-#else
-/* POSIX thread entry points */
-void *thread_process(void *vargp);
-void *thread_process_bsgs(void *vargp);
-void *thread_process_bsgs_backward(void *vargp);
-void *thread_process_bsgs_both(void *vargp);
-void *thread_process_bsgs_random(void *vargp);
-void *thread_process_bsgs_dance(void *vargp);
-void *thread_process_vanity(void *vargp);
-void *thread_process_minikeys(void *vargp);
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_backward(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_both(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_random(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_dance(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_vanity(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_minikeys(void *vargp);
 
 #endif /* SEARCH_COMMON_H */
