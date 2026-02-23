@@ -62,6 +62,7 @@
 
 #include "hash/sha256.h"
 #include "hash/ripemd160.h"
+#include "platform/platform.h"
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
@@ -654,17 +655,13 @@ const char *default_fileName = "addresses.txt";
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 HANDLE* tid = NULL;
-HANDLE write_keys;
-HANDLE write_random;
-HANDLE bsgs_thread;
-HANDLE *bPload_mutex = NULL;
 #else
 pthread_t *tid = NULL;
-pthread_mutex_t write_keys;
-pthread_mutex_t write_random;
-pthread_mutex_t bsgs_thread;
-pthread_mutex_t *bPload_mutex = NULL;
 #endif
+platform_mutex_t write_keys;
+platform_mutex_t write_random;
+platform_mutex_t bsgs_thread;
+platform_mutex_t *bPload_mutex = NULL;
 
 uint64_t FINISHED_THREADS_COUNTER = 0;
 uint64_t FINISHED_THREADS_BP = 0;
@@ -864,15 +861,9 @@ struct checksumsha256 *bloom_bP_checksums;
 struct checksumsha256 *bloom_bPx2nd_checksums;
 struct checksumsha256 *bloom_bPx3rd_checksums;
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-std::vector<HANDLE> bloom_bP_mutex;
-std::vector<HANDLE> bloom_bPx2nd_mutex;
-std::vector<HANDLE> bloom_bPx3rd_mutex;
-#else
-pthread_mutex_t *bloom_bP_mutex;
-pthread_mutex_t *bloom_bPx2nd_mutex;
-pthread_mutex_t *bloom_bPx3rd_mutex;
-#endif
+platform_mutex_t *bloom_bP_mutex;
+platform_mutex_t *bloom_bPx2nd_mutex;
+platform_mutex_t *bloom_bPx3rd_mutex;
 
 
 
@@ -1064,43 +1055,27 @@ static void cleanup_bsgs_resources(void) {
 	}
 
 	// Free mutexes
-#if defined(_WIN64) && !defined(__CYGWIN__)
-	// Windows: vectors are auto-cleaned, but close handles
-	for (size_t i = 0; i < bloom_bP_mutex.size(); i++) {
-		if (bloom_bP_mutex[i]) CloseHandle(bloom_bP_mutex[i]);
-	}
-	bloom_bP_mutex.clear();
-	for (size_t i = 0; i < bloom_bPx2nd_mutex.size(); i++) {
-		if (bloom_bPx2nd_mutex[i]) CloseHandle(bloom_bPx2nd_mutex[i]);
-	}
-	bloom_bPx2nd_mutex.clear();
-	for (size_t i = 0; i < bloom_bPx3rd_mutex.size(); i++) {
-		if (bloom_bPx3rd_mutex[i]) CloseHandle(bloom_bPx3rd_mutex[i]);
-	}
-	bloom_bPx3rd_mutex.clear();
-#else
 	if (bloom_bP_mutex != NULL) {
 		for (int i = 0; i < 256; i++) {
-			pthread_mutex_destroy(&bloom_bP_mutex[i]);
+			platform_mutex_destroy(&bloom_bP_mutex[i]);
 		}
 		free(bloom_bP_mutex);
 		bloom_bP_mutex = NULL;
 	}
 	if (bloom_bPx2nd_mutex != NULL) {
 		for (int i = 0; i < 256; i++) {
-			pthread_mutex_destroy(&bloom_bPx2nd_mutex[i]);
+			platform_mutex_destroy(&bloom_bPx2nd_mutex[i]);
 		}
 		free(bloom_bPx2nd_mutex);
 		bloom_bPx2nd_mutex = NULL;
 	}
 	if (bloom_bPx3rd_mutex != NULL) {
 		for (int i = 0; i < 256; i++) {
-			pthread_mutex_destroy(&bloom_bPx3rd_mutex[i]);
+			platform_mutex_destroy(&bloom_bPx3rd_mutex[i]);
 		}
 		free(bloom_bPx3rd_mutex);
 		bloom_bPx3rd_mutex = NULL;
 	}
-#endif
 
 	// Clear vectors
 	BSGS_AMP2.clear();
@@ -1969,15 +1944,12 @@ int main(int argc, char **argv)	{
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	DWORD s;
-	write_keys = CreateMutex(NULL, FALSE, NULL);
-	write_random = CreateMutex(NULL, FALSE, NULL);
-	bsgs_thread = CreateMutex(NULL, FALSE, NULL);
 #else
-	pthread_mutex_init(&write_keys,NULL);
-	pthread_mutex_init(&write_random,NULL);
-	pthread_mutex_init(&bsgs_thread,NULL);
 	int s;
 #endif
+	platform_mutex_init(&write_keys);
+	platform_mutex_init(&write_random);
+	platform_mutex_init(&bsgs_thread);
 
 	srand(time(NULL));
 
@@ -3403,23 +3375,14 @@ int main(int argc, char **argv)	{
 			bloom_bP_checksums = (struct checksumsha256*)calloc(256,sizeof(struct checksumsha256));
 			checkpointer((void *)bloom_bP_checksums,__FILE__,"calloc","bloom_bP_checksums" ,__LINE__ -1 );
 		
-#if defined(_WIN64) && !defined(__CYGWIN__)
-		bloom_bP_mutex = (HANDLE*) calloc(256,sizeof(HANDLE));
-		
-#else
-		bloom_bP_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
-#endif
+		bloom_bP_mutex = (platform_mutex_t*) calloc(256,sizeof(platform_mutex_t));
 		checkpointer((void *)bloom_bP_mutex,__FILE__,"calloc","bloom_bP_mutex" ,__LINE__ -1 );
 		
 
 		fflush(stdout);
 		bloom_bP_totalbytes = 0;
 			for(i=0; i< 256; i++)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-				bloom_bP_mutex[i] = CreateMutex(NULL, FALSE, NULL);
-#else
-				pthread_mutex_init(&bloom_bP_mutex[i],NULL);
-#endif
+				platform_mutex_init(&bloom_bP_mutex[i]);
 				if(bloom_ext_init(&bloom_bP[i],itemsbloom,0.000001)	!= 0){
 					output_error("error bloom_init _ [%" PRIu64 "]\n",i);
 					exit(EXIT_FAILURE);
@@ -3432,11 +3395,7 @@ int main(int argc, char **argv)	{
 
 		output_success("Bloom filter for %" PRIu64 " elements ",bsgs_m2);
 		
-#if defined(_WIN64) && !defined(__CYGWIN__)
-		bloom_bPx2nd_mutex = (HANDLE*) calloc(256,sizeof(HANDLE));
-#else
-		bloom_bPx2nd_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
-#endif
+		bloom_bPx2nd_mutex = (platform_mutex_t*) calloc(256,sizeof(platform_mutex_t));
 		checkpointer((void *)bloom_bPx2nd_mutex,__FILE__,"calloc","bloom_bPx2nd_mutex" ,__LINE__ -1 );
 			bloom_bPx2nd = (bloom_extended_t*)calloc(256,sizeof(bloom_extended_t));
 			checkpointer((void *)bloom_bPx2nd,__FILE__,"calloc","bloom_bPx2nd" ,__LINE__ -1 );
@@ -3444,11 +3403,7 @@ int main(int argc, char **argv)	{
 			checkpointer((void *)bloom_bPx2nd_checksums,__FILE__,"calloc","bloom_bPx2nd_checksums" ,__LINE__ -1 );
 			bloom_bP2_totalbytes = 0;
 			for(i=0; i< 256; i++)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-			bloom_bPx2nd_mutex[i] = CreateMutex(NULL, FALSE, NULL);
-#else
-			pthread_mutex_init(&bloom_bPx2nd_mutex[i],NULL);
-#endif
+			platform_mutex_init(&bloom_bPx2nd_mutex[i]);
 				if(bloom_ext_init(&bloom_bPx2nd[i],itemsbloom2,0.000001)	!= 0){
 					output_error("error bloom_init _ [%" PRIu64 "]\n",i);
 					exit(EXIT_FAILURE);
@@ -3459,11 +3414,7 @@ int main(int argc, char **argv)	{
 		printf(": %.2f MB\n",(float)((float)(uint64_t)bloom_bP2_totalbytes/(float)(uint64_t)1048576));
 		
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-		bloom_bPx3rd_mutex = (HANDLE*) calloc(256,sizeof(HANDLE));
-#else
-		bloom_bPx3rd_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
-#endif
+		bloom_bPx3rd_mutex = (platform_mutex_t*) calloc(256,sizeof(platform_mutex_t));
 		checkpointer((void *)bloom_bPx3rd_mutex,__FILE__,"calloc","bloom_bPx3rd_mutex" ,__LINE__ -1 );
 			bloom_bPx3rd = (bloom_extended_t*)calloc(256,sizeof(bloom_extended_t));
 			checkpointer((void *)bloom_bPx3rd,__FILE__,"calloc","bloom_bPx3rd" ,__LINE__ -1 );
@@ -3473,11 +3424,7 @@ int main(int argc, char **argv)	{
 		output_success("Bloom filter for %" PRIu64 " elements ",bsgs_m3);
 		bloom_bP3_totalbytes = 0;
 		for(i=0; i< 256; i++)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-			bloom_bPx3rd_mutex[i] = CreateMutex(NULL, FALSE, NULL);
-#else
-			pthread_mutex_init(&bloom_bPx3rd_mutex[i],NULL);
-#endif
+			platform_mutex_init(&bloom_bPx3rd_mutex[i]);
 				if(bloom_ext_init(&bloom_bPx3rd[i],itemsbloom3,0.000001)	!= 0){
 					output_error("error bloom_init [%" PRIu64 "]\n",i);
 					exit(EXIT_FAILURE);
@@ -3850,12 +3797,11 @@ int main(int argc, char **argv)	{
 				
 #if defined(_WIN64) && !defined(__CYGWIN__)
 				tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
-				checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
-				bPload_mutex = (HANDLE*) calloc(NTHREADS,sizeof(HANDLE));
 #else
 				tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-				bPload_mutex = (pthread_mutex_t*) calloc(NTHREADS,sizeof(pthread_mutex_t));
 #endif
+				checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
+				bPload_mutex = (platform_mutex_t*) calloc(NTHREADS,sizeof(platform_mutex_t));
 				checkpointer((void *)bPload_mutex,__FILE__,"calloc","bPload_mutex" ,__LINE__ -1 );
 				bPload_temp_ptr = (struct bPload*) calloc(NTHREADS,sizeof(struct bPload));
 				checkpointer((void *)bPload_temp_ptr,__FILE__,"calloc","bPload_temp_ptr" ,__LINE__ -1 );
@@ -3865,11 +3811,7 @@ int main(int argc, char **argv)	{
 				memset(bPload_threads_available,1,NTHREADS);
 				
 				for(j = 0; j < NTHREADS; j++)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-					bPload_mutex[j] = CreateMutex(NULL, FALSE, NULL);
-#else
-					pthread_mutex_init(&bPload_mutex[j],NULL);
-#endif
+					platform_mutex_init(&bPload_mutex[j]);
 				}
 				
 				do	{
@@ -3965,12 +3907,11 @@ int main(int argc, char **argv)	{
 				
 #if defined(_WIN64) && !defined(__CYGWIN__)
 				tid = (HANDLE*)calloc(NTHREADS, sizeof(HANDLE));
-				bPload_mutex = (HANDLE*) calloc(NTHREADS,sizeof(HANDLE));
 #else
 				tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-				bPload_mutex = (pthread_mutex_t*) calloc(NTHREADS,sizeof(pthread_mutex_t));
 #endif
 				checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
+				bPload_mutex = (platform_mutex_t*) calloc(NTHREADS,sizeof(platform_mutex_t));
 				checkpointer((void *)bPload_mutex,__FILE__,"calloc","bPload_mutex" ,__LINE__ -1 );
 				
 				bPload_temp_ptr = (struct bPload*) calloc(NTHREADS,sizeof(struct bPload));
@@ -3982,11 +3923,7 @@ int main(int argc, char **argv)	{
 				memset(bPload_threads_available,1,NTHREADS);
 				
 				for(j = 0; j < NTHREADS; j++)	{
-#if defined(_WIN64) && !defined(__CYGWIN__)
-					bPload_mutex = CreateMutex(NULL, FALSE, NULL);
-#else
-					pthread_mutex_init(&bPload_mutex[j],NULL);
-#endif
+					platform_mutex_init(&bPload_mutex[j]);
 				}
 				
 				do	{
@@ -4932,11 +4869,9 @@ int main(int argc, char **argv)	{
 #ifndef _WIN64
 	shutdown_work_queue();
 #endif
-#ifdef _WIN64
-	CloseHandle(write_keys);
-	CloseHandle(write_random);
-	CloseHandle(bsgs_thread);
-#endif
+	platform_mutex_destroy(&write_keys);
+	platform_mutex_destroy(&write_random);
+	platform_mutex_destroy(&bsgs_thread);
 }
 
 void pubkeytopubaddress_dst(char *pkey,int length,char *dst)	{
