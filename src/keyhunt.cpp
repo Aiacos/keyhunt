@@ -203,17 +203,7 @@ static profile_counters_t g_profile_prev_agg;
 static thread_local profile_counters_t *tls_prof = NULL;
 
 static inline uint64_t profile_now_ns() {
-#if defined(_WIN64) && !defined(__CYGWIN__)
-	return 0;
-#else
-	struct timespec ts;
-#ifdef CLOCK_MONOTONIC_RAW
-	clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
-#else
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-#endif
-	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-#endif
+	return platform_time_now_ns();
 }
 
 struct profile_scope_t {
