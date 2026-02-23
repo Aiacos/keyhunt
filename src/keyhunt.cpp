@@ -55,6 +55,7 @@
 #include "progress.h"
 #include "cli.h"
 #include "bsgs/bsgs_sort.h"
+#include "sort/sort.h"
 
 /*
  * NOTE: search/search_context.h and search/search_utils.h provide the
@@ -571,16 +572,7 @@ static void shutdown_work_queue();
 #endif
 static bool acquire_base_key(Int &key);
 
-int searchbinary(struct address_value *buffer,char *data,int64_t array_length);
 void sleep_ms(int milliseconds);
-
-void _sort(struct address_value *arr,int64_t N);
-void _insertionsort(struct address_value *arr, int64_t n);
-void _introsort(struct address_value *arr,uint32_t depthLimit, int64_t n);
-void _swap(struct address_value *a,struct address_value *b);
-int64_t _partition(struct address_value *arr, int64_t n);
-void _myheapsort(struct address_value	*arr, int64_t n);
-void _heapify(struct address_value *arr, int64_t n, int64_t i);
 
 /* bsgs_sort, bsgs_myheapsort, bsgs_insertionsort, bsgs_introsort, bsgs_swap,
    bsgs_heapify, bsgs_partition, and bsgs_searchbinary now declared in bsgs/bsgs_sort.h */
@@ -4867,39 +4859,7 @@ char *pubkeytopubaddress(char *pkey,int length)	{
 	return pubaddress;	// pubaddress need to be free by te caller funtion
 }
 
-static inline uint64_t load_u64_be(const void *p) {
-	uint64_t v;
-	memcpy(&v, p, sizeof(v));
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-	v = __builtin_bswap64(v);
-#endif
-	return v;
-}
-
-static inline uint32_t load_u32_be(const void *p) {
-	uint32_t v;
-	memcpy(&v, p, sizeof(v));
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-	v = __builtin_bswap32(v);
-#endif
-	return v;
-}
-
-static inline int cmp_hash20(const uint8_t *a, const uint8_t *b) {
-	const uint64_t a0 = load_u64_be(a);
-	const uint64_t b0 = load_u64_be(b);
-	if (a0 < b0) return -1;
-	if (a0 > b0) return 1;
-	const uint64_t a1 = load_u64_be(a + 8);
-	const uint64_t b1 = load_u64_be(b + 8);
-	if (a1 < b1) return -1;
-	if (a1 > b1) return 1;
-	const uint32_t a2 = load_u32_be(a + 16);
-	const uint32_t b2 = load_u32_be(b + 16);
-	if (a2 < b2) return -1;
-	if (a2 > b2) return 1;
-	return 0;
-}
+/* cmp_hash20, load_u64_be, load_u32_be moved to sort/sort.cpp */
 
 static inline bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
 	// Compute (a - b) if it fits in uint64_t. Return false otherwise.
@@ -4920,19 +4880,7 @@ static inline bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
 	return true;
 }
 
-int searchbinary(struct address_value *buffer,char *data,int64_t array_length) {
-	if (array_length <= 0) return 0;
-	int64_t lo = 0;
-	int64_t hi = array_length; // exclusive
-	while (lo < hi) {
-		const int64_t mid = lo + ((hi - lo) >> 1);
-		const int rcmp = cmp_hash20((const uint8_t*)data, (const uint8_t*)buffer[mid].value);
-		if (rcmp == 0) return 1;
-		if (rcmp < 0) hi = mid;
-		else lo = mid + 1;
-	}
-	return 0;
-}
+/* searchbinary moved to sort/sort.cpp */
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 DWORD WINAPI thread_process_minikeys(LPVOID vargp) {
@@ -6310,108 +6258,8 @@ void *thread_process_vanity(void *vargp)	{
 		return NULL;
 	}
 
-void _swap(struct address_value *a,struct address_value *b)	{
-	struct address_value t;
-	t  = *a;
-	*a = *b;
-	*b =  t;
-}
-
-void _sort(struct address_value *arr,int64_t n)	{
-	uint32_t depthLimit = ((uint32_t) ceil(log(n))) * 2;
-	_introsort(arr,depthLimit,n);
-}
-
-void _introsort(struct address_value *arr,uint32_t depthLimit, int64_t n) {
-	int64_t p;
-	if(n > 1)	{
-		if(n <= 16) {
-			_insertionsort(arr,n);
-		}
-		else	{
-			if(depthLimit == 0) {
-				_myheapsort(arr,n);
-			}
-			else	{
-				p = _partition(arr,n);
-				if(p > 0) _introsort(arr , depthLimit-1 , p);
-				if(p < n) _introsort(&arr[p+1],depthLimit-1,n-(p+1));
-			}
-		}
-	}
-}
-
-void _insertionsort(struct address_value *arr, int64_t n) {
-	int64_t j;
-	int64_t i;
-	struct address_value key;
-	for(i = 1; i < n ; i++ ) {
-		key = arr[i];
-		j= i-1;
-		while(j >= 0 && memcmp(arr[j].value,key.value,20) > 0) {
-			arr[j+1] = arr[j];
-			j--;
-		}
-		arr[j+1] = key;
-	}
-}
-
-int64_t _partition(struct address_value *arr, int64_t n)	{
-	struct address_value pivot;
-	int64_t r,left,right;
-	r = n/2;
-	pivot = arr[r];
-	left = 0;
-	right = n-1;
-	do {
-		while(left	< right && memcmp(arr[left].value,pivot.value,20) <= 0 )	{
-			left++;
-		}
-		while(right >= left && memcmp(arr[right].value,pivot.value,20) > 0)	{
-			right--;
-		}
-		if(left < right)	{
-			if(left == r || right == r)	{
-				if(left == r)	{
-					r = right;
-				}
-				if(right == r)	{
-					r = left;
-				}
-			}
-			_swap(&arr[right],&arr[left]);
-		}
-	}while(left < right);
-	if(right != r)	{
-		_swap(&arr[right],&arr[r]);
-	}
-	return right;
-}
-
-void _heapify(struct address_value *arr, int64_t n, int64_t i) {
-	int64_t largest = i;
-	int64_t l = 2 * i + 1;
-	int64_t r = 2 * i + 2;
-	if (l < n && memcmp(arr[l].value,arr[largest].value,20) > 0)
-		largest = l;
-	if (r < n && memcmp(arr[r].value,arr[largest].value,20) > 0)
-		largest = r;
-	if (largest != i) {
-		_swap(&arr[i],&arr[largest]);
-		_heapify(arr, n, largest);
-	}
-}
-
-void _myheapsort(struct address_value	*arr, int64_t n)	{
-	int64_t i;
-	for ( i = (n / 2) - 1; i >=	0; i--)	{
-		_heapify(arr, n, i);
-	}
-	for ( i = n - 1; i > 0; i--) {
-		_swap(&arr[0] , &arr[i]);
-		_heapify(arr, i, 0);
-	}
-}
+/* Sorting functions (_swap, _sort, _introsort, _insertionsort, _partition,
+ * _heapify, _myheapsort) moved to sort/sort.cpp */
 
 /* ============================================================================
  * BSGS Sorting and Searching Functions
