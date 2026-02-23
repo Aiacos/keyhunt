@@ -155,9 +155,20 @@ static inline int thread_rand_n(int n) {
 #define SEARCH_COMPRESS 1
 #define SEARCH_BOTH 2
 
-// NOTE: Global variables have been migrated to keyhunt_config_t (see src/config/config.h)
-// THREADBPWORKLOAD, g_avx2_available, g_config, g_progress_state, g_workQueue
-// are now accessed through the config structure passed to functions.
+// NOTE: Global variables migration in progress to keyhunt_config_t (see src/config/config.h)
+// Many variables still use global state until migration is complete
+
+// Infrastructure globals
+uint32_t THREADBPWORKLOAD = 0;
+static bool g_avx2_available = false;
+static keyhunt_ini_config_t g_config;
+static bool g_config_loaded = false;
+static const char *g_save_config_path = NULL;
+static progress_state_t g_progress_state;
+static bool g_progress_enabled = false;
+
+// Work queue (used on all platforms now)
+static WorkQueue<Int> g_workQueue;
 
 // ---------------------------------------------------------------------------
 // Lightweight internal profiler (enabled via KEYHUNT_PROFILE=1)
@@ -673,15 +684,26 @@ pthread_mutex_t bsgs_thread;
 pthread_mutex_t *bPload_mutex = NULL;
 #endif
 
-// NOTE: Thread runtime state variables migrated to runtime_state_t in keyhunt_config_t
-// FINISHED_THREADS_COUNTER->runtime.finished_threads, THREADCYCLES->runtime.thread_cycles
-// THREADCOUNTER->runtime.thread_counter, FINISHED_ITEMS->runtime.finished_items
-// OLDFINISHED_ITEMS->runtime.old_finished_items
+// NOTE: Thread runtime state variables migration in progress to runtime_state_t in keyhunt_config_t
+uint64_t FINISHED_THREADS_COUNTER = 0;
+uint64_t FINISHED_THREADS_BP = 0;
+uint64_t THREADCYCLES = 0;
+uint64_t THREADCOUNTER = 0;
+std::atomic<uint64_t> FINISHED_ITEMS{0};
+uint64_t OLDFINISHED_ITEMS = 0;
 
 uint8_t byte_encode_crypto = 0x00;		/* Bitcoin  */
 
-// NOTE: Vanity and bloom variables migrated to runtime_state_t in keyhunt_config_t
-// vanity_rmd_targets, vanity_rmd_total, vanity_bloom, bloom filter are now in config->runtime
+// NOTE: Vanity and bloom variables migration in progress to runtime_state_t in keyhunt_config_t
+int vanity_rmd_targets = 0;
+int vanity_rmd_total = 0;
+int *vanity_rmd_limits = NULL;
+uint8_t ***vanity_rmd_limit_values_A = NULL;
+uint8_t ***vanity_rmd_limit_values_B = NULL;
+int vanity_rmd_minimun_bytes_check_length = 0;
+char **vanity_address_targets = NULL;
+struct bloom *vanity_bloom = NULL;
+bloom_extended_t bloom;
 
 /* Pad shared counters to separate cache lines and reduce false sharing between threads. */
 struct thread_counter {
@@ -698,14 +720,64 @@ struct thread_counter *steps = NULL;
 struct thread_flag *ends = NULL;
 uint64_t N = 0;
 
-// NOTE: Global FLAG* variables migrated to keyhunt_config_t (see MIGRATION_GUIDE.md)
-// Search config: FLAGMODE->search.mode, FLAGSEARCH->search.key_format, FLAGCRYPTO->search.crypto_type
-//               FLAGENDOMORPHISM->search.endomorphism, FLAGRANDOM->search.random_mode
-//               FLAGQUIET->search.quiet_mode, FLAGDEBUG->search.debug_mode, FLAGMATRIX->search.matrix_mode
-// BSGS config: KFACTOR->bsgs.k_factor, FLAGBLOOMMULTIPLIER->bsgs.bloom_multiplier, FLAGBSGSMODE->bsgs.bsgs_mode
-// GPU config: FLAGGPU->gpu.enabled, FLAGGPU_FULL->gpu.full_mode, FLAGGPU_HYBRID->gpu.hybrid_mode
-// Runtime: NTHREADS->runtime.num_threads, OUTPUTSECONDS->runtime.output_interval_sec
-// All FLAG* variables now accessed through config structure passed to functions.
+// NOTE: Global FLAG* variables migration in progress to keyhunt_config_t (see MIGRATION_GUIDE.md)
+// Search configuration flags
+int FLAGSKIPCHECKSUM = 0;
+int FLAGENDOMORPHISM = 0;
+int FLAGBLOOMMULTIPLIER = 1;
+int FLAGVANITY = 0;
+int FLAGBASEMINIKEY = 0;
+int FLAGBSGSMODE = 0;
+int FLAGDEBUG = 0;
+int FLAGQUIET = 0;
+int FLAGMATRIX = 0;
+int FLAGPROGRESSBAR = 0;
+int KFACTOR = 1;
+int MAXLENGTHADDRESS = 20;
+int NTHREADS = 1;
+int FLAGTHREADS = 0;
+int FLAGSAVEREADFILE = 0;
+int FLAGREADEDFILE1 = 0;
+int FLAGREADEDFILE2 = 0;
+int FLAGREADEDFILE3 = 0;
+int FLAGREADEDFILE4 = 0;
+int FLAGUPDATEFILE1 = 0;
+int FLAGSTRIDE = 0;
+int FLAGSEARCH = SEARCH_BOTH;
+int FLAGBITRANGE = 0;
+int FLAGRANGE = 0;
+int FLAGFILE = 0;
+int FLAGMODE = MODE_ADDRESS;
+int FLAGCRYPTO = 0;
+int FLAGRAWDATA = 0;
+int FLAGRANDOM = 0;
+int FLAG_N = 0;
+int FLAGPRECALCUTED_P_FILE = 0;
+int FLAGGPU = 0;
+int FLAGGPU_FULL = 0;
+std::atomic<int> FLAGGPU_HYBRID{0};
+int DEBUGCOUNT = 0;
+
+// GPU runtime state
+std::atomic<uint64_t> g_gpu_keys_checked{0};
+std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
+std::atomic<int> g_gpu_should_stop{0};
+static int g_gpu_bloom_uploaded = 0;
+int g_gpu_range_percent = 0;
+
+// Range and stride variables
+int bitrange = 0;
+char *str_N = NULL;
+char *range_start = NULL;
+char *range_end = NULL;
+char *str_stride = NULL;
+Int stride;
+
+// Runtime output control
+Int OUTPUTSECONDS;
+
+// Sequential max for work queue
+uint64_t N_SEQUENTIAL_MAX = 4096;
 
 // NOTE: Functions below need refactoring to accept config parameter (future work)
 // Currently using extern references to globals until complete migration
@@ -750,10 +822,10 @@ uint64_t N = 0;
 			// In work-stealing, g_gpu_keys_checked_cur is the in-progress block counter; we
 			// aggregate it with a release/acquire pair so readers never observe a decreasing total.
 			// TODO: Accept config parameter instead of using extern globals
-			extern WorkQueue<Int> g_work_pool;
+			extern WorkPool g_work_pool;
 			extern std::atomic<uint64_t> g_gpu_keys_checked;
 			extern std::atomic<uint64_t> g_gpu_keys_checked_cur;
-			if (!g_work_pool.enabled) {
+			if (!g_work_pool.enabled.load(std::memory_order_acquire)) {
 				return g_gpu_keys_checked.load(std::memory_order_acquire);
 			}
 			uint64_t cur = g_gpu_keys_checked_cur.load(std::memory_order_acquire);
@@ -761,10 +833,22 @@ uint64_t N = 0;
 			return base + cur;
 		}
 
-// NOTE: Range and BSGS configuration variables migrated to keyhunt_config_t
-// bitrange->search.bit_range, str_N/range_start/range_end/str_stride->search.*
-// stride computed from config, g_sysinfo/g_gpu_backend_info->autotune.*
-// BSGS_XVALUE_RAM, BSGS_BUFFERXPOINTLENGTH, BSGS_BUFFERREGISTERLENGTH->bsgs.*
+// System info and GPU backend info
+system_info_t g_sysinfo;
+gpu_backend_info_t g_gpu_backend_info;
+
+// BSGS configuration and buffers
+uint64_t BSGS_XVALUE_RAM = 0;
+uint64_t BSGS_BUFFERXPOINTLENGTH = 0;
+uint64_t BSGS_BUFFERREGISTERLENGTH = 0;
+uint64_t bloom_bP_totalbytes = 0;
+uint64_t bloom_bP2_totalbytes = 0;
+uint64_t bloom_bP3_totalbytes = 0;
+uint64_t bsgs_m = 0;
+uint64_t bsgs_m2 = 0;
+uint64_t bsgs_m3 = 0;
+uint64_t bsgs_aux = 0;
+uint32_t bsgs_point_number = 0;
 
 static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
