@@ -131,6 +131,12 @@ const char *cli_bsgs_mode_name(bsgs_mode_t mode);
 // Get GPU mode name string
 const char *cli_gpu_mode_name(gpu_mode_t mode);
 
+// Populate keyhunt config from parsed CLI arguments
+// Note: cfg parameter type is defined in config/config.h (keyhunt_config_t)
+// To avoid circular dependency, we use void* here. Cast to keyhunt_config_t* when calling.
+// Returns: 0 on success, -1 on error
+int cli_populate_config(const cli_args_t *args, void *cfg);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,6 +2,7 @@
 // CLI argument parsing implementation for keyhunt
 
 #include "cli.h"
+#include "config/config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -449,4 +450,171 @@ void cli_print(const cli_args_t *args) {
     printf("  Progress bar: %s\n", args->show_progress_bar ? "yes" : "no");
     printf("  Run wizard: %s\n", args->run_wizard ? "yes" : "no");
     printf("  Run benchmark: %s\n", args->run_benchmark ? "yes" : "no");
+}
+
+int cli_populate_config(const cli_args_t *args, void *cfg_ptr) {
+    if (args == NULL || cfg_ptr == NULL) {
+        return -1;
+    }
+
+    // Cast void* to keyhunt_config_t* (full type available via config.h include)
+    keyhunt_config_t *cfg = (keyhunt_config_t *)cfg_ptr;
+
+    // Initialize config with defaults first
+    kh_config_init(cfg);
+
+    // ========================================================================
+    // Populate search_config_t
+    // ========================================================================
+
+    // Mode and type settings
+    cfg->search.mode = args->mode;
+    cfg->search.key_format = args->key_type;
+
+    // Map crypto_type (1=BTC, 2=ETH) to crypto_type_t enum
+    if (args->crypto_type == 1) {
+        cfg->search.crypto_type = CRYPTO_TYPE_BTC;
+    } else if (args->crypto_type == 2) {
+        cfg->search.crypto_type = CRYPTO_TYPE_ETH;
+    } else {
+        cfg->search.crypto_type = CRYPTO_TYPE_ALL;
+    }
+
+    // Range specification
+    strncpy(cfg->search.range_start, args->range_start,
+            sizeof(cfg->search.range_start) - 1);
+    cfg->search.range_start[sizeof(cfg->search.range_start) - 1] = '\0';
+
+    strncpy(cfg->search.range_end, args->range_end,
+            sizeof(cfg->search.range_end) - 1);
+    cfg->search.range_end[sizeof(cfg->search.range_end) - 1] = '\0';
+
+    cfg->search.bit_range = args->bits;
+
+    // Stride
+    if (args->stride[0] != '\0') {
+        strncpy(cfg->search.stride, args->stride,
+                sizeof(cfg->search.stride) - 1);
+        cfg->search.stride[sizeof(cfg->search.stride) - 1] = '\0';
+        cfg->search.stride_enabled = true;
+        cfg->explicitly_set.stride = true;
+    } else {
+        cfg->search.stride_enabled = false;
+    }
+
+    // Target file
+    if (args->target_file[0] != '\0') {
+        strncpy(cfg->search.target_file, args->target_file,
+                sizeof(cfg->search.target_file) - 1);
+        cfg->search.target_file[sizeof(cfg->search.target_file) - 1] = '\0';
+        cfg->explicitly_set.target_file = true;
+    }
+
+    // Search flags
+    cfg->search.random_mode = args->random_mode;
+    cfg->search.endomorphism = args->endomorphism;
+    cfg->search.quiet_mode = args->quiet_mode;
+    cfg->search.debug_mode = false;  // Set from -d if needed
+    cfg->search.matrix_mode = args->matrix_mode;
+    cfg->search.progress_bar = args->show_progress_bar;
+
+    // ========================================================================
+    // Populate bsgs_config_t
+    // ========================================================================
+
+    cfg->bsgs.k_factor = args->k_factor;
+    cfg->bsgs.bsgs_mode = args->bsgs_mode;
+    cfg->bsgs.bloom_multiplier = args->bloom_multiplier;
+    cfg->bsgs.save_progress = args->save_bloom;
+    cfg->bsgs.load_precalc = false;  // Set when loading precalc files
+
+    // N value (if provided)
+    if (args->n_value[0] != '\0') {
+        // Parse n_value string to uint64_t
+        // For now, store as string and let config validation handle it
+        cfg->explicitly_set.n_value = true;
+        // Note: Actual n_value parsing happens in config validation
+    }
+
+    // ========================================================================
+    // Populate gpu_config_t
+    // ========================================================================
+
+    // Map gpu_mode_t enum to gpu.enabled integer
+    switch (args->gpu_mode) {
+        case GPU_OFF:
+            cfg->gpu.enabled = 0;
+            break;
+        case GPU_ON:
+            cfg->gpu.enabled = 1;
+            cfg->explicitly_set.gpu = true;
+            break;
+        case GPU_AUTO:
+            cfg->gpu.enabled = -1;
+            break;
+        case GPU_HYBRID:
+            cfg->gpu.enabled = 1;
+            cfg->gpu.hybrid_mode = true;
+            cfg->explicitly_set.gpu = true;
+            break;
+        default:
+            cfg->gpu.enabled = 0;
+            break;
+    }
+
+    // GPU defaults are already set by kh_config_init()
+    cfg->gpu.full_mode = false;  // Can be set by additional flags
+    cfg->gpu.device_count = 0;   // Will be auto-detected if GPU enabled
+
+    // ========================================================================
+    // Populate runtime_state_t
+    // ========================================================================
+
+    // Thread count
+    if (args->threads_specified) {
+        cfg->runtime.num_threads = args->threads;
+        cfg->explicitly_set.threads = true;
+    } else {
+        cfg->runtime.num_threads = 0;  // 0 means auto-detect
+    }
+
+    // Output settings
+    cfg->runtime.output_interval_sec = args->status_interval;
+
+    if (args->output_file[0] != '\0') {
+        strncpy(cfg->runtime.output_file, args->output_file,
+                sizeof(cfg->runtime.output_file) - 1);
+        cfg->runtime.output_file[sizeof(cfg->runtime.output_file) - 1] = '\0';
+    }
+
+    // ========================================================================
+    // Set explicitly_set flags
+    // ========================================================================
+
+    cfg->explicitly_set.mode = true;  // Mode always explicitly set
+
+    if (args->bits > 0) {
+        cfg->explicitly_set.bit_range = true;
+    }
+
+    if (args->range_start[0] != '1' || args->range_end[0] != 'F') {
+        cfg->explicitly_set.range = true;
+    }
+
+    if (args->k_factor != 1) {
+        cfg->explicitly_set.k_factor = true;
+    }
+
+    // ========================================================================
+    // Legacy INI config path (if provided)
+    // ========================================================================
+
+    if (args->config_file[0] != '\0') {
+        strncpy(cfg->ini_config_path, args->config_file,
+                sizeof(cfg->ini_config_path) - 1);
+        cfg->ini_config_path[sizeof(cfg->ini_config_path) - 1] = '\0';
+        // Note: INI loading happens separately
+    }
+
+    return 0;
 }
