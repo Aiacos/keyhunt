@@ -173,12 +173,15 @@ extern Int OUTPUTSECONDS;
  * Shared Function Declarations
  * ============================================================================ */
 
-/* Address/hash generation */
+/* Address/hash generation (C-linkage, defined in crypto/address_util.cpp) */
+extern "C" {
 char *pubkeytopubaddress(char *pkey, int length);
 void pubkeytopubaddress_dst(char *pkey, int length, char *dst);
 void rmd160toaddress_dst(char *rmd, char *dst);
-void generate_binaddress_eth(Point &publickey, unsigned char *dst_address);
 void KECCAK_256(uint8_t *source, size_t size, uint8_t *dst);
+}
+/* C++ linkage */
+void generate_binaddress_eth(Point &publickey, unsigned char *dst_address);
 
 /* Minikey functions */
 void set_minikey(char *buffer, char *rawbuffer, int length);
