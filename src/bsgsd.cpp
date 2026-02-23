@@ -25,16 +25,15 @@ email: albertobsd@gmail.com
 
 #include "hash/sha256.h"
 #include "hash/ripemd160.h"
+#include "platform/platform.h"
 
 #include <unistd.h>
-#include <pthread.h>
 #include <sys/random.h>
 #include <linux/random.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h> // for inet_addr()
-#include <pthread.h>   // for pthread functions
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -135,11 +134,11 @@ char *bit_range_str_max;
 
 const char *bsgs_modes[5] = {"secuential","backward","both","random","dance"};
 
-pthread_t *tid = NULL;
-pthread_mutex_t write_keys;
-pthread_mutex_t write_random;
-pthread_mutex_t mutex_bsgs_thread;
-pthread_mutex_t *bPload_mutex;
+platform_thread_t *tid = NULL;
+platform_mutex_t write_keys;
+platform_mutex_t write_random;
+platform_mutex_t mutex_bsgs_thread;
+platform_mutex_t *bPload_mutex;
 
 uint64_t FINISHED_THREADS_COUNTER = 0;
 uint64_t FINISHED_THREADS_BP = 0;
@@ -216,9 +215,9 @@ struct checksumsha256 *bloom_bP_checksums;
 struct checksumsha256 *bloom_bPx2nd_checksums;
 struct checksumsha256 *bloom_bPx3rd_checksums;
 
-pthread_mutex_t *bloom_bP_mutex;
-pthread_mutex_t *bloom_bPx2nd_mutex;
-pthread_mutex_t *bloom_bPx3rd_mutex;
+platform_mutex_t *bloom_bP_mutex;
+platform_mutex_t *bloom_bPx2nd_mutex;
+platform_mutex_t *bloom_bPx3rd_mutex;
 
 
 
@@ -310,9 +309,9 @@ int main(int argc, char **argv)	{
 	size_t rsize;
 
 	
-	pthread_mutex_init(&write_keys,NULL);
-	pthread_mutex_init(&write_random,NULL);
-	pthread_mutex_init(&mutex_bsgs_thread,NULL);
+	platform_mutex_init(&write_keys);
+	platform_mutex_init(&write_random);
+	platform_mutex_init(&mutex_bsgs_thread);
 
 	srand(time(NULL));
 
@@ -552,14 +551,14 @@ int main(int argc, char **argv)	{
 		bloom_bP_checksums = (struct checksumsha256*)calloc(256,sizeof(struct checksumsha256));
 		checkpointer((void *)bloom_bP_checksums,__FILE__,"calloc","bloom_bP_checksums" ,__LINE__ -1 );
 		
-		bloom_bP_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
+		bloom_bP_mutex = (platform_mutex_t*) calloc(256, sizeof(platform_mutex_t));
 		checkpointer((void *)bloom_bP_mutex,__FILE__,"calloc","bloom_bP_mutex" ,__LINE__ -1 );
 		
 
 		fflush(stdout);
 		bloom_bP_totalbytes = 0;
 		for(i=0; i< 256; i++)	{
-			pthread_mutex_init(&bloom_bP_mutex[i],NULL);
+			platform_mutex_init(&bloom_bP_mutex[i]);
 			if(bloom_init2(&bloom_bP[i],itemsbloom,0.000001)	== 1){
 				fprintf(stderr,"[E] error bloom_init _ %i\n",i);
 				exit(0);
@@ -571,7 +570,7 @@ int main(int argc, char **argv)	{
 
 		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m2);
 		
-		bloom_bPx2nd_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
+		bloom_bPx2nd_mutex = (platform_mutex_t*) calloc(256, sizeof(platform_mutex_t));
 		checkpointer((void *)bloom_bPx2nd_mutex,__FILE__,"calloc","bloom_bPx2nd_mutex" ,__LINE__ -1 );
 		bloom_bPx2nd = (struct bloom*)calloc(256,sizeof(struct bloom));
 		checkpointer((void *)bloom_bPx2nd,__FILE__,"calloc","bloom_bPx2nd" ,__LINE__ -1 );
@@ -579,7 +578,7 @@ int main(int argc, char **argv)	{
 		checkpointer((void *)bloom_bPx2nd_checksums,__FILE__,"calloc","bloom_bPx2nd_checksums" ,__LINE__ -1 );
 		bloom_bP2_totalbytes = 0;
 		for(i=0; i< 256; i++)	{
-			pthread_mutex_init(&bloom_bPx2nd_mutex[i],NULL);
+			platform_mutex_init(&bloom_bPx2nd_mutex[i]);
 			if(bloom_init2(&bloom_bPx2nd[i],itemsbloom2,0.000001)	== 1){
 				fprintf(stderr,"[E] error bloom_init _ %i\n",i);
 				exit(0);
@@ -589,7 +588,7 @@ int main(int argc, char **argv)	{
 		printf(": %.2f MB\n",(float)((float)(uint64_t)bloom_bP2_totalbytes/(float)(uint64_t)1048576));
 		
 
-		bloom_bPx3rd_mutex = (pthread_mutex_t*) calloc(256,sizeof(pthread_mutex_t));
+		bloom_bPx3rd_mutex = (platform_mutex_t*) calloc(256, sizeof(platform_mutex_t));
 		checkpointer((void *)bloom_bPx3rd_mutex,__FILE__,"calloc","bloom_bPx3rd_mutex" ,__LINE__ -1 );
 		bloom_bPx3rd = (struct bloom*)calloc(256,sizeof(struct bloom));
 		checkpointer((void *)bloom_bPx3rd,__FILE__,"calloc","bloom_bPx3rd" ,__LINE__ -1 );
@@ -599,7 +598,7 @@ int main(int argc, char **argv)	{
 		printf("[+] Bloom filter for %" PRIu64 " elements ",bsgs_m3);
 		bloom_bP3_totalbytes = 0;
 		for(i=0; i< 256; i++)	{
-			pthread_mutex_init(&bloom_bPx3rd_mutex[i],NULL);
+			platform_mutex_init(&bloom_bPx3rd_mutex[i]);
 			if(bloom_init2(&bloom_bPx3rd[i],itemsbloom3,0.000001)	== 1){
 				fprintf(stderr,"[E] error bloom_init %i\n",i);
 				exit(0);
@@ -940,8 +939,8 @@ int main(int argc, char **argv)	{
 				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m,(int) (((double)FINISHED_ITEMS/(double)bsgs_m)*100));
 				fflush(stdout);
 				
-				tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-				bPload_mutex = (pthread_mutex_t*) calloc(NTHREADS,sizeof(pthread_mutex_t));
+				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
+				bPload_mutex = (platform_mutex_t*) calloc(NTHREADS, sizeof(platform_mutex_t));
 				checkpointer((void *)bPload_mutex,__FILE__,"calloc","bPload_mutex" ,__LINE__ -1 );
 				bPload_temp_ptr = (struct bPload*) calloc(NTHREADS,sizeof(struct bPload));
 				checkpointer((void *)bPload_temp_ptr,__FILE__,"calloc","bPload_temp_ptr" ,__LINE__ -1 );
@@ -951,7 +950,7 @@ int main(int argc, char **argv)	{
 				memset(bPload_threads_available,1,NTHREADS);
 				
 				for(i = 0; i < NTHREADS; i++)	{
-					pthread_mutex_init(&bPload_mutex[i],NULL);
+					platform_mutex_init(&bPload_mutex[i]);
 				}
 				
 				do	{
@@ -971,12 +970,12 @@ int main(int argc, char **argv)	{
 								bPload_temp_ptr[i].workload = THREADBPWORKLOAD + PERTHREAD_R;
 								salir = 1;
 							}
-							s = pthread_create(&tid[i],NULL,thread_bPload_2blooms,(void*) &bPload_temp_ptr[i]);
+							s = platform_thread_create(&tid[i], thread_bPload_2blooms, (void*) &bPload_temp_ptr[i]);
 							if(s != 0){
 								printf("Thread creation failed. Error code: %d\n", s);
 								exit(EXIT_FAILURE);
 							}
-							pthread_detach(tid[i]);
+							platform_thread_detach(tid[i]);
 							BASE+=THREADBPWORKLOAD;
 							THREADCOUNTER++;
 						}
@@ -990,9 +989,9 @@ int main(int argc, char **argv)	{
 					
 					for(i = 0 ; i < NTHREADS ; i++)	{
 
-						pthread_mutex_lock(&bPload_mutex[i]);
+						platform_mutex_lock(&bPload_mutex[i]);
 						finished = bPload_temp_ptr[i].finished;
-						pthread_mutex_unlock(&bPload_mutex[i]);
+						platform_mutex_unlock(&bPload_mutex[i]);
 						if(finished)	{
 							bPload_temp_ptr[i].finished = 0;
 							bPload_threads_available[i] = 1;
@@ -1034,8 +1033,8 @@ int main(int argc, char **argv)	{
 				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS,bsgs_m,(int) (((double)FINISHED_ITEMS/(double)bsgs_m)*100));
 				fflush(stdout);
 				
-				tid = (pthread_t *) calloc(NTHREADS,sizeof(pthread_t));
-				bPload_mutex = (pthread_mutex_t*) calloc(NTHREADS,sizeof(pthread_mutex_t));
+				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
+				bPload_mutex = (platform_mutex_t*) calloc(NTHREADS, sizeof(platform_mutex_t));
 				checkpointer((void *)tid,__FILE__,"calloc","tid" ,__LINE__ -1 );
 				checkpointer((void *)bPload_mutex,__FILE__,"calloc","bPload_mutex" ,__LINE__ -1 );
 				
@@ -1048,7 +1047,7 @@ int main(int argc, char **argv)	{
 				memset(bPload_threads_available,1,NTHREADS);
 				
 				for(i = 0; i < NTHREADS; i++)	{
-					pthread_mutex_init(&bPload_mutex[i],NULL);
+					platform_mutex_init(&bPload_mutex[i]);
 				}
 				
 				do	{
@@ -1069,12 +1068,12 @@ int main(int argc, char **argv)	{
 								salir = 1;
 							}
 
-							s = pthread_create(&tid[i],NULL,thread_bPload,(void*) &bPload_temp_ptr[i]);
+							s = platform_thread_create(&tid[i], thread_bPload, (void*) &bPload_temp_ptr[i]);
 							if(s != 0){
 								printf("Thread creation failed. Error code: %d\n", s);
 								exit(EXIT_FAILURE);
 							}
-							pthread_detach(tid[i]);
+							platform_thread_detach(tid[i]);
 							BASE+=THREADBPWORKLOAD;
 							THREADCOUNTER++;
 						}
@@ -1087,9 +1086,9 @@ int main(int argc, char **argv)	{
 					
 					for(i = 0 ; i < NTHREADS ; i++)	{
 
-						pthread_mutex_lock(&bPload_mutex[i]);
+						platform_mutex_lock(&bPload_mutex[i]);
 						finished = bPload_temp_ptr[i].finished;
-						pthread_mutex_unlock(&bPload_mutex[i]);
+						platform_mutex_unlock(&bPload_mutex[i]);
 						if(finished)	{
 							bPload_temp_ptr[i].finished = 0;
 							bPload_threads_available[i] = 1;
@@ -1333,7 +1332,7 @@ int main(int argc, char **argv)	{
         exit(EXIT_FAILURE);
     }
 
-	pthread_t tid;
+	platform_thread_t tid;
 	while(1) {
 		// Accepting incoming connection
 		if ((client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
@@ -1346,12 +1345,12 @@ int main(int argc, char **argv)	{
 		printf("[+] Accepting incoming conection from %s:%i\n",clientIP,clientPort);
 		fflush(stdout);
 		// Creating new thread to handle client
-		if (pthread_create(&tid, NULL, client_handler, &client_fd) != 0) {
-			perror("pthread_create failed");
+		if (platform_thread_create(&tid, client_handler, &client_fd) != 0) {
+			perror("platform_thread_create failed");
 			printf("Failed to attend to one client\n");
 		}
 		else	{
-			if (pthread_join(tid, NULL) != 0) {
+			if (platform_thread_join(tid, NULL) != 0) {
 				fprintf(stderr, "Failed to join thread.\n");
 				exit(EXIT_FAILURE);
 			}
@@ -1620,16 +1619,16 @@ void *thread_process_bsgs(void *vargp)	{
 	do	{
 		
 	/*
-		We do this in an atomic pthread_mutex operation to not affect others threads
+		We do this in an atomic mutex operation to not affect others threads
 		so BSGS_CURRENT is never the same between threads
 	*/
-		pthread_mutex_lock(&mutex_bsgs_thread);
+		platform_mutex_lock(&mutex_bsgs_thread);
 
 		base_key.Set(&BSGS_CURRENT);	/* we need to set our base_key to the current BSGS_CURRENT value*/
 		BSGS_CURRENT.Add(&BSGS_N);		/*Then add BSGS_N to BSGS_CURRENT*/
 		BSGS_CURRENT.Add(&BSGS_N);		/*Then add BSGS_N to BSGS_CURRENT*/
 		
-		pthread_mutex_unlock(&mutex_bsgs_thread);
+		platform_mutex_unlock(&mutex_bsgs_thread);
 
 		if(base_key.IsGreaterOrEqual(&n_range_end))
 			break;
@@ -1655,7 +1654,7 @@ void *thread_process_bsgs(void *vargp)	{
 			aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed,base_point);
 			printf("[+] Publickey %s\n",aux_c);
 			
-			pthread_mutex_lock(&write_keys);
+			platform_mutex_lock(&write_keys);
 
 			filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
 			if(filekey != NULL)	{
@@ -1663,7 +1662,7 @@ void *thread_process_bsgs(void *vargp)	{
 				fclose(filekey);
 			}
 			BSGSkeyfound.Set(&base_key);
-			pthread_mutex_unlock(&write_keys);
+			platform_mutex_unlock(&write_keys);
 
 			free(hextemp);
 			free(aux_c);
@@ -1777,7 +1776,7 @@ pn.y.ModAdd(&GSn[i].y);
 							point_found = secp->ComputePublicKey(&keyfound);
 							aux_c = secp->GetPublicKeyHex(OriginalPointsBSGScompressed,point_found);
 							printf("[+] Publickey %s\n",aux_c);
-							pthread_mutex_lock(&write_keys);
+							platform_mutex_lock(&write_keys);
 
 							filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
 							if(filekey != NULL)	{
@@ -1785,7 +1784,7 @@ pn.y.ModAdd(&GSn[i].y);
 								fclose(filekey);
 							}
 							BSGSkeyfound.Set(&keyfound);
-							pthread_mutex_unlock(&write_keys);
+							platform_mutex_unlock(&write_keys);
 							free(hextemp);
 							free(aux_c);
 							bsgs_found = 1;
@@ -1821,7 +1820,7 @@ pn.y.ModAdd(&GSn[i].y);
 		} // end else
 	}while(base_key.IsLower(&n_range_end) && bsgs_found == 0);
 	delete grp;
-	pthread_exit(NULL);
+	return NULL;
 }
 
 /*
@@ -1944,18 +1943,17 @@ void calcualteindex(int i,Int *key)	{
 }
 
 
-void sleep_ms(int milliseconds)	{ // cross-platform sleep function
-#if defined(_WIN64) && !defined(__CYGWIN__)
-    Sleep(milliseconds);
-#elif _POSIX_C_SOURCE >= 199309L
-    struct timespec ts;
-    ts.tv_sec = milliseconds / 1000;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    nanosleep(&ts, NULL);
+void sleep_ms(int milliseconds)	{
+	// POSIX sleep function (bsgsd is Linux-only)
+#if _POSIX_C_SOURCE >= 199309L
+	struct timespec ts;
+	ts.tv_sec = milliseconds / 1000;
+	ts.tv_nsec = (milliseconds % 1000) * 1000000;
+	nanosleep(&ts, NULL);
 #else
-    if (milliseconds >= 1000)
-      sleep(milliseconds / 1000);
-    usleep((milliseconds % 1000) * 1000);
+	if (milliseconds >= 1000)
+		sleep(milliseconds / 1000);
+	usleep((milliseconds % 1000) * 1000);
 #endif
 }
 
@@ -2078,20 +2076,20 @@ void *thread_bPload(void *vargp)	{
 					bPtable[i_counter].index = i_counter;
 				}
 				if(!FLAGREADEDFILE4)	{
-					pthread_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
+					platform_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
-					pthread_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
+					platform_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 				}
 			}
 			if(i_counter < bsgs_m2 && !FLAGREADEDFILE2)	{
-				pthread_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
+				platform_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 				bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
-				pthread_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
+				platform_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 			}
 			if(i_counter < to && !FLAGREADEDFILE1 )	{
-				pthread_mutex_lock(&bloom_bP_mutex[bloom_bP_index]);
+				platform_mutex_lock(&bloom_bP_mutex[bloom_bP_index]);
 				bloom_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
-				pthread_mutex_unlock(&bloom_bP_mutex[bloom_bP_index]);
+				platform_mutex_unlock(&bloom_bP_mutex[bloom_bP_index]);
 			}
 			i_counter++;
 		}
@@ -2112,10 +2110,9 @@ void *thread_bPload(void *vargp)	{
 		startP = pp;
 	}
 	delete grp;
-	pthread_mutex_lock(&bPload_mutex[threadid]);
+	platform_mutex_lock(&bPload_mutex[threadid]);
 	tt->finished = 1;
-	pthread_mutex_unlock(&bPload_mutex[threadid]);
-	pthread_exit(NULL);
+	platform_mutex_unlock(&bPload_mutex[threadid]);
 	return NULL;
 }
 
@@ -2231,15 +2228,15 @@ void *thread_bPload_2blooms(void *vargp)	{
 					bPtable[i_counter].index = i_counter;
 				}
 				if(!FLAGREADEDFILE4)	{
-					pthread_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
+					platform_mutex_lock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 					bloom_add(&bloom_bPx3rd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
-					pthread_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
+					platform_mutex_unlock(&bloom_bPx3rd_mutex[bloom_bP_index]);
 				}
 			}
 			if(i_counter < bsgs_m2 && !FLAGREADEDFILE2)	{
-				pthread_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
+				platform_mutex_lock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 				bloom_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
-				pthread_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
+				platform_mutex_unlock(&bloom_bPx2nd_mutex[bloom_bP_index]);
 			}
 			i_counter++;
 		}
@@ -2260,10 +2257,9 @@ void *thread_bPload_2blooms(void *vargp)	{
 		startP = pp;
 	}
 	delete grp;
-	pthread_mutex_lock(&bPload_mutex[threadid]);
+	platform_mutex_lock(&bPload_mutex[threadid]);
 	tt->finished = 1;
-	pthread_mutex_unlock(&bPload_mutex[threadid]);
-	pthread_exit(NULL);
+	platform_mutex_unlock(&bPload_mutex[threadid]);
 	return NULL;
 }
 
@@ -2312,7 +2308,7 @@ void writekey(bool compressed,Int *key)	{
 	hexrmd = tohex(rmdhash,20);
 	rmd160toaddress_dst(rmdhash,address);
 
-	pthread_mutex_lock(&write_keys);
+	platform_mutex_lock(&write_keys);
 	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
 	if(keys != NULL)	{
 		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
@@ -2320,7 +2316,7 @@ void writekey(bool compressed,Int *key)	{
 	}
 	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 	
-	pthread_mutex_unlock(&write_keys);
+	platform_mutex_unlock(&write_keys);
 	free(hextemp);
 	free(hexrmd);
 }
@@ -2353,7 +2349,7 @@ void* client_handler(void* arg) {
 	bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, MSG_PEEK);
 	if (bytes_received <= 0) {
 		close(client_fd);
-		pthread_exit(NULL);
+		return NULL;
 	}
 	
     
@@ -2362,7 +2358,7 @@ void* client_handler(void* arg) {
 	bytes_received = recv(client_fd, buffer, line_length, 0);
 	if (bytes_received <= 0)	{
 		close(client_fd);
-		pthread_exit(NULL);
+		return NULL;
 	}
 
 	// Process the received bytes here
@@ -2373,7 +2369,7 @@ void* client_handler(void* arg) {
 		freetokenizer(&t);
 		sendstr(client_fd,"400 Bad Request");
 		close(client_fd);
-		pthread_exit(NULL);
+		return NULL;
 	}
 
 	if(!secp->ParsePublicKeyHex(t.tokens[0],OriginalPointsBSGS,OriginalPointsBSGScompressed))	{
@@ -2381,14 +2377,14 @@ void* client_handler(void* arg) {
 		freetokenizer(&t);
 		sendstr(client_fd,"400 Bad Request");
 		close(client_fd);
-		pthread_exit(NULL);		
+		return NULL;		
 	}
 	if(!(isValidHex(t.tokens[1]) && isValidHex(t.tokens[2])))	{
 		printf("Invalid hexadecimal format from client %s:%s\n",t.tokens[1],t.tokens[2]);
 		freetokenizer(&t);
 		sendstr(client_fd,"400 Bad Request");
 		close(client_fd);
-		pthread_exit(NULL);	
+		return NULL;	
 	}
 	
 	n_range_start.SetBase16(t.tokens[1]);
@@ -2397,13 +2393,13 @@ void* client_handler(void* arg) {
 	freetokenizer(&t);
 	
 	BSGS_CURRENT.Set(&n_range_start);
-	
+
 	bool *threads_created;
-	pthread_t *threads;
+	platform_thread_t *threads;
 	int *thread_args;
-	
+
 	threads_created = (bool*) calloc(NTHREADS,sizeof(bool));
-	threads = (pthread_t*) calloc(NTHREADS,sizeof(pthread_t));
+	threads = (platform_thread_t*) calloc(NTHREADS, sizeof(platform_thread_t));
 	thread_args = (int*) calloc(NTHREADS,sizeof(int));
 	checkpointer(threads_created,__FILE__,"calloc","threads_created",__LINE__);
 	checkpointer(threads,__FILE__,"calloc","threads",__LINE__);
@@ -2417,7 +2413,7 @@ void* client_handler(void* arg) {
 	for (i = 0; i < NTHREADS; i++) {
 		thread_args[i] = i;
 		threads_created[i] = true;
-		rc = pthread_create(&threads[i], NULL, thread_process_bsgs, &thread_args[i]);
+		rc = platform_thread_create(&threads[i], thread_process_bsgs, &thread_args[i]);
 		if (rc != 0) {
 			printf("Failed to create thread %d\n", i);
 			threads_created[i] = false;
@@ -2428,7 +2424,7 @@ void* client_handler(void* arg) {
 	// Wait for threads to finish
 	for (i = 0; i < NTHREADS; i++) {
 		if(threads_created[i]){
-			rc = pthread_join(threads[i], NULL);
+			rc = platform_thread_join(threads[i], NULL);
 			if (rc != 0) {
 				printf("Failed to join thread %d\n", i);
 			}
@@ -2453,9 +2449,9 @@ void* client_handler(void* arg) {
 		printf("Failed to send message to client\n");
 	}
 
-	
+
     close(client_fd);
-    pthread_exit(NULL);
+    return NULL;
 }
 
 int sendstr(int client_fd,const char *str)	{

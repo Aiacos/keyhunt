@@ -18,15 +18,12 @@
 
 #include "Random.h"
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-#else
+/* Use getrandom() on Linux for better entropy, Mersenne Twister on other platforms */
+#ifdef __linux__
+#ifndef __CYGWIN__
 #include <sys/random.h>
-#endif
-
-#ifdef __unix__
-#ifdef __CYGWIN__
-#else
 #include <linux/random.h>
+#define USE_GETRANDOM 1
 #endif
 #endif
 
@@ -66,12 +63,10 @@ void rk_seed(unsigned long seed, rk_state *state)
 #define UPPER_MASK 0x80000000UL
 #define LOWER_MASK 0x7fffffffUL
 
-#ifdef _WIN64
-// Disable "unary minus operator applied to unsigned type, result still unsigned" warning.
-#pragma warning(disable : 4146)
-#endif
-
-/* Slightly optimised reference implementation of the Mersenne Twister */
+/* Slightly optimised reference implementation of the Mersenne Twister
+ * Note: The unary minus on unsigned (line 86, 91, 94) is intentional
+ * for bit manipulation and produces correct results.
+ */
 inline unsigned long rk_random(rk_state *state)
 {
   unsigned long y;
@@ -120,24 +115,19 @@ void rseed(unsigned long seed) {
 	//srand(seed);
 }
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
+// Returns a random unsigned long
 unsigned long rndl() {
-	return rk_random(&localState);
-}
-#else
-unsigned long rndl() {
+#ifdef USE_GETRANDOM
+	/* On Linux, try to use getrandom() for better entropy */
 	unsigned long r;
-	int bytes_read = getrandom(&r, sizeof(unsigned long), GRND_NONBLOCK );
+	int bytes_read = getrandom(&r, sizeof(unsigned long), GRND_NONBLOCK);
 	if (bytes_read > 0) {
 		return r;
 	}
-	else	{
-		/*Fail safe */
-		return rk_random(&localState);
-	}
-}
-	
+	/* Fallback to Mersenne Twister if getrandom() fails */
 #endif
+	return rk_random(&localState);
+}
 
 // Returns a uniform distributed double value in the interval ]0,1[
 double rnd() {

@@ -20,7 +20,6 @@
 #include <inttypes.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <pthread.h>
 
 /* Suppress deprecation warnings within this file - the whole module is deprecated
  * and internal function calls are expected to use deprecated APIs */
@@ -79,15 +78,9 @@ static int oldbloom_check_add(struct oldbloom * bloom, const void * buffer, int 
   int r;
   for (i = 0; i < bloom->hashes; i++) {
     x = (a + b*i) % bloom->bits;
-#if defined(_WIN64) && !defined(__CYGWIN__)
-	WaitForSingleObject(bloom->mutex, INFINITE);
+	platform_mutex_lock(&bloom->mutex);
 	r = oldtest_bit_set_bit(bloom->bf, x, add);
-	ReleaseMutex(bloom->mutex);
-#else
-	pthread_mutex_lock((pthread_mutex_t*)&bloom->mutex);
-	r = oldtest_bit_set_bit(bloom->bf, x, add);
-	pthread_mutex_unlock((pthread_mutex_t*)&bloom->mutex);
-#endif
+	platform_mutex_unlock(&bloom->mutex);
     if (r) {
       hits++;
     } else if (!add) {

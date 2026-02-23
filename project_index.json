@@ -1,0 +1,35 @@
+{
+  "project_type": "single",
+  "services": {
+    "keyhunt": {
+      "path": ".",
+      "tech_stack": ["c++17", "c", "pthread", "windows-api"],
+      "build_command": "make",
+      "test_command": "make test",
+      "clean_command": "make clean"
+    }
+  },
+  "infrastructure": {
+    "docker": false,
+    "ci_cd": {
+      "platform": "github_actions",
+      "config_file": ".github/workflows"
+    },
+    "build_system": "make"
+  },
+  "conventions": {
+    "compiler": "g++/gcc",
+    "standards": {
+      "cpp": "c++17",
+      "c": "c11"
+    },
+    "formatting": "manual",
+    "testing": "custom",
+    "optimization": "-O3 with LTO"
+  },
+  "platform_support": ["linux", "windows", "cygwin"],
+  "dependencies": {
+    "required": ["pthread (linux)", "windows.h (windows)"],
+    "optional": ["cuda", "openssl", "gmp"]
+  }
+}
