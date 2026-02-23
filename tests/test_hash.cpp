@@ -809,6 +809,131 @@ TEST(cripemd160_class_incremental) {
  * Edge Cases and Error Handling
  * ============================================================================ */
 
+TEST(hash_edge_cases) {
+    /* Comprehensive edge case test for hash functions */
+
+    /* Test 1: Empty input for both RIPEMD160 and SHA256 */
+    {
+        unsigned char empty_input[] = "";
+        unsigned char rmd_digest[20];
+        unsigned char sha_digest[32];
+        unsigned char rmd_expected[20];
+        unsigned char sha_expected[32];
+
+        hex_to_bytes("9c1185a5c5e9fc54612808977ee8f548b2258d31", rmd_expected, 20);
+        hex_to_bytes("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", sha_expected, 32);
+
+        ripemd160(empty_input, 0, rmd_digest);
+        sha256(empty_input, 0, sha_digest);
+
+        ASSERT_MEM_EQ(rmd_expected, rmd_digest, 20);
+        ASSERT_MEM_EQ(sha_expected, sha_digest, 32);
+    }
+
+    /* Test 2: Single byte input for both hash functions */
+    {
+        unsigned char single_byte[] = "a";
+        unsigned char rmd_digest[20];
+        unsigned char sha_digest[32];
+        unsigned char rmd_expected[20];
+        unsigned char sha_expected[32];
+
+        hex_to_bytes("0bdc9d2d256b3ee9daae347be6f4dc835a467ffe", rmd_expected, 20);
+        hex_to_bytes("ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb", sha_expected, 32);
+
+        ripemd160(single_byte, 1, rmd_digest);
+        sha256(single_byte, 1, sha_digest);
+
+        ASSERT_MEM_EQ(rmd_expected, rmd_digest, 20);
+        ASSERT_MEM_EQ(sha_expected, sha_digest, 32);
+    }
+
+    /* Test 3: Max/very large length (use existing million_a test as reference) */
+    {
+        const size_t large_len = 10000;  /* 10KB - reasonable for unit test */
+        unsigned char *large_input = (unsigned char *)malloc(large_len);
+        ASSERT_NOT_NULL(large_input);
+
+        memset(large_input, 'x', large_len);
+
+        unsigned char rmd_digest[20];
+        unsigned char sha_digest[32];
+
+        /* Hash the large input - just verify it doesn't crash */
+        ripemd160(large_input, large_len, rmd_digest);
+        sha256(large_input, large_len, sha_digest);
+
+        /* Verify outputs are not all zeros */
+        int rmd_all_zero = 1;
+        for (int i = 0; i < 20; i++) {
+            if (rmd_digest[i] != 0) {
+                rmd_all_zero = 0;
+                break;
+            }
+        }
+        ASSERT_FALSE(rmd_all_zero);
+
+        int sha_all_zero = 1;
+        for (int i = 0; i < 32; i++) {
+            if (sha_digest[i] != 0) {
+                sha_all_zero = 0;
+                break;
+            }
+        }
+        ASSERT_FALSE(sha_all_zero);
+
+        free(large_input);
+    }
+
+    /* Test 4: Boundary cases - length at block boundaries */
+    {
+        /* Test exact block size (64 bytes for both algorithms) */
+        unsigned char block_input[64];
+        memset(block_input, 'b', 64);
+
+        unsigned char rmd_digest[20];
+        unsigned char sha_digest[32];
+
+        ripemd160(block_input, 64, rmd_digest);
+        sha256(block_input, 64, sha_digest);
+
+        /* Verify non-zero outputs */
+        ASSERT_TRUE(rmd_digest[0] != 0 || rmd_digest[1] != 0);
+        ASSERT_TRUE(sha_digest[0] != 0 || sha_digest[1] != 0);
+    }
+
+    /* Test 5: Null-like data (all zeros) */
+    {
+        unsigned char null_data[100];
+        memset(null_data, 0, 100);
+
+        unsigned char rmd_digest[20];
+        unsigned char sha_digest[32];
+
+        ripemd160(null_data, 100, rmd_digest);
+        sha256(null_data, 100, sha_digest);
+
+        /* Even with null input, output should not be all zeros */
+        int rmd_all_zero = 1;
+        for (int i = 0; i < 20; i++) {
+            if (rmd_digest[i] != 0) {
+                rmd_all_zero = 0;
+                break;
+            }
+        }
+        ASSERT_FALSE(rmd_all_zero);
+
+        int sha_all_zero = 1;
+        for (int i = 0; i < 32; i++) {
+            if (sha_digest[i] != 0) {
+                sha_all_zero = 0;
+                break;
+            }
+        }
+        ASSERT_FALSE(sha_all_zero);
+    }
+}
+
 TEST(ripemd160_single_byte) {
     unsigned char input[] = "a";
     unsigned char digest[20];
@@ -929,6 +1054,7 @@ int main(int argc, char *argv[]) {
     RUN_TEST(cripemd160_class_incremental);
 
     TEST_SECTION("Edge Cases");
+    RUN_TEST(hash_edge_cases);
     RUN_TEST(ripemd160_single_byte);
     RUN_TEST(sha256_single_byte);
     RUN_TEST(ripemd160_binary_data);
