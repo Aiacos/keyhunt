@@ -156,8 +156,11 @@ extern struct bloom *vanity_bloom;
 extern bloom_extended_t bloom;
 
 /* Data arrays */
-extern uint64_t *steps;
-extern unsigned int *ends;
+/* Defined in search_common.h; forward-declared here for extern */
+struct thread_counter;
+struct thread_flag;
+extern struct thread_counter *steps;
+extern struct thread_flag *ends;
 extern uint64_t N;
 
 extern uint64_t N_SEQUENTIAL_MAX;

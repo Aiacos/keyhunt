@@ -131,11 +131,13 @@ extern std::vector<Point> BSGS_AMP2;          /* Amplification points for 2nd ch
 extern std::vector<Point> BSGS_AMP3;          /* Amplification points for 3rd check */
 extern std::vector<Point> OriginalPointsBSGS; /* Target public keys */
 
-/* BSGS data structures */
+/* BSGS data structures (canonical definition in bsgs/bsgs_sort.h) */
+#ifndef BSGS_SORT_H
 struct bsgs_xvalue {
     uint64_t value;    /* 8 bytes (last 8 bytes of X coordinate) */
     uint64_t index;    /* Index in bPtable */
 };
+#endif
 
 extern struct bsgs_xvalue *bPtable;           /* Baby step point table */
 extern uint64_t bsgs_m3;                      /* M3 value for table size */

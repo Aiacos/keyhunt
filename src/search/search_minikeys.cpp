@@ -30,35 +30,83 @@
  * See search_context.h for shared declarations and extern globals.
  */
 
-#include "search_context.h"
-#include "search_common.h"
-#include "search_utils.h"
+/*
+ * NOTE: search_context.h cannot be included here because its #define MODE_*
+ * macros conflict with the search_mode_t enum in cli.h (included transitively
+ * through config/config.h).  Instead we include only the headers we need
+ * and declare the remaining externs locally.
+ */
+#include "secp256k1/SECP256k1.h"
+#include "secp256k1/Point.h"
+#include "secp256k1/Int.h"
+#include "secp256k1/Random.h"
+#include "bloom/bloom.h"
+#include "bloom/bloom_wrapper.h"
+#include "hash/sha256.h"
+#include "platform/platform.h"
 #include "../io/io.h"
-#include "../crypto/address_util.h"
 #include "../output.h"
+#include "../core/util.h"
+#include "../sort/sort.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
 
+/* From crypto/address_util.cpp (C linkage via address_util.h) */
+extern "C" {
+void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3,
+                  uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3);
+void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3,
+                  uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3);
+}
+
+/* ============================================================================
+ * Struct Definitions (from keyhunt.cpp)
+ * ============================================================================ */
+
+/* address_value and searchbinary are provided by sort/sort.h */
+
+struct tothread {
+	int nt;
+	char *rs;
+	char *rpt;
+};
+
+struct thread_counter {
+	uint64_t value;
+	uint8_t padding[56];
+};
+
 /* ============================================================================
  * External Dependencies
  * These are defined in keyhunt.cpp and linked at compile time
  * ============================================================================ */
 
-extern int searchbinary(struct address_value *buffer, char *data, int64_t array_length);
-
-/* Globals from search_context.h not covered by search_common.h */
+extern Secp256K1 *secp;
 extern int FLAGBASEMINIKEY;
 extern int FLAGRANDOM;
 extern int FLAGMATRIX;
 extern int FLAGQUIET;
 extern uint64_t N;
 extern uint64_t N_SEQUENTIAL_MAX;
-extern uint64_t *steps;
+extern struct thread_counter *steps;
 extern struct address_value *addressTable;
 extern bloom_extended_t bloom;
+extern platform_mutex_t write_keys;
+extern platform_mutex_t write_random;
+extern char *raw_baseminikey;
+extern char *Ccoinbuffer;
+extern char *minikeyN;
+extern int minikey_n_limit;
+/* P2PKH is #defined in secp256k1/SECP256k1.h */
+
+/* From crypto/address_util.cpp */
+extern "C" void rmd160toaddress_dst(char *rmd, char *dst);
+
+/* Thread profiling - no-op outside keyhunt.cpp (static inline there) */
+static inline void profile_set_thread(int) { }
 
 /* ============================================================================
  * Minikey Utility Functions
