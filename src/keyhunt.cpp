@@ -461,6 +461,26 @@ struct tothread {
 	char *rpt;  //rng per thread
 };
 
+/*
+ * thread_args - New unified thread argument structure
+ *
+ * This struct replaces the legacy tothread struct and provides a clean
+ * way to pass configuration to thread functions. It contains:
+ *   - config: Pointer to the global keyhunt_config_t struct
+ *   - thread_id: Thread identifier (0-based index)
+ *
+ * Usage:
+ *   thread_args args = { .config = &g_config, .thread_id = i };
+ *   pthread_create(&tid, NULL, thread_func, &args);
+ *
+ * Migration: During the migration phase, both tothread and thread_args
+ * coexist. Eventually, tothread will be removed.
+ */
+struct thread_args {
+	keyhunt_config_t *config;   /* Pointer to global configuration */
+	int thread_id;              /* Thread number (0-based) */
+};
+
 struct bPload	{
 	uint32_t threadid;
 	uint64_t from;
