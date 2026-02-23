@@ -146,7 +146,7 @@ int thread_rand_n(int n) {
 // Many variables still use global state until migration is complete
 
 // Infrastructure globals
-uint32_t THREADBPWORKLOAD = 0;
+uint32_t THREADBPWORKLOAD = 1048576;
 bool g_avx2_available = false;
 static keyhunt_ini_config_t g_config;
 static bool g_config_loaded = false;
