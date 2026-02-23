@@ -17,6 +17,7 @@
 #include "../secp256k1/Int.h"
 #include "../secp256k1/IntGroup.h"
 #include "../bloom/bloom_wrapper.h"
+#include "../config/config.h"
 
 /* ============================================================================
  * Search Mode Constants
@@ -57,6 +58,34 @@ struct thread_flag {
     unsigned int value;
     uint8_t padding[60];
 };
+
+/* ============================================================================
+ * Thread Arguments - New configuration-based threading
+ * ============================================================================ */
+
+/**
+ * thread_args - Unified thread argument structure
+ *
+ * This struct provides a clean way to pass configuration to thread functions.
+ * It replaces the legacy tothread struct during the migration process.
+ *
+ * Usage:
+ *   thread_args args = { .config = &global_config, .thread_id = i };
+ *   pthread_create(&tid, NULL, thread_func, &args);
+ *
+ * The config pointer gives threads access to all search parameters,
+ * BSGS settings, GPU config, and runtime state without using globals.
+ */
+struct thread_args {
+    keyhunt_config_t *config;   /* Pointer to configuration structure */
+    int thread_id;              /* Thread number (0-based) */
+};
+
+/* ============================================================================
+ * Shared Global Variables (extern declarations)
+ * These are defined in keyhunt.cpp
+ * NOTE: These will be gradually removed as migration to config progresses
+ * ============================================================================ */
 
 /* Core search state */
 extern std::atomic<uint64_t> FINISHED_ITEMS;
