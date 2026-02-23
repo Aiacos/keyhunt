@@ -842,7 +842,7 @@ bool *OriginalPointsBSGScompressed;
 uint64_t bytes;
 char checksum[32],checksum_backup[32];
 char buffer_bloom_file[1024];
-struct bsgs_xvalue *bPtable;
+bsgs_xvalue *bPtable;  // From bsgs/bsgs_sort.h
 struct address_value *addressTable;
 
 struct oldbloom oldbloom_bP;
@@ -3540,10 +3540,10 @@ int main(int argc, char **argv)	{
 			BSGS_AMP3[i].Reduce();
 		}
 
-		bytes = (uint64_t)bsgs_m3 * (uint64_t) sizeof(struct bsgs_xvalue);
+		bytes = (uint64_t)bsgs_m3 * (uint64_t) sizeof(bsgs_xvalue);
 		output_success("Allocating %.2f MB for %" PRIu64  " bP Points\n",(double)(bytes/1048576),bsgs_m3);
-		
-		bPtable = (struct bsgs_xvalue*) malloc(bytes);
+
+		bPtable = (bsgs_xvalue*) malloc(bytes);
 		checkpointer((void *)bPtable,__FILE__,"malloc","bPtable" ,__LINE__ -1 );
 		memset(bPtable,0,bytes);
 		
