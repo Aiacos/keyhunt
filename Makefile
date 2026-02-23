@@ -84,7 +84,7 @@ CLI_OBJS := $(OBJDIR)/cli.o
 WIZARD_OBJS := $(OBJDIR)/wizard/wizard.o $(OBJDIR)/wizard/wizard_config.o $(OBJDIR)/wizard/wizard_ui.o $(OBJDIR)/wizard/wizard_community.o $(OBJDIR)/wizard/wizard_server.o $(OBJDIR)/wizard/wizard_client.o
 CORE_OBJS := $(OBJDIR)/core/util.o $(OBJDIR)/core/sysinfo.o $(OBJDIR)/core/parameter_validator.o $(OBJDIR)/core/config.o
 CONFIG_OBJS := $(OBJDIR)/config/config.o
-SEARCH_OBJS := $(OBJDIR)/search/search_xpoint.o $(OBJDIR)/search/search_rmd160.o
+SEARCH_OBJS := $(OBJDIR)/search/search_xpoint.o $(OBJDIR)/search/search_rmd160.o $(OBJDIR)/search/search_bsgs.o
 
 COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS)
 
