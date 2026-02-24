@@ -57,6 +57,8 @@
 extern Secp256K1 *secp;
 
 /* Thread-padded counters to avoid false sharing */
+#ifndef THREAD_COUNTER_DEFINED
+#define THREAD_COUNTER_DEFINED
 struct thread_counter {
     uint64_t value;
     uint8_t padding[56];
@@ -66,6 +68,7 @@ struct thread_flag {
     unsigned int value;
     uint8_t padding[60];
 };
+#endif
 
 /* ============================================================================
  * Thread Arguments - New configuration-based threading
@@ -121,9 +124,9 @@ extern Int BSGS_CURRENT;
 extern Point BSGS_P;
 extern Point BSGS_MP;
 extern Point BSGS_MP2;
-extern struct bloom *bloom_bP;
-extern struct bloom *bloom_bP2;
-extern struct bloom *bloom_bP3;
+extern bloom_extended_t *bloom_bP;
+extern bloom_extended_t *bloom_bPx2nd;
+extern bloom_extended_t *bloom_bPx3rd;
 
 /* BSGS algorithm state (defined in keyhunt.cpp) */
 #include <vector>
@@ -131,11 +134,13 @@ extern std::vector<Point> BSGS_AMP2;          /* Amplification points for 2nd ch
 extern std::vector<Point> BSGS_AMP3;          /* Amplification points for 3rd check */
 extern std::vector<Point> OriginalPointsBSGS; /* Target public keys */
 
-/* BSGS data structures */
+/* BSGS data structures (canonical definition in bsgs/bsgs_sort.h) */
+#ifndef BSGS_SORT_H
 struct bsgs_xvalue {
     uint64_t value;    /* 8 bytes (last 8 bytes of X coordinate) */
     uint64_t index;    /* Index in bPtable */
 };
+#endif
 
 extern struct bsgs_xvalue *bPtable;           /* Baby step point table */
 extern uint64_t bsgs_m3;                      /* M3 value for table size */
@@ -171,12 +176,15 @@ extern Int OUTPUTSECONDS;
  * Shared Function Declarations
  * ============================================================================ */
 
-/* Address/hash generation */
+/* Address/hash generation (C-linkage, defined in crypto/address_util.cpp) */
+extern "C" {
 char *pubkeytopubaddress(char *pkey, int length);
 void pubkeytopubaddress_dst(char *pkey, int length, char *dst);
 void rmd160toaddress_dst(char *rmd, char *dst);
-void generate_binaddress_eth(Point &publickey, unsigned char *dst_address);
 void KECCAK_256(uint8_t *source, size_t size, uint8_t *dst);
+}
+/* C++ linkage */
+void generate_binaddress_eth(Point &publickey, unsigned char *dst_address);
 
 /* Minikey functions */
 void set_minikey(char *buffer, char *rawbuffer, int length);
