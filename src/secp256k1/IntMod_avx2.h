@@ -1,15 +1,23 @@
 /*
- * AVX2 optimized implementation for secp256k1 Modular Multiplication
+ * AVX2-ready implementation for secp256k1 Modular Multiplication
+ *
+ * Current implementation uses scalar operations with _umul128 and _addcarry_u64.
+ * AVX2 infrastructure is in place for future optimizations, but carry-chain
+ * vectorization is not beneficial with AVX2 (no native carry support).
+ *
+ * Future work: AVX-512 provides carry instructions that could benefit this code.
+ *
+ * Runtime dispatch and CPU detection remain active for when SIMD optimization
+ * becomes feasible.
  *
  * Key optimizations:
- * - AVX2 intrinsics for parallel carry chain operations
- * - Vectorized additions using _mm256_add_epi64
- * - Runtime CPU feature detection with graceful fallback
+ * - Efficient carry chain operations using _addcarry_u64
+ * - 128-bit multiplication with _umul128
+ * - Runtime CPU feature detection (infrastructure for future SIMD)
  * - secp256k1 specific reduction using p = 2^256 - 2^32 - 977
  *   which means: a mod p = a_low + a_high * 0x1000003D1
  *
  * Based on VanitySearch ModMulK1 implementation
- * AVX2 optimization for keyhunt by Claude Code
  */
 
 #ifndef INTMOD_AVX2_H
@@ -66,11 +74,11 @@ static inline int modmulk1_avx2_available(void) {
 }
 
 /**
- * AVX2-optimized 256x256 -> 512 bit multiplication with secp256k1 reduction
+ * Optimized 256x256 -> 512 bit multiplication with secp256k1 reduction
  *
- * This uses AVX2 intrinsics to vectorize carry propagation chains where possible.
- * The 256x256 multiplication itself remains scalar (via _umul128) but carry chains
- * use AVX2 _mm256_add_epi64 for parallel additions.
+ * Uses efficient scalar operations with _umul128 and _addcarry_u64.
+ * AVX2 carry-chain optimization was evaluated but provides no performance
+ * benefit without native carry instructions (available in AVX-512).
  *
  * Input: a[4], b[4] (256-bit integers as 4x64-bit words)
  * Output: r[4] (256-bit result, reduced mod secp256k1 prime)
@@ -97,18 +105,9 @@ static inline void ModMulK1_avx2(const uint64_t *a, const uint64_t *b, uint64_t 
     c = _addcarry_u64(c, r512[3], t[3], &r512[3]);
     c = _addcarry_u64(c, 0ULL, t[4], &r512[4]);
 
-    // Column 1: a * b[1] - with AVX2 vectorization for additions
+    // Column 1: a * b[1]
     t[0] = _umul128(a[0], b[1], &t[1]);
     t[2] = _umul128(a[1], b[1], &t[3]);
-
-    // Use AVX2 to add pairs in parallel
-    __m256i v_r = _mm256_loadu_si256((__m256i*)(r512 + 1));
-    __m256i v_t = _mm256_set_epi64x(t[3], t[2], t[1], t[0]);
-    __m256i v_sum = _mm256_add_epi64(v_r, v_t);
-
-    // Store back and handle carries manually
-    uint64_t temp[4];
-    _mm256_storeu_si256((__m256i*)temp, v_sum);
 
     c = _addcarry_u64(0, r512[1], t[0], &r512[1]);
     c = _addcarry_u64(c, r512[2], t[1], &r512[2]);
@@ -173,7 +172,8 @@ static inline void ModMulK1_avx2(const uint64_t *a, const uint64_t *b, uint64_t 
     t[0] = _umul128(r512[4], 0x1000003D1ULL, &t[1]);
     t[2] = _umul128(r512[5], 0x1000003D1ULL, &t[3]);
 
-    // Use AVX2 for parallel reduction additions
+    // Reduction from 512 to 320 bits using secp256k1-specific modulus
+    // (scalar operations with carry tracking)
     c = _addcarry_u64(0, r512[0], t[0], &r512[0]);
     c = _addcarry_u64(c, r512[1], t[1], &r512[1]);
     c = _addcarry_u64(c, r512[2], 0ULL, &r512[2]);
@@ -207,7 +207,7 @@ static inline void ModMulK1_avx2(const uint64_t *a, const uint64_t *b, uint64_t 
 }
 
 /**
- * AVX2-optimized 256-bit modular squaring for secp256k1
+ * Optimized 256-bit modular squaring for secp256k1
  *
  * For squaring, we use the multiplication with itself
  * This could be further optimized by exploiting a*a structure
