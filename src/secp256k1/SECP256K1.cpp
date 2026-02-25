@@ -949,12 +949,9 @@ void Secp256K1::GetHash160_AVX2(int type,bool compressed,
       KEYBUFFUNCOMP(b6, k6);
       KEYBUFFUNCOMP(b7, k7);
 
-      // AVX2 8-way parallel SHA256 (2x faster than SSE2)
-      sha256avx2_2B(b0, b1, b2, b3, b4, b5, b6, b7,
-                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
-
-      ripemd160avx2_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
-                       h0, h1, h2, h3, h4, h5, h6, h7);
+      // AVX2 8-way parallel fused SHA256→RIPEMD160 (eliminates intermediate buffer)
+      sha256_ripemd160_avx2_2B(b0, b1, b2, b3, b4, b5, b6, b7,
+                               h0, h1, h2, h3, h4, h5, h6, h7);
 
     } else {
       // Process compressed keys (33 bytes each)
