@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "sysinfo.h"
+#include "gpu_backend.h"
 
 #ifdef __cplusplus
 extern "C" {
