@@ -78,6 +78,14 @@ int validate_threads_per_block(
     param_validation_result_t *result
 );
 
+// Validate keys per thread for GPU kernels
+// Returns: corrected keys_per_thread value (may differ from input if invalid)
+int validate_keys_per_thread(
+    int user_keys_per_thread,
+    const struct gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+);
+
 // Print validation result to user (with colors if supported)
 void print_validation_result(const param_validation_result_t *result, const char *param_name);
 
