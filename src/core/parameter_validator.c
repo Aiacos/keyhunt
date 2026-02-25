@@ -474,6 +474,142 @@ int validate_blocks_per_sm(
     return result->corrected_value;
 }
 
+int validate_threads_per_block(
+    int user_threads_per_block,
+    const struct gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+) {
+    memset(result, 0, sizeof(param_validation_result_t));
+    result->original_value = user_threads_per_block;
+    result->corrected_value = user_threads_per_block;
+
+    // If gpu_info is NULL, we can't validate
+    if (gpu_info == NULL) {
+        result->status = PARAM_WARNING;
+        snprintf(result->message, sizeof(result->message),
+                "GPU info not available - cannot validate threads_per_block");
+        return user_threads_per_block;
+    }
+
+    // Get hardware limit from GPU info
+    int max_threads_per_block = gpu_info->max_threads_per_block;
+    if (max_threads_per_block == 0) {
+        max_threads_per_block = 1024; // Safe default for modern GPUs
+    }
+
+    // Determine recommended value based on compute capability
+    int recommended_threads = 256; // Conservative default
+
+    // Set recommendations based on compute capability
+    if (gpu_info->compute_major == 7) {
+        // Volta/Turing (7.x) - good occupancy with 256-512
+        recommended_threads = 256;
+    } else if (gpu_info->compute_major == 8) {
+        // Ampere (8.x) - can handle 512 well
+        recommended_threads = 512;
+    } else if (gpu_info->compute_major >= 9) {
+        // Ada Lovelace/Hopper (9.x+) - efficient with 512-1024
+        recommended_threads = 512;
+    } else if (gpu_info->compute_major == 6) {
+        // Pascal (6.x) - 256 is optimal
+        recommended_threads = 256;
+    } else if (gpu_info->compute_major == 5) {
+        // Maxwell (5.x) - smaller is better
+        recommended_threads = 128;
+    } else {
+        // Older or unknown architecture
+        recommended_threads = 128;
+    }
+
+    result->suggested_value = recommended_threads;
+
+    // If user specified 0, use auto-tuned/recommended value
+    if (user_threads_per_block == 0) {
+        result->corrected_value = recommended_threads;
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Using recommended value: %d threads/block (optimal for compute %d.%d)",
+                result->corrected_value, gpu_info->compute_major, gpu_info->compute_minor);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Validate against maximum hardware limit
+    if (user_threads_per_block > max_threads_per_block) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = max_threads_per_block;
+        snprintf(result->message, sizeof(result->message),
+                "Requested %d threads/block exceeds hardware limit (%d). Auto-corrected to %d.",
+                user_threads_per_block, max_threads_per_block, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Threads per block must be multiple of warp size (32)
+    if (user_threads_per_block % 32 != 0) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = ((user_threads_per_block + 31) / 32) * 32;
+        // Ensure we don't exceed max
+        if (result->corrected_value > max_threads_per_block) {
+            result->corrected_value = (max_threads_per_block / 32) * 32;
+        }
+        snprintf(result->message, sizeof(result->message),
+                "Threads per block must be multiple of 32 (warp size). Corrected %d → %d",
+                user_threads_per_block, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is too low (poor GPU utilization)
+    if (user_threads_per_block < 64) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_threads_per_block;
+        snprintf(result->message, sizeof(result->message),
+                "Only %d threads/block is very low. Consider %d-%d for better GPU utilization.",
+                user_threads_per_block, 128, recommended_threads);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is too high (may cause register pressure)
+    if (user_threads_per_block > 768 && recommended_threads <= 512) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_threads_per_block;
+        snprintf(result->message, sizeof(result->message),
+                "Using %d threads/block is high. May cause register pressure. Optimal: %d",
+                user_threads_per_block, recommended_threads);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is optimal
+    if (user_threads_per_block == recommended_threads) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Threads per block is optimal for compute %d.%d",
+                gpu_info->compute_major, gpu_info->compute_minor);
+        return result->corrected_value;
+    }
+
+    // Check if value is in reasonable range (within 2x of recommended)
+    if (user_threads_per_block >= recommended_threads / 2 &&
+        user_threads_per_block <= recommended_threads * 2 &&
+        user_threads_per_block <= max_threads_per_block) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Threads per block is within reasonable range (%d-%d)",
+                recommended_threads / 2, recommended_threads * 2);
+        return result->corrected_value;
+    }
+
+    // Value is suboptimal but not dangerous
+    result->status = PARAM_SUBOPTIMAL;
+    snprintf(result->message, sizeof(result->message),
+            "Using %d threads/block. Recommended: %d for better performance.",
+            user_threads_per_block, recommended_threads);
+    return result->corrected_value;
+}
+
 void print_validation_result(const param_validation_result_t *result, const char *param_name) {
     const char *color;
     const char *prefix;
