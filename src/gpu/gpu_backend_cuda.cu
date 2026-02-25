@@ -1902,11 +1902,25 @@ int gpu_backend_init(gpu_backend_info_t *info) {
 
         // Allow runtime override for testing (checked before validation)
         {
-            const char *env = getenv("KEYHUNT_GPU_THREADS_PER_BLOCK");
+            const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v >= 1 && v <= 64) {  // Allow low values for testing validation
+                    blocks_per_sm = v;
+                }
+            }
+            env = getenv("KEYHUNT_GPU_THREADS_PER_BLOCK");
             if (env && *env) {
                 int v = atoi(env);
                 if (v > 0 && v <= 4096) {  // Allow invalid values for testing validation
                     threads_per_block = v;
+                }
+            }
+            env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v >= 64 && v <= 8192) {  // Allow testing range
+                    keys_per_thread = v;
                 }
             }
         }

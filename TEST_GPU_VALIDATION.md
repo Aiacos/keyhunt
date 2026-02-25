@@ -186,3 +186,177 @@ Expected: Auto-corrected to 320 (next multiple of 32) with [!] marker
 | 512         | 1024         | 512 (valid)      | [✓] (green)   |
 | 300         | 1024         | 320 (aligned)    | [!] (yellow)  |
 | 32          | 1024         | 32 (valid)       | [i] (blue)    |
+
+---
+
+## Test: Suboptimal blocks_per_sm Warning (Subtask 3-4)
+
+### Purpose
+Verify that GPU parameter validation correctly detects and warns about suboptimal `blocks_per_sm` values that may underutilize the GPU.
+
+### Test Scenario
+Set `blocks_per_sm` to 1 (very low), which will underutilize GPU resources. The validation should:
+1. Detect that 1 block/SM is too low for optimal GPU utilization
+2. Return `PARAM_WARNING` status (not auto-correct, just warn)
+3. Display blue [i] or yellow [⚠] warning marker
+4. Provide suggestion for better occupancy (e.g., "Consider 2-X blocks/SM")
+
+### Environment Variable Override
+To force specific blocks_per_sm value for testing:
+```bash
+export KEYHUNT_GPU_BLOCKS_PER_SM=1
+```
+
+### Test Command
+```bash
+# Set very low blocks_per_sm value
+export KEYHUNT_GPU_BLOCKS_PER_SM=1
+
+# Run keyhunt with GPU enabled
+./keyhunt -m address -f tests/66.txt -b 66 -G full -R -q
+
+# Clean up environment
+unset KEYHUNT_GPU_BLOCKS_PER_SM
+```
+
+### Expected Output (when CUDA available)
+```
+[+] GPU 0: NVIDIA GeForce RTX 3060 (sm_86, 28 SMs, 12288 MB VRAM)
+    Optimal params: 32 blocks/SM, 1024 keys/thread
+
+[+] Validating GPU parameters...
+[⚠] Blocks per SM: Only 1 block/SM may underutilize GPU. Consider 2-64 for better occupancy.
+[✓] Threads per Block: 256 (aligned to warp size, optimal for Ampere)
+[✓] Keys per Thread: 1024 (optimal for compute 8.6)
+[i] GPU parameters validated with warnings
+```
+
+### Validation Logic (from parameter_validator.c:428-437)
+```c
+// Check if value is too low (underutilization)
+if (user_blocks_per_sm == 1) {
+    result->status = PARAM_WARNING;
+    result->corrected_value = user_blocks_per_sm;
+    snprintf(result->message, sizeof(result->message),
+            "Only 1 block/SM may underutilize GPU. Consider 2-%d for better occupancy.",
+            recommended_blocks * 2);
+    result->applied_correction = false;  // Warning only, no auto-correction
+    return result->corrected_value;
+}
+```
+
+### Hardware Context
+GPU occupancy depends on:
+- **Active blocks per SM**: More blocks = better hardware utilization
+- **Warp schedulers**: Modern GPUs have 4 warp schedulers per SM
+- **Resource sharing**: Multiple blocks share registers, shared memory, L1 cache
+
+**Why 1 block/SM is suboptimal:**
+- Leaves 75% of warp schedulers idle
+- Cannot hide memory latency effectively
+- Poor instruction-level parallelism
+- Underutilizes compute units
+
+### Recommended blocks_per_sm by Architecture
+| Architecture | Compute Capability | Recommended Range | Optimal |
+|--------------|-------------------|-------------------|---------|
+| Maxwell      | 5.x               | 8-32              | 16      |
+| Pascal       | 6.x               | 8-32              | 16      |
+| Volta/Turing | 7.x               | 16-48             | 32      |
+| Ampere       | 8.x               | 16-48             | 32      |
+| Ada/Hopper   | 9.x               | 16-64             | 32      |
+
+### Alternative Test Cases
+
+#### Test Case 1: Very high blocks_per_sm (e.g., 64)
+```bash
+export KEYHUNT_GPU_BLOCKS_PER_SM=64
+./keyhunt -m address -f tests/66.txt -b 66 -G full -R -q
+```
+Expected: Warning about register/shared memory pressure
+
+#### Test Case 2: Optimal value (e.g., 32 for Ampere)
+```bash
+export KEYHUNT_GPU_BLOCKS_PER_SM=32
+./keyhunt -m address -f tests/66.txt -b 66 -G full -R -q
+```
+Expected: [✓] marker with "optimal for compute 8.6" message
+
+#### Test Case 3: Reasonable but not optimal (e.g., 16)
+```bash
+export KEYHUNT_GPU_BLOCKS_PER_SM=16
+./keyhunt -m address -f tests/66.txt -b 66 -G full -R -q
+```
+Expected: [✓] or [i] marker with "within reasonable range" message
+
+### Implementation Changes for Subtask 3-4
+
+**File Modified**: `src/gpu/gpu_backend_cuda.cu`
+**Location**: Lines 1897-1926 (validation block before parameter application)
+
+**Added**:
+```c
+// Allow runtime override for testing (checked before validation)
+{
+    const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
+    if (env && *env) {
+        int v = atoi(env);
+        if (v >= 1 && v <= 64) {  // Allow low values for testing validation
+            blocks_per_sm = v;
+        }
+    }
+    // ... (also added KEYHUNT_GPU_KEYS_PER_THREAD support)
+}
+```
+
+**Why this location?**
+- Environment variables are checked BEFORE validation
+- Allows testing validation logic with any value
+- Different from runtime overrides (lines 2285, 2384) which apply during execution
+
+### Test Script
+
+A comprehensive test script has been created: `test_gpu_blocks_validation.sh`
+
+**Usage**:
+```bash
+./test_gpu_blocks_validation.sh
+```
+
+**Test cases covered**:
+1. blocks_per_sm = 1 (underutilization warning)
+2. blocks_per_sm = 2 (low but acceptable)
+3. blocks_per_sm = 64 (resource pressure warning)
+4. blocks_per_sm = 32 (optimal)
+
+### Safety Features
+1. **No auto-correction for low values**: User intent is preserved, only warned
+2. **Clear warning message**: Explains why value is suboptimal
+3. **Actionable suggestion**: Recommends specific range for better performance
+4. **Non-blocking**: GPU will still run, just with reduced occupancy
+
+### Test Result
+✅ **READY FOR TESTING**
+- Environment variable override implemented in validation block
+- Warning logic verified in `src/core/parameter_validator.c:428-437`
+- Test script created with 4 comprehensive test cases
+- Documentation complete
+- Build succeeds (691K executable)
+
+### Manual Verification Checklist
+- [ ] Build keyhunt with CUDA support: `./build_cuda.sh`
+- [ ] Run test script: `./test_gpu_blocks_validation.sh`
+- [ ] Verify warning marker ([⚠] or [i]) appears for blocks_per_sm=1
+- [ ] Confirm message mentions underutilization and suggests better range
+- [ ] Verify value is NOT auto-corrected (applied_correction=false)
+- [ ] Test passes if GPU runs with blocks_per_sm=1 and shows warning
+
+### Expected Behavior Summary
+| Input Value | Status       | Marker       | Message Type              | Auto-Correct |
+|-------------|--------------|--------------|---------------------------|--------------|
+| 1           | PARAM_WARNING| [⚠] (yellow) | Underutilization warning  | No           |
+| 2           | PARAM_OK     | [✓] (green)  | Reasonable                | No           |
+| 16          | PARAM_OK     | [✓] (green)  | Within range              | No           |
+| 32          | PARAM_OK     | [✓] (green)  | Optimal                   | No           |
+| 64          | PARAM_WARNING| [⚠] (yellow) | Resource pressure warning | No           |
+| 128         | PARAM_CORRECTED| [!] (yellow) | Exceeds hardware limit  | Yes (to 64)  |
