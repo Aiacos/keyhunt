@@ -856,3 +856,38 @@ void sha256_ripemd160_avx2_1B(
     ((uint32_t*)d7)[i] = temp[0];
   }
 }
+
+// Fused SHA256→RIPEMD160 for uncompressed keys (2-block SHA256)
+// Eliminates intermediate 32-byte buffer writes by keeping SHA256 output in registers
+void sha256_ripemd160_avx2_2B(
+    uint32_t *i0, uint32_t *i1, uint32_t *i2, uint32_t *i3,
+    uint32_t *i4, uint32_t *i5, uint32_t *i6, uint32_t *i7,
+    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
+    uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7) {
+
+  // Step 1: Perform 2-block SHA256 (keep output in registers)
+  __m256i sha256_state[8] __attribute__ ((aligned (32)));
+  _sha256avx2::Initialize(sha256_state);
+  _sha256avx2::Transform(sha256_state, i0, i1, i2, i3, i4, i5, i6, i7);
+  _sha256avx2::Transform(sha256_state, i0 + 16, i1 + 16, i2 + 16, i3 + 16,
+                            i4 + 16, i5 + 16, i6 + 16, i7 + 16);
+
+  // Step 2: Feed SHA256 output directly to RIPEMD160 (no intermediate buffer)
+  __m256i rmd_state[5] __attribute__ ((aligned (32)));
+  _ripemd160avx2_fused::Transform_from_sha256(rmd_state, sha256_state);
+
+  // Step 3: Extract and store RIPEMD160 results
+  alignas(32) uint32_t temp[8];
+
+  for (int i = 0; i < 5; i++) {
+    _mm256_store_si256((__m256i*)temp, rmd_state[i]);
+    ((uint32_t*)d0)[i] = temp[7];
+    ((uint32_t*)d1)[i] = temp[6];
+    ((uint32_t*)d2)[i] = temp[5];
+    ((uint32_t*)d3)[i] = temp[4];
+    ((uint32_t*)d4)[i] = temp[3];
+    ((uint32_t*)d5)[i] = temp[2];
+    ((uint32_t*)d6)[i] = temp[1];
+    ((uint32_t*)d7)[i] = temp[0];
+  }
+}
