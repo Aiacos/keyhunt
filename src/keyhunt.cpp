@@ -3863,8 +3863,11 @@ int main(int argc, char **argv)	{
 				if(PERTHREAD_R != 0)	{
 					THREADCYCLES++;
 				}
-				
-				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
+
+				double initial_percent = (bsgs_m > 0) ? ((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100.0 : 0.0;
+				printf("\r[BSGS] ");
+				output_progress_bar(initial_percent, 25);
+				printf(" processing bP points: %lu/%lu (%.1f%%)   ", FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
 				fflush(stdout);
 				
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -3922,8 +3925,10 @@ int main(int argc, char **argv)	{
 					{
 						uint64_t current_items = FINISHED_ITEMS.load(std::memory_order_relaxed);
 						if(OLDFINISHED_ITEMS != current_items)	{
-							int percent = (bsgs_m2 > 0) ? (int)(((double)current_items/(double)bsgs_m2)*100) : 0;
-							printf("\r[+] processing %lu/%lu bP points : %i%%\r",current_items,bsgs_m2,percent);
+							double percent = (bsgs_m2 > 0) ? ((double)current_items/(double)bsgs_m2)*100.0 : 0.0;
+							printf("\r[BSGS] ");
+							output_progress_bar(percent, 25);
+							printf(" processing bP points: %lu/%lu (%.1f%%)   ", current_items, bsgs_m2, percent);
 							fflush(stdout);
 							OLDFINISHED_ITEMS = current_items;
 						}
@@ -3948,7 +3953,9 @@ int main(int argc, char **argv)	{
 						}
 					}
 				}while(FINISHED_THREADS_COUNTER < THREADCYCLES);
-				printf("\r[+] processing %lu/%lu bP points : 100%%     \n",bsgs_m2,bsgs_m2);
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" processing bP points: %lu/%lu (100.0%%) ✓\n", bsgs_m2, bsgs_m2);
 				
 				free(tid);
 				free(bPload_mutex);
@@ -3978,8 +3985,11 @@ int main(int argc, char **argv)	{
 					THREADCYCLES++;
 					//if(FLAGDEBUG) printf("[D] PERTHREAD_R: %lu\n",PERTHREAD_R);
 				}
-				
-				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
+
+				double initial_percent = (bsgs_m > 0) ? ((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100.0 : 0.0;
+				printf("\r[BSGS] ");
+				output_progress_bar(initial_percent, 25);
+				printf(" processing bP points: %lu/%lu (%.1f%%)   ", FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
 				fflush(stdout);
 				
 #if defined(_WIN64) && !defined(__CYGWIN__)
@@ -4040,7 +4050,10 @@ int main(int argc, char **argv)	{
 					{
 						uint64_t current_items = FINISHED_ITEMS.load(std::memory_order_relaxed);
 						if(OLDFINISHED_ITEMS != current_items)	{
-							printf("\r[+] processing %lu/%lu bP points : %i%%\r",current_items,bsgs_m,(int) (((double)current_items/(double)bsgs_m)*100));
+							double percent = (bsgs_m > 0) ? ((double)current_items/(double)bsgs_m)*100.0 : 0.0;
+							printf("\r[BSGS] ");
+							output_progress_bar(percent, 25);
+							printf(" processing bP points: %lu/%lu (%.1f%%)   ", current_items, bsgs_m, percent);
 							fflush(stdout);
 							OLDFINISHED_ITEMS = current_items;
 						}
@@ -4066,7 +4079,9 @@ int main(int argc, char **argv)	{
 					}
 					
 				}while(FINISHED_THREADS_COUNTER < THREADCYCLES);
-				printf("\r[+] processing %lu/%lu bP points : 100%%     \n",bsgs_m,bsgs_m);
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" processing bP points: %lu/%lu (100.0%%) ✓\n", bsgs_m, bsgs_m);
 				
 				free(tid);
 				free(bPload_mutex);
