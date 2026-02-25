@@ -273,10 +273,29 @@ void bloom_simd_check_rmd160_batch(
         return;
     }
 
-    // Pre-compute all hashes for better cache utilization
-    uint64_t *h1_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
-    uint64_t *h2_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
-    uint64_t *sector_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
+    // Stack-allocated arrays for typical batch sizes (up to BLOOM_BATCH_MAX=1024)
+    // Cache-line aligned (64 bytes) for better performance
+    alignas(64) uint64_t h1_stack[BLOOM_BATCH_MAX];
+    alignas(64) uint64_t h2_stack[BLOOM_BATCH_MAX];
+    alignas(64) uint64_t sector_stack[BLOOM_BATCH_MAX];
+
+    uint64_t *h1_arr;
+    uint64_t *h2_arr;
+    uint64_t *sector_arr;
+    bool use_heap = false;
+
+    if (count <= BLOOM_BATCH_MAX) {
+        // Fast path: use stack allocation
+        h1_arr = h1_stack;
+        h2_arr = h2_stack;
+        sector_arr = sector_stack;
+    } else {
+        // Slow path: use heap allocation for large batches
+        use_heap = true;
+        h1_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
+        h2_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
+        sector_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
+    }
 
     // Phase 1: Compute all hash values
     for (int i = 0; i < count; i++) {
@@ -308,9 +327,12 @@ void bloom_simd_check_rmd160_batch(
         results[i] = present ? 1 : 0;
     }
 
-    free(h1_arr);
-    free(h2_arr);
-    free(sector_arr);
+    // Clean up heap allocations if used
+    if (use_heap) {
+        free(h1_arr);
+        free(h2_arr);
+        free(sector_arr);
+    }
 }
 
 /*
