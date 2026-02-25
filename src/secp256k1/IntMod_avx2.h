@@ -16,7 +16,12 @@
 #define INTMOD_AVX2_H
 
 #include <stdint.h>
+// Prevent adxintrin.h from being included to avoid conflicts with Int.h macros
+#define _ADXINTRIN_H_INCLUDED
+#define _X86GPRINTRIN_H_INCLUDED
 #include <immintrin.h>
+#undef _X86GPRINTRIN_H_INCLUDED
+#undef _ADXINTRIN_H_INCLUDED
 #include <cpuid.h>
 
 #ifdef __cplusplus

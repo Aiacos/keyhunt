@@ -18,44 +18,7 @@
 #include "Int.h"
 #include <emmintrin.h>
 #include <string.h>
-
-// AVX2 support detection (adapted from IntMod_avx2.h)
-#include <cpuid.h>
-#if defined(__i386__) || defined(__x86_64__)
-// Prevent adxintrin.h from being included by defining its header guard
-#define _ADXINTRIN_H_INCLUDED
-#define _X86GPRINTRIN_H_INCLUDED
-#include <immintrin.h>
-#undef _X86GPRINTRIN_H_INCLUDED
-#undef _ADXINTRIN_H_INCLUDED
-
-static inline uint64_t xgetbv_u32(uint32_t index) {
-    uint32_t eax, edx;
-    __asm__ volatile (".byte 0x0f, 0x01, 0xd0" : "=a"(eax), "=d"(edx) : "c"(index));
-    return ((uint64_t)edx << 32) | eax;
-}
-
-static inline int os_avx_enabled(void) {
-    unsigned int eax, ebx, ecx, edx;
-    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) return 0;
-    if (!(ecx & bit_OSXSAVE)) return 0;
-    if (!(ecx & bit_AVX)) return 0;
-    return (xgetbv_u32(0) & 0x6u) == 0x6u;
-}
-#endif
-
-static inline int modmulk1_avx2_available(void) {
-    unsigned int eax, ebx, ecx, edx;
-    if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
-        if ((ebx & (1 << 5)) == 0) return 0;
-#if defined(__i386__) || defined(__x86_64__)
-        return os_avx_enabled();
-#else
-        return 1;
-#endif
-    }
-    return 0;
-}
+#include "IntMod_avx2.h"
 
 #define MAX(x,y) (((x)>(y))?(x):(y))
 #define MIN(x,y) (((x)<(y))?(x):(y))
@@ -897,11 +860,13 @@ void Int::ModMulK1(Int *a, Int *b) {
   }
 
   // Use AVX2-optimized version if available
-  // Note: The AVX2 optimization mainly benefits from vectorized carry chains
-  // but the current implementation uses scalar code with potential for future
-  // AVX2 enhancements in carry propagation
+  if (_avx2_available == 1) {
+    ModMulK1_avx2(a->bits64, b->bits64, bits64);
+    bits64[4] = 0;
+    return;
+  }
 
-  // Standard scalar implementation (works for both AVX2 and non-AVX2)
+  // Scalar fallback for non-AVX2 CPUs
 #ifndef _WIN64
 #if (__GNUC__ > 7) || (__GNUC__ == 7 && (__GNUC_MINOR__ > 2))
   unsigned char c;
@@ -969,11 +934,18 @@ void Int::ModMulK1(Int *a) {
   }
 
   // Use AVX2-optimized version if available
-  // Note: The AVX2 optimization mainly benefits from vectorized carry chains
-  // but the current implementation uses scalar code with potential for future
-  // AVX2 enhancements in carry propagation
+  if (_avx2_available == 1) {
+    uint64_t temp[4];
+    temp[0] = bits64[0];
+    temp[1] = bits64[1];
+    temp[2] = bits64[2];
+    temp[3] = bits64[3];
+    ModMulK1_avx2(a->bits64, temp, bits64);
+    bits64[4] = 0;
+    return;
+  }
 
-  // Standard scalar implementation (works for both AVX2 and non-AVX2)
+  // Scalar fallback for non-AVX2 CPUs
 #ifndef _WIN64
 #if (__GNUC__ > 7) || (__GNUC__ == 7 && (__GNUC_MINOR__ > 2))
   unsigned char c;
