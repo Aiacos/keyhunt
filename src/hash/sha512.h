@@ -28,7 +28,8 @@ void sha512(unsigned char *input, int length, unsigned char *digest);
 void pbkdf2_hmac_sha512(uint8_t *out, size_t outlen,const uint8_t *passwd, size_t passlen,const uint8_t *salt, size_t saltlen,uint64_t iter);
 void hmac_sha512(unsigned char *key, int key_length, unsigned char *message, int message_length, unsigned char *digest);
 
-// AVX2 implementation (8-way parallel) - requires AVX2 support
+// AVX2 implementation - processes 8 hashes using 4-way SIMD (two 4-way rounds)
+// Each input/output is 128 bytes (SHA-512 block size) / 64 bytes (hash output)
 void sha512avx2_128(const uint8_t *i0, const uint8_t *i1, const uint8_t *i2, const uint8_t *i3,
   const uint8_t *i4, const uint8_t *i5, const uint8_t *i6, const uint8_t *i7,
   uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
@@ -36,7 +37,8 @@ void sha512avx2_128(const uint8_t *i0, const uint8_t *i1, const uint8_t *i2, con
 int sha512_avx2_available(void);
 void sha512avx2_test();
 
-// AVX-512 implementation (16-way parallel) - requires AVX-512F support
+// AVX-512 implementation - processes 16 hashes using 8-way SIMD (two 8-way rounds)
+// Each input/output is 128 bytes (SHA-512 block size) / 64 bytes (hash output)
 void sha512avx512_128(
   const uint8_t *i0,  const uint8_t *i1,  const uint8_t *i2,  const uint8_t *i3,
   const uint8_t *i4,  const uint8_t *i5,  const uint8_t *i6,  const uint8_t *i7,

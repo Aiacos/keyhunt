@@ -12,6 +12,7 @@
 #include <cpuid.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #if defined(__i386__) || defined(__x86_64__)
 static inline uint64_t xgetbv_u32(uint32_t index) {
@@ -140,8 +141,11 @@ namespace _sha512avx2
     memcpy(s, _init, sizeof(_init));
   }
 
+  // Helper macro to load and byteswap 64-bit word from byte pointer (SHA-512 uses big-endian)
+  #define LOADW(blk, i) __builtin_bswap64(*((const uint64_t *)(blk) + (i)))
+
   // Perform 4 SHA-512 in parallel using AVX2
-  void Transform(__m256i *s, uint64_t *b0, uint64_t *b1, uint64_t *b2, uint64_t *b3)
+  void Transform(__m256i *s, const uint8_t *blk0, const uint8_t *blk1, const uint8_t *blk2, const uint8_t *blk3)
   {
     __m256i a, b, c, d, e, f, g, h;
     __m256i w0, w1, w2, w3, w4, w5, w6, w7;
@@ -157,24 +161,25 @@ namespace _sha512avx2
     g = _mm256_load_si256(s + 6);
     h = _mm256_load_si256(s + 7);
 
-    // Load data from 4 different message blocks (transpose operation)
-    // Each block has 16 x 64-bit words
-    w0 = _mm256_set_epi64x(b0[0], b1[0], b2[0], b3[0]);
-    w1 = _mm256_set_epi64x(b0[1], b1[1], b2[1], b3[1]);
-    w2 = _mm256_set_epi64x(b0[2], b1[2], b2[2], b3[2]);
-    w3 = _mm256_set_epi64x(b0[3], b1[3], b2[3], b3[3]);
-    w4 = _mm256_set_epi64x(b0[4], b1[4], b2[4], b3[4]);
-    w5 = _mm256_set_epi64x(b0[5], b1[5], b2[5], b3[5]);
-    w6 = _mm256_set_epi64x(b0[6], b1[6], b2[6], b3[6]);
-    w7 = _mm256_set_epi64x(b0[7], b1[7], b2[7], b3[7]);
-    w8 = _mm256_set_epi64x(b0[8], b1[8], b2[8], b3[8]);
-    w9 = _mm256_set_epi64x(b0[9], b1[9], b2[9], b3[9]);
-    w10 = _mm256_set_epi64x(b0[10], b1[10], b2[10], b3[10]);
-    w11 = _mm256_set_epi64x(b0[11], b1[11], b2[11], b3[11]);
-    w12 = _mm256_set_epi64x(b0[12], b1[12], b2[12], b3[12]);
-    w13 = _mm256_set_epi64x(b0[13], b1[13], b2[13], b3[13]);
-    w14 = _mm256_set_epi64x(b0[14], b1[14], b2[14], b3[14]);
-    w15 = _mm256_set_epi64x(b0[15], b1[15], b2[15], b3[15]);
+    // Load data from 4 different message blocks (transpose operation) with endian conversion
+    // Each block has 16 x 64-bit words (128 bytes total)
+    // SHA-512 uses big-endian, so we need to byteswap
+    w0 = _mm256_set_epi64x(LOADW(blk0, 0), LOADW(blk1, 0), LOADW(blk2, 0), LOADW(blk3, 0));
+    w1 = _mm256_set_epi64x(LOADW(blk0, 1), LOADW(blk1, 1), LOADW(blk2, 1), LOADW(blk3, 1));
+    w2 = _mm256_set_epi64x(LOADW(blk0, 2), LOADW(blk1, 2), LOADW(blk2, 2), LOADW(blk3, 2));
+    w3 = _mm256_set_epi64x(LOADW(blk0, 3), LOADW(blk1, 3), LOADW(blk2, 3), LOADW(blk3, 3));
+    w4 = _mm256_set_epi64x(LOADW(blk0, 4), LOADW(blk1, 4), LOADW(blk2, 4), LOADW(blk3, 4));
+    w5 = _mm256_set_epi64x(LOADW(blk0, 5), LOADW(blk1, 5), LOADW(blk2, 5), LOADW(blk3, 5));
+    w6 = _mm256_set_epi64x(LOADW(blk0, 6), LOADW(blk1, 6), LOADW(blk2, 6), LOADW(blk3, 6));
+    w7 = _mm256_set_epi64x(LOADW(blk0, 7), LOADW(blk1, 7), LOADW(blk2, 7), LOADW(blk3, 7));
+    w8 = _mm256_set_epi64x(LOADW(blk0, 8), LOADW(blk1, 8), LOADW(blk2, 8), LOADW(blk3, 8));
+    w9 = _mm256_set_epi64x(LOADW(blk0, 9), LOADW(blk1, 9), LOADW(blk2, 9), LOADW(blk3, 9));
+    w10 = _mm256_set_epi64x(LOADW(blk0, 10), LOADW(blk1, 10), LOADW(blk2, 10), LOADW(blk3, 10));
+    w11 = _mm256_set_epi64x(LOADW(blk0, 11), LOADW(blk1, 11), LOADW(blk2, 11), LOADW(blk3, 11));
+    w12 = _mm256_set_epi64x(LOADW(blk0, 12), LOADW(blk1, 12), LOADW(blk2, 12), LOADW(blk3, 12));
+    w13 = _mm256_set_epi64x(LOADW(blk0, 13), LOADW(blk1, 13), LOADW(blk2, 13), LOADW(blk3, 13));
+    w14 = _mm256_set_epi64x(LOADW(blk0, 14), LOADW(blk1, 14), LOADW(blk2, 14), LOADW(blk3, 14));
+    w15 = _mm256_set_epi64x(LOADW(blk0, 15), LOADW(blk1, 15), LOADW(blk2, 15), LOADW(blk3, 15));
 
     // 80 rounds of SHA-512 (first 16 rounds)
     Round(a, b, c, d, e, f, g, h, K[0], w0);
@@ -287,15 +292,143 @@ namespace _sha512avx2
 
 } // namespace _sha512avx2
 
-// Public API functions (stubs for now, to be implemented in later subtasks)
+// Helper function to write uint64_t in big-endian format
+static inline void write_be64(uint8_t *out, uint64_t val) {
+    out[0] = (uint8_t)(val >> 56);
+    out[1] = (uint8_t)(val >> 48);
+    out[2] = (uint8_t)(val >> 40);
+    out[3] = (uint8_t)(val >> 32);
+    out[4] = (uint8_t)(val >> 24);
+    out[5] = (uint8_t)(val >> 16);
+    out[6] = (uint8_t)(val >> 8);
+    out[7] = (uint8_t)(val);
+}
 
+// Public API: Process 8 SHA-512 hashes in parallel using AVX2
+// Each input is 128 bytes (SHA-512 block size), each output is 64 bytes
+void sha512avx2_128(
+    const uint8_t *i0, const uint8_t *i1, const uint8_t *i2, const uint8_t *i3,
+    const uint8_t *i4, const uint8_t *i5, const uint8_t *i6, const uint8_t *i7,
+    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
+    uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7)
+{
+    // AVX2 processes 4 hashes at a time, so we need 2 rounds for 8 hashes
+    __m256i s[8] __attribute__((aligned(32)));
+
+    // First batch: process i0, i1, i2, i3 -> d0, d1, d2, d3
+    _sha512avx2::Initialize(s);
+    _sha512avx2::Transform(s, i0, i1, i2, i3);
+
+    // Unpack results: Each s[i] contains 4 x 64-bit values for state word i
+    // Layout: s[i] = [hash3_word_i, hash2_word_i, hash1_word_i, hash0_word_i] (MSB first)
+    uint64_t *state_words = (uint64_t *)s;
+
+    // Extract hash0 (from lane 3 of AVX2 register - rightmost)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d0 + i * 8, state_words[i * 4 + 3]);
+    }
+    // Extract hash1 (from lane 2)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d1 + i * 8, state_words[i * 4 + 2]);
+    }
+    // Extract hash2 (from lane 1)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d2 + i * 8, state_words[i * 4 + 1]);
+    }
+    // Extract hash3 (from lane 0 - leftmost)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d3 + i * 8, state_words[i * 4 + 0]);
+    }
+
+    // Second batch: process i4, i5, i6, i7 -> d4, d5, d6, d7
+    _sha512avx2::Initialize(s);
+    _sha512avx2::Transform(s, i4, i5, i6, i7);
+
+    state_words = (uint64_t *)s;
+
+    // Extract hash4 (from lane 3)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d4 + i * 8, state_words[i * 4 + 3]);
+    }
+    // Extract hash5 (from lane 2)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d5 + i * 8, state_words[i * 4 + 2]);
+    }
+    // Extract hash6 (from lane 1)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d6 + i * 8, state_words[i * 4 + 1]);
+    }
+    // Extract hash7 (from lane 0)
+    for (int i = 0; i < 8; i++) {
+        write_be64(d7 + i * 8, state_words[i * 4 + 0]);
+    }
+}
+
+// Test function for AVX2 SHA-512 implementation
+void sha512avx2_test(void) {
+    if (!sha512_avx2_available()) {
+        printf("SHA512-AVX2: AVX2 not available on this CPU\n");
+        return;
+    }
+
+    // Allocate test data (8 inputs of 128 bytes each)
+    uint8_t input[8][128];
+    uint8_t hash_simd[8][64];
+    uint8_t hash_scalar[8][64];
+
+    // Initialize test inputs with different messages
+    memset(input, 0, sizeof(input));
+    strncpy((char*)input[0], "Test message 01 for AVX2 SHA-512", 127);
+    strncpy((char*)input[1], "Test message 02 for AVX2 SHA-512", 127);
+    strncpy((char*)input[2], "Test message 03 for AVX2 SHA-512", 127);
+    strncpy((char*)input[3], "Test message 04 for AVX2 SHA-512", 127);
+    strncpy((char*)input[4], "Test message 05 for AVX2 SHA-512", 127);
+    strncpy((char*)input[5], "Test message 06 for AVX2 SHA-512", 127);
+    strncpy((char*)input[6], "Test message 07 for AVX2 SHA-512", 127);
+    strncpy((char*)input[7], "Test message 08 for AVX2 SHA-512", 127);
+
+    // Compute SIMD hashes (8-way parallel via 2x4-way)
+    sha512avx2_128(
+        input[0], input[1], input[2], input[3],
+        input[4], input[5], input[6], input[7],
+        hash_simd[0], hash_simd[1], hash_simd[2], hash_simd[3],
+        hash_simd[4], hash_simd[5], hash_simd[6], hash_simd[7]
+    );
+
+    // Compute scalar reference hashes
+    for (int i = 0; i < 8; i++) {
+        sha512(input[i], (int)strlen((char*)input[i]), hash_scalar[i]);
+    }
+
+    // Compare results
+    int passed = 0;
+    for (int i = 0; i < 8; i++) {
+        if (memcmp(hash_simd[i], hash_scalar[i], 64) == 0) {
+            passed++;
+        } else {
+            printf("SHA512-AVX2 Test FAILED for input %d\n", i);
+            printf("  Expected: ");
+            for (int j = 0; j < 64; j++) printf("%02x", hash_scalar[i][j]);
+            printf("\n  Got:      ");
+            for (int j = 0; j < 64; j++) printf("%02x", hash_simd[i][j]);
+            printf("\n");
+        }
+    }
+
+    if (passed == 8) {
+        printf("SHA512-AVX2 Test: PASS (8/8 hashes correct, 8-way parallel via 2x4-way SIMD)\n");
+    } else {
+        printf("SHA512-AVX2 Test: FAIL (%d/8 passed)\n", passed);
+    }
+}
+
+// Stub functions for future implementation
 void sha512avx2(
     uint64_t *i0, uint64_t *i1, uint64_t *i2, uint64_t *i3,
     uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
     int length)
 {
-    // TODO: Implement in subtask-1-3
-    // This will perform 4 parallel SHA-512 hashes
+    // TODO: Variable-length API (not required for current spec)
 }
 
 void sha512avx2_hmac(
@@ -305,6 +438,5 @@ void sha512avx2_hmac(
     int msg_length,
     uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3)
 {
-    // TODO: Implement HMAC-SHA512 using AVX2 (subtask-1-4)
-    // This will compute HMAC-SHA512 for 4 different messages in parallel
+    // TODO: HMAC variant (not required for current spec)
 }

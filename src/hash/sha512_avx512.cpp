@@ -208,7 +208,149 @@ namespace _sha512avx512 {
 
 } // namespace _sha512avx512
 
-// Public API implementations (to be completed in later subtasks)
+// Helper function to write uint64_t in big-endian format
+static inline void write_be64(uint8_t *out, uint64_t val) {
+    out[0] = (uint8_t)(val >> 56);
+    out[1] = (uint8_t)(val >> 48);
+    out[2] = (uint8_t)(val >> 40);
+    out[3] = (uint8_t)(val >> 32);
+    out[4] = (uint8_t)(val >> 24);
+    out[5] = (uint8_t)(val >> 16);
+    out[6] = (uint8_t)(val >> 8);
+    out[7] = (uint8_t)(val);
+}
+
+// Public API: Process 16 SHA-512 hashes in parallel using AVX-512
+// Each input is 128 bytes (SHA-512 block size), each output is 64 bytes
+void sha512avx512_128(
+    const uint8_t *i0,  const uint8_t *i1,  const uint8_t *i2,  const uint8_t *i3,
+    const uint8_t *i4,  const uint8_t *i5,  const uint8_t *i6,  const uint8_t *i7,
+    const uint8_t *i8,  const uint8_t *i9,  const uint8_t *i10, const uint8_t *i11,
+    const uint8_t *i12, const uint8_t *i13, const uint8_t *i14, const uint8_t *i15,
+    uint8_t *d0,  uint8_t *d1,  uint8_t *d2,  uint8_t *d3,
+    uint8_t *d4,  uint8_t *d5,  uint8_t *d6,  uint8_t *d7,
+    uint8_t *d8,  uint8_t *d9,  uint8_t *d10, uint8_t *d11,
+    uint8_t *d12, uint8_t *d13, uint8_t *d14, uint8_t *d15)
+{
+    // AVX-512 processes 8 hashes at a time, so we need 2 rounds for 16 hashes
+    __m512i s[8] __attribute__((aligned(64)));
+
+    // First batch: process i0-i7 -> d0-d7
+    const uint8_t *batch1[8] = { i0, i1, i2, i3, i4, i5, i6, i7 };
+    _sha512avx512::Initialize(s);
+    _sha512avx512::Transform(s, batch1);
+
+    // Unpack results: Each s[i] contains 8 x 64-bit values for state word i
+    // Layout: s[i] = [hash0_word_i, hash1_word_i, ..., hash7_word_i] (MSB to LSB based on _mm512_set_epi64 order)
+    uint64_t *state_words = (uint64_t *)s;
+
+    // Extract hashes 0-7 from first batch
+    // Note: _mm512_set_epi64(e7,e6,e5,e4,e3,e2,e1,e0) puts e7 at lane 7, e0 at lane 0
+    // Since batch1[0]=i0 goes to the first argument (e7), it ends up at lane 7
+    // When cast to array: array[0]=lane0, array[7]=lane7
+    // So: batch1[0]=i0 is at array[7], batch1[7]=i7 is at array[0]
+    for (int i = 0; i < 8; i++) {  // For each state word
+        write_be64(d0 + i * 8, state_words[i * 8 + 7]);  // hash from i0 (lane 7)
+        write_be64(d1 + i * 8, state_words[i * 8 + 6]);  // hash from i1 (lane 6)
+        write_be64(d2 + i * 8, state_words[i * 8 + 5]);  // hash from i2 (lane 5)
+        write_be64(d3 + i * 8, state_words[i * 8 + 4]);  // hash from i3 (lane 4)
+        write_be64(d4 + i * 8, state_words[i * 8 + 3]);  // hash from i4 (lane 3)
+        write_be64(d5 + i * 8, state_words[i * 8 + 2]);  // hash from i5 (lane 2)
+        write_be64(d6 + i * 8, state_words[i * 8 + 1]);  // hash from i6 (lane 1)
+        write_be64(d7 + i * 8, state_words[i * 8 + 0]);  // hash from i7 (lane 0)
+    }
+
+    // Second batch: process i8-i15 -> d8-d15
+    const uint8_t *batch2[8] = { i8, i9, i10, i11, i12, i13, i14, i15 };
+    _sha512avx512::Initialize(s);
+    _sha512avx512::Transform(s, batch2);
+
+    state_words = (uint64_t *)s;
+
+    // Extract hashes 8-15 from second batch
+    for (int i = 0; i < 8; i++) {  // For each state word
+        write_be64(d8  + i * 8, state_words[i * 8 + 7]);  // hash from i8 (lane 7)
+        write_be64(d9  + i * 8, state_words[i * 8 + 6]);  // hash from i9 (lane 6)
+        write_be64(d10 + i * 8, state_words[i * 8 + 5]);  // hash from i10 (lane 5)
+        write_be64(d11 + i * 8, state_words[i * 8 + 4]);  // hash from i11 (lane 4)
+        write_be64(d12 + i * 8, state_words[i * 8 + 3]);  // hash from i12 (lane 3)
+        write_be64(d13 + i * 8, state_words[i * 8 + 2]);  // hash from i13 (lane 2)
+        write_be64(d14 + i * 8, state_words[i * 8 + 1]);  // hash from i14 (lane 1)
+        write_be64(d15 + i * 8, state_words[i * 8 + 0]);  // hash from i15 (lane 0)
+    }
+}
+
+// Test function for AVX-512 SHA-512 implementation
+void sha512avx512_test(void) {
+    if (!sha512_avx512_available()) {
+        printf("SHA512-AVX512: AVX-512 not available on this CPU\n");
+        return;
+    }
+
+    // Allocate test data (16 inputs of 128 bytes each)
+    uint8_t input[16][128];
+    uint8_t hash_simd[16][64];
+    uint8_t hash_scalar[16][64];
+
+    // Initialize test inputs with different messages
+    memset(input, 0, sizeof(input));
+    strncpy((char*)input[0],  "Test message 01 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[1],  "Test message 02 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[2],  "Test message 03 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[3],  "Test message 04 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[4],  "Test message 05 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[5],  "Test message 06 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[6],  "Test message 07 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[7],  "Test message 08 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[8],  "Test message 09 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[9],  "Test message 10 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[10], "Test message 11 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[11], "Test message 12 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[12], "Test message 13 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[13], "Test message 14 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[14], "Test message 15 for AVX-512 SHA-512", 127);
+    strncpy((char*)input[15], "Test message 16 for AVX-512 SHA-512", 127);
+
+    // Compute SIMD hashes (16-way parallel via 2x8-way)
+    sha512avx512_128(
+        input[0],  input[1],  input[2],  input[3],
+        input[4],  input[5],  input[6],  input[7],
+        input[8],  input[9],  input[10], input[11],
+        input[12], input[13], input[14], input[15],
+        hash_simd[0],  hash_simd[1],  hash_simd[2],  hash_simd[3],
+        hash_simd[4],  hash_simd[5],  hash_simd[6],  hash_simd[7],
+        hash_simd[8],  hash_simd[9],  hash_simd[10], hash_simd[11],
+        hash_simd[12], hash_simd[13], hash_simd[14], hash_simd[15]
+    );
+
+    // Compute scalar reference hashes
+    for (int i = 0; i < 16; i++) {
+        sha512(input[i], (int)strlen((char*)input[i]), hash_scalar[i]);
+    }
+
+    // Compare results
+    int passed = 0;
+    for (int i = 0; i < 16; i++) {
+        if (memcmp(hash_simd[i], hash_scalar[i], 64) == 0) {
+            passed++;
+        } else {
+            printf("SHA512-AVX512 Test FAILED for input %d\n", i);
+            printf("  Expected: ");
+            for (int j = 0; j < 64; j++) printf("%02x", hash_scalar[i][j]);
+            printf("\n  Got:      ");
+            for (int j = 0; j < 64; j++) printf("%02x", hash_simd[i][j]);
+            printf("\n");
+        }
+    }
+
+    if (passed == 16) {
+        printf("SHA512-AVX512 Test: PASS (16/16 hashes correct, 16-way parallel via 2x8-way SIMD)\n");
+    } else {
+        printf("SHA512-AVX512 Test: FAIL (%d/16 passed)\n", passed);
+    }
+}
+
+// Stub functions for future implementation
 void sha512avx512(
     uint64_t *i0, uint64_t *i1, uint64_t *i2, uint64_t *i3,
     uint64_t *i4, uint64_t *i5, uint64_t *i6, uint64_t *i7,
@@ -216,8 +358,7 @@ void sha512avx512(
     uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7,
     int length)
 {
-    // TODO: Implement public API wrapper for AVX-512 SHA-512
-    // This will be implemented in subsequent subtasks
+    // TODO: Variable-length API (not required for current spec)
 }
 
 void sha512avx512_hmac(
@@ -230,12 +371,5 @@ void sha512avx512_hmac(
     uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
     uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7)
 {
-    // TODO: Implement AVX-512 HMAC-SHA-512
-    // This will be implemented in subsequent subtasks
-}
-
-void sha512avx512_test(void)
-{
-    // TODO: Implement test function
-    // This will be implemented in subsequent subtasks
+    // TODO: HMAC variant (not required for current spec)
 }
