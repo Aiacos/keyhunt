@@ -610,6 +610,133 @@ int validate_threads_per_block(
     return result->corrected_value;
 }
 
+int validate_keys_per_thread(
+    int user_keys_per_thread,
+    const struct gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+) {
+    memset(result, 0, sizeof(param_validation_result_t));
+    result->original_value = user_keys_per_thread;
+    result->corrected_value = user_keys_per_thread;
+
+    // If gpu_info is NULL, we can't validate
+    if (gpu_info == NULL) {
+        result->status = PARAM_WARNING;
+        snprintf(result->message, sizeof(result->message),
+                "GPU info not available - cannot validate keys_per_thread");
+        return user_keys_per_thread;
+    }
+
+    // Determine recommended value based on compute capability
+    int recommended_keys = 1024; // Conservative default
+
+    // Set recommendations based on compute capability
+    if (gpu_info->compute_major == 7) {
+        // Volta/Turing (7.x) - balanced performance with 512-1024
+        recommended_keys = 1024;
+    } else if (gpu_info->compute_major == 8) {
+        // Ampere (8.x) - can handle 1024-2048 efficiently
+        recommended_keys = 1024;
+    } else if (gpu_info->compute_major >= 9) {
+        // Ada Lovelace/Hopper (9.x+) - excellent with 2048
+        recommended_keys = 2048;
+    } else if (gpu_info->compute_major == 6) {
+        // Pascal (6.x) - 512-1024 is optimal
+        recommended_keys = 512;
+    } else if (gpu_info->compute_major == 5) {
+        // Maxwell (5.x) - smaller values better
+        recommended_keys = 512;
+    } else {
+        // Older or unknown architecture
+        recommended_keys = 256;
+    }
+
+    result->suggested_value = recommended_keys;
+
+    // If user specified 0, use auto-tuned/recommended value
+    if (user_keys_per_thread == 0) {
+        result->corrected_value = recommended_keys;
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Using recommended value: %d keys/thread (optimal for compute %d.%d)",
+                result->corrected_value, gpu_info->compute_major, gpu_info->compute_minor);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is dangerously high (will cause register pressure)
+    if (user_keys_per_thread > 8192) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = 4096;
+        snprintf(result->message, sizeof(result->message),
+                "Requested %d keys/thread is too high (register pressure). Auto-corrected to %d.",
+                user_keys_per_thread, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is too low (poor throughput)
+    if (user_keys_per_thread < 64) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_keys_per_thread;
+        snprintf(result->message, sizeof(result->message),
+                "Only %d keys/thread is very low. Consider %d-%d for better throughput.",
+                user_keys_per_thread, 256, recommended_keys);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is not a power of 2 (suboptimal memory access)
+    if (!is_power_of_2(user_keys_per_thread)) {
+        result->status = PARAM_WARNING;
+        uint64_t next_pow2 = next_power_of_2(user_keys_per_thread);
+        snprintf(result->message, sizeof(result->message),
+                "Keys per thread (%d) is not power of 2. Consider %llu for better memory alignment.",
+                user_keys_per_thread, (unsigned long long)next_pow2);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is too high for this architecture (may cause occupancy issues)
+    if (user_keys_per_thread > 4096 && recommended_keys <= 1024) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_keys_per_thread;
+        snprintf(result->message, sizeof(result->message),
+                "Using %d keys/thread is high for compute %d.%d. May reduce occupancy. Optimal: %d",
+                user_keys_per_thread, gpu_info->compute_major, gpu_info->compute_minor,
+                recommended_keys);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is optimal
+    if (user_keys_per_thread == recommended_keys) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Keys per thread is optimal for compute %d.%d",
+                gpu_info->compute_major, gpu_info->compute_minor);
+        return result->corrected_value;
+    }
+
+    // Check if value is in reasonable range (within 2x of recommended)
+    if (user_keys_per_thread >= recommended_keys / 2 &&
+        user_keys_per_thread <= recommended_keys * 2 &&
+        user_keys_per_thread <= 4096) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Keys per thread is within reasonable range (%d-%d)",
+                recommended_keys / 2, recommended_keys * 2);
+        return result->corrected_value;
+    }
+
+    // Value is suboptimal but not dangerous
+    result->status = PARAM_SUBOPTIMAL;
+    snprintf(result->message, sizeof(result->message),
+            "Using %d keys/thread. Recommended: %d for better performance.",
+            user_keys_per_thread, recommended_keys);
+    return result->corrected_value;
+}
+
 void print_validation_result(const param_validation_result_t *result, const char *param_name) {
     const char *color;
     const char *prefix;
