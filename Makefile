@@ -115,7 +115,7 @@ keyhunt_legacy: directories $(LEGACY_OBJS)
 	$(CXX) $(LDFLAGS) $(LEGACY_OBJS) $(LDLIBS) -lcrypto -lgmp -o $@
 
 clean:
-	$(RM) keyhunt keyhunt_legacy bsgsd run_tests
+	$(RM) keyhunt keyhunt_legacy bsgsd run_tests keyhunt_pgo_gen keyhunt_pgo
 	$(RM) -r $(OBJDIR)
 
 # ============================================================================
@@ -256,18 +256,18 @@ COVERAGE_FLAGS := --coverage -fprofile-arcs -ftest-coverage -g -O0
 COVERAGE_LDFLAGS := --coverage
 
 # Profile-Guided Optimization (PGO) directories and flags
-PGO_OBJDIR := obj_pgo
+PGO_GEN_OBJDIR := obj_pgo_gen
 PGO_USE_OBJDIR := obj_pgo_use
-PGO_GEN_FLAGS := -fprofile-generate=$(PGO_OBJDIR) -fprofile-arcs
-PGO_GEN_LDFLAGS := -fprofile-generate=$(PGO_OBJDIR)
+PGO_GEN_FLAGS := -fprofile-generate=pgo_data -fprofile-arcs
+PGO_GEN_LDFLAGS := -fprofile-generate=pgo_data
 PGO_USE_FLAGS := -fprofile-use=pgo_data -fprofile-correction -Wno-missing-profile
 PGO_USE_LDFLAGS := -fprofile-use=pgo_data
 
 # PGO generate build: instrumented binary for profiling
-pgo-generate: clean-pgo
+pgo-generate: pgo-clean
 	@echo "Building with PGO instrumentation..."
-	@mkdir -p $(PGO_OBJDIR)
-	$(MAKE) keyhunt_pgo_gen OBJDIR=$(PGO_OBJDIR) \
+	@mkdir -p $(PGO_GEN_OBJDIR) pgo_data
+	$(MAKE) keyhunt_pgo_gen OBJDIR=$(PGO_GEN_OBJDIR) \
 		CXXFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(PGO_GEN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(PGO_GEN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(PGO_GEN_LDFLAGS) -Wl,--as-needed" \
@@ -276,8 +276,8 @@ pgo-generate: clean-pgo
 keyhunt_pgo_gen: directories $(KEYHUNT_OBJS)
 	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
 
-clean-pgo:
-	$(RM) -r $(PGO_OBJDIR) $(PGO_USE_OBJDIR) keyhunt_pgo_gen keyhunt_pgo *.gcda
+pgo-clean:
+	$(RM) -r $(PGO_GEN_OBJDIR) $(PGO_USE_OBJDIR) pgo_data keyhunt_pgo_gen keyhunt_pgo *.gcda
 
 # PGO use build: optimized binary using profile data
 pgo-use:
