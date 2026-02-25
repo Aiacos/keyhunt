@@ -9,9 +9,9 @@
  */
 
 #include "test_framework.h"
-#include "src/hash/sha512.h"
-#include "src/hash/sha512_avx2.h"
-#include "src/hash/sha512_avx512.h"
+#include "hash/sha512.h"
+#include "hash/sha512_avx2.h"
+#include "hash/sha512_avx512.h"
 #include <cstring>  /* memcmp, memset */
 #include <cstdio>   /* printf */
 
@@ -402,10 +402,11 @@ TEST(sha512_simd_consistency) {
 }
 
 /* ============================================================================
- * Main Test Runner
+ * Main Entry Point
  * ============================================================================ */
 
-int main(int argc, char *argv[]) {
+/* Exported function for test runner */
+int run_sha512_simd_tests(void) {
     TEST_INIT();
 
     TEST_SECTION("CPU Feature Detection");
@@ -432,3 +433,12 @@ int main(int argc, char *argv[]) {
 
     return TEST_RESULTS();
 }
+
+/* Standalone main for individual testing */
+#ifdef TEST_STANDALONE
+int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+    return run_sha512_simd_tests();
+}
+#endif

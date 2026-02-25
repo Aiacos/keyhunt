@@ -1,0 +1,21 @@
+g++ -m64 -march=native -mtune=native -mssse3 -O3 -ftree-vectorize -funroll-loops -pipe -DNDEBUG -Wall -Wextra -Wno-deprecated-copy -std=gnu++17 -flto=auto -fno-strict-aliasing -fno-exceptions -Isrc  -c tests/test_sha512_simd.cpp -o obj/tests/test_sha512_simd.o
+tests/test_sha512_simd.cpp: In function ‘void test_sha512_simd_consistency()’:
+tests/test_sha512_simd.cpp:349:13: warning: unused variable ‘avx512_digest0’ [-Wunused-variable]
+  349 |     uint8_t avx512_digest0[64];
+      |             ^~~~~~~~~~~~~~
+tests/test_sha512_simd.cpp: In function ‘int main(int, char**)’:
+tests/test_sha512_simd.cpp:408:14: warning: unused parameter ‘argc’ [-Wunused-parameter]
+  408 | int main(int argc, char *argv[]) {
+      |          ~~~~^~~~
+tests/test_sha512_simd.cpp:408:26: warning: unused parameter ‘argv’ [-Wunused-parameter]
+  408 | int main(int argc, char *argv[]) {
+      |                    ~~~~~~^~~~~~
+tests/test_sha512_simd.cpp: At global scope:
+tests/test_sha512_simd.cpp:56:13: warning: ‘void print_hash(const char*, const uint8_t*, size_t)’ defined but not used [-Wunused-function]
+   56 | static void print_hash(const char *label, const uint8_t *hash, size_t len) {
+      |             ^~~~~~~~~~
+g++ -m64 -march=native -mtune=native -mssse3 -flto=auto -fno-strict-aliasing -Wl,-O3 -Wl,--as-needed obj/tests/run_tests.o obj/tests/test_int.o obj/tests/test_bloom.o obj/tests/test_bsgs_integration.o obj/tests/test_gpu_backend.o obj/tests/test_distributed.o obj/tests/test_wizard.o obj/tests/test_sha512_simd.o obj/secp256k1/Int.o obj/secp256k1/Point.o obj/secp256k1/SECP256K1.o obj/secp256k1/IntMod.o obj/secp256k1/Random.o obj/secp256k1/IntGroup.o obj/oldbloom/bloom.o obj/bloom/bloom.o obj/bloom/bloom_simd.o obj/hash/ripemd160.o obj/hash/ripemd160_sse.o obj/hash/ripemd160_avx2.o obj/hash/ripemd160_avx512.o obj/hash/sha256.o obj/hash/sha256_sse.o obj/hash/sha256_avx2.o obj/hash/sha256_shani.o obj/hash/sha512.o obj/hash/sha512_avx2.o obj/hash/sha512_avx512.o obj/sha3/sha3.o obj/sha3/keccak.o obj/base58/base58.o obj/rmd160/rmd160.o obj/xxhash/xxhash.o obj/util/mempool.o obj/core/util.o obj/core/sysinfo.o obj/core/parameter_validator.o obj/core/config.o obj/gpu/gpu_backend_none.o obj/gpu/gpu_autotune.o obj/gpu/multi_gpu_scheduler.o obj/gpu/async_pipeline.o obj/distributed/distributed.o obj/wizard/wizard.o obj/wizard/wizard_config.o obj/wizard/wizard_ui.o obj/wizard/wizard_community.o obj/wizard/wizard_server.o obj/wizard/wizard_client.o -lm -lpthread -ldl -o run_tests
+/usr/bin/ld: obj/tests/test_sha512_simd.o (symbol from plugin): in function `test_sha512_avx2_detection()':
+(.text+0x0): multiple definition of `main'; obj/tests/run_tests.o (symbol from plugin):(.text+0x0): first defined here
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:176: run_tests] Error 1

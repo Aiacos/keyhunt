@@ -25,6 +25,7 @@ int run_bsgs_tests(void);
 int run_gpu_backend_tests(void);
 int run_distributed_tests(void);
 int run_wizard_tests(void);
+int run_sha512_simd_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -52,6 +53,7 @@ static void print_usage(const char *prog) {
     printf("  gpu          Run GPU backend tests\n");
     printf("  distributed  Run distributed mode tests\n");
     printf("  wizard       Run wizard tests\n");
+    printf("  sha512       Run SHA512 SIMD tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -100,6 +102,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "wizard") == 0) {
         printf(CLR_BOLD "\n>>> Running Wizard Tests\n" CLR_RESET);
         total_failures += run_wizard_tests();
+    }
+
+    if (module == NULL || strcmp(module, "sha512") == 0) {
+        printf(CLR_BOLD "\n>>> Running SHA512 SIMD Tests\n" CLR_RESET);
+        total_failures += run_sha512_simd_tests();
     }
 
     /* Final summary */
