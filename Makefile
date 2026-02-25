@@ -262,6 +262,22 @@ PGO_GEN_LDFLAGS := -fprofile-generate=$(PGO_OBJDIR)
 PGO_USE_FLAGS := -fprofile-use=$(PGO_OBJDIR) -fprofile-correction
 PGO_USE_LDFLAGS := -fprofile-use=$(PGO_OBJDIR)
 
+# PGO generate build: instrumented binary for profiling
+pgo-generate: clean-pgo
+	@echo "Building with PGO instrumentation..."
+	@mkdir -p $(PGO_OBJDIR)
+	$(MAKE) keyhunt_pgo_gen OBJDIR=$(PGO_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(PGO_GEN_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(PGO_GEN_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(PGO_GEN_LDFLAGS) -Wl,--as-needed" \
+		LTO_FLAGS="" GPU_CXXFLAGS="$(GPU_CXXFLAGS)"
+
+keyhunt_pgo_gen: directories $(KEYHUNT_OBJS)
+	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
+
+clean-pgo:
+	$(RM) -r $(PGO_OBJDIR) keyhunt_pgo_gen *.gcda
+
 # Sanitizer build: AddressSanitizer + UndefinedBehaviorSanitizer
 sanitize: clean-sanitize
 	@echo "Building with AddressSanitizer..."
@@ -355,6 +371,7 @@ clean-coverage:
 
 .PHONY: sanitize run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
 .PHONY: coverage run_tests_cov coverage-report clean-coverage
+.PHONY: pgo-generate keyhunt_pgo_gen clean-pgo
 
 # ============================================================================
 # Fuzzing Targets
