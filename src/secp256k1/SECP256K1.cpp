@@ -655,8 +655,7 @@ void Secp256K1::GetHash160(int type,bool compressed,
       KEYBUFFUNCOMP(b2, k2);
       KEYBUFFUNCOMP(b3, k3);
 
-      sha256sse_2B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
-      ripemd160sse_32(sh0, sh1, sh2, sh3, h0, h1, h2, h3);
+      sha256_ripemd160_sse_2B(b0, b1, b2, b3, h0, h1, h2, h3);
 
     } else {
 
@@ -670,8 +669,7 @@ void Secp256K1::GetHash160(int type,bool compressed,
       KEYBUFFCOMP(b2, k2);
       KEYBUFFCOMP(b3, k3);
 
-      sha256sse_1B(b0, b1, b2, b3, sh0, sh1, sh2, sh3);
-      ripemd160sse_32(sh0, sh1, sh2, sh3, h0, h1, h2, h3);
+      sha256_ripemd160_sse_1B(b0, b1, b2, b3, h0, h1, h2, h3);
 
     }
 
