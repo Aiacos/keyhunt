@@ -94,7 +94,7 @@ LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(COMMON_OBJS
 # Create obj directory structure
 OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/tests
 
-.PHONY: all clean legacy bsgsd directories test sanitize tsan coverage pgo-generate pgo-use pgo-clean
+.PHONY: all clean legacy bsgsd directories test sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 
 all: directories keyhunt
 
@@ -275,6 +275,13 @@ pgo-generate: pgo-clean
 
 keyhunt_pgo_gen: directories $(KEYHUNT_OBJS)
 	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
+
+# PGO training: run representative workloads to generate profile data
+pgo-train: pgo-generate
+	@echo "Running PGO training workloads..."
+	@if [ ! -x pgo_train.sh ]; then chmod +x pgo_train.sh; fi
+	@./pgo_train.sh
+	@echo "Training complete. Profile data ready in pgo_data/"
 
 pgo-clean:
 	$(RM) -r $(PGO_GEN_OBJDIR) $(PGO_USE_OBJDIR) pgo_data keyhunt_pgo_gen keyhunt_pgo *.gcda
