@@ -68,7 +68,7 @@ endif
 
 # Object files organized by module (all in obj/ directory)
 BLOOM_OBJS := $(OBJDIR)/oldbloom/bloom.o $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
-HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_shani.o
+HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_shani.o $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/sha512_avx2.o $(OBJDIR)/hash/sha512_avx512.o
 SHA3_OBJS := $(OBJDIR)/sha3/sha3.o $(OBJDIR)/sha3/keccak.o
 PLATFORM_OBJS := $(OBJDIR)/platform/platform_thread.o $(OBJDIR)/platform/platform_mutex.o $(OBJDIR)/platform/platform_time.o
 SECP256K1_OBJS := $(OBJDIR)/secp256k1/Int.o $(OBJDIR)/secp256k1/Point.o $(OBJDIR)/secp256k1/SECP256K1.o $(OBJDIR)/secp256k1/IntMod.o $(OBJDIR)/secp256k1/Random.o $(OBJDIR)/secp256k1/IntGroup.o
@@ -141,6 +141,7 @@ TEST_HASH_OBJ := $(TEST_OBJDIR)/test_hash.o
 TEST_BSGS_OPS_OBJ := $(TEST_OBJDIR)/test_bsgs_ops.o
 TEST_POINT_OBJ := $(TEST_OBJDIR)/test_point.o
 TEST_INTGROUP_OBJ := $(TEST_OBJDIR)/test_intgroup.o
+TEST_SHA512_SIMD_OBJ := $(TEST_OBJDIR)/test_sha512_simd.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
@@ -184,13 +185,17 @@ $(TEST_POINT_OBJ): tests/test_point.cpp tests/test_framework.h | directories
 $(TEST_INTGROUP_OBJ): tests/test_intgroup.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_SHA512_SIMD_OBJ): tests/test_sha512_simd.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # All test objects
 TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
              $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
-             $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ)
+             $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
+             $(TEST_SHA512_SIMD_OBJ)
 
 # Build test runner
 run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
@@ -230,8 +235,15 @@ $(OBJDIR)/hash/ripemd160_avx2.o: $(SRCDIR)/hash/ripemd160_avx2.cpp | directories
 $(OBJDIR)/hash/sha256_avx2.o: $(SRCDIR)/hash/sha256_avx2.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
 
+$(OBJDIR)/hash/sha512_avx2.o: $(SRCDIR)/hash/sha512_avx2.cpp | directories
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
 # AVX-512 optimized builds
 $(OBJDIR)/hash/ripemd160_avx512.o: $(SRCDIR)/hash/ripemd160_avx512.cpp | directories
+	$(CXX) $(CXXFLAGS) -mavx512f -mavx512dq -c $< -o $@
+
+# SHA-512 AVX-512: sha512_avx512.cpp needs -mavx512f -mavx512dq
+$(OBJDIR)/hash/sha512_avx512.o: $(SRCDIR)/hash/sha512_avx512.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx512f -mavx512dq -c $< -o $@
 
 # SHA-NI optimized builds (Intel SHA Extensions)

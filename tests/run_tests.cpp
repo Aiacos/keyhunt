@@ -35,6 +35,7 @@ int run_distributed_tests(void);
 int run_wizard_tests(void);
 int run_point_tests(void);
 int run_intgroup_tests(void);
+int run_sha512_simd_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -67,6 +68,7 @@ static void print_usage(const char *prog) {
     printf("  wizard       Run wizard tests\n");
     printf("  point        Run Point operation tests\n");
     printf("  intgroup     Run IntGroup batch inversion tests\n");
+    printf("  sha512       Run SHA512 SIMD tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -140,6 +142,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "intgroup") == 0) {
         printf(CLR_BOLD "\n>>> Running IntGroup Tests\n" CLR_RESET);
         total_failures += run_intgroup_tests();
+    }
+
+    if (module == NULL || strcmp(module, "sha512") == 0) {
+        printf(CLR_BOLD "\n>>> Running SHA512 SIMD Tests\n" CLR_RESET);
+        total_failures += run_sha512_simd_tests();
     }
 
     /* Final summary */
