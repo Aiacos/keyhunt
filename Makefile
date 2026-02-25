@@ -255,6 +255,13 @@ TSAN_LDFLAGS := -fsanitize=thread
 COVERAGE_FLAGS := --coverage -fprofile-arcs -ftest-coverage -g -O0
 COVERAGE_LDFLAGS := --coverage
 
+# Profile-Guided Optimization (PGO) directories and flags
+PGO_OBJDIR := obj_pgo
+PGO_GEN_FLAGS := -fprofile-generate=$(PGO_OBJDIR) -fprofile-arcs
+PGO_GEN_LDFLAGS := -fprofile-generate=$(PGO_OBJDIR)
+PGO_USE_FLAGS := -fprofile-use=$(PGO_OBJDIR) -fprofile-correction
+PGO_USE_LDFLAGS := -fprofile-use=$(PGO_OBJDIR)
+
 # Sanitizer build: AddressSanitizer + UndefinedBehaviorSanitizer
 sanitize: clean-sanitize
 	@echo "Building with AddressSanitizer..."
