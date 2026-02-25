@@ -4175,11 +4175,10 @@ int main(int argc, char **argv)	{
 					}
 				
 				/* Writing file for 1st bloom filter */
-				
+
 					fd_aux1 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux1 != NULL)	{
-						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
-						fflush(stdout);
+						output_success("Writing bloom filter to file %s\n",buffer_bloom_file);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bP[i].orig,sizeof(struct bloom),1,fd_aux1);
 							if(readed != 1)	{
@@ -4196,12 +4195,13 @@ int main(int argc, char **argv)	{
 							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						if(i % 64 == 0)	{
-							printf(".");
-							fflush(stdout);
-						}
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[");
+						output_progress_bar(percent, 40);
+						printf("] %.1f%%", percent);
+						fflush(stdout);
 					}
-					printf(" Done!\n");
+					printf("\n");
 					fclose(fd_aux1);
 				}
 				else	{
@@ -4212,12 +4212,11 @@ int main(int argc, char **argv)	{
 				if(!FLAGREADEDFILE2  )	{
 					
 					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
-									
+
 					/* Writing file for 2nd bloom filter */
 					fd_aux2 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux2 != NULL)	{
-						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
-						fflush(stdout);
+						output_success("Writing bloom filter to file %s\n",buffer_bloom_file);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bPx2nd[i].orig,sizeof(struct bloom),1,fd_aux2);
 							if(readed != 1)	{
@@ -4234,13 +4233,14 @@ int main(int argc, char **argv)	{
 							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						if(i % 64 == 0)	{
-							printf(".");
-							fflush(stdout);
-						}
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[");
+						output_progress_bar(percent, 40);
+						printf("] %.1f%%", percent);
+						fflush(stdout);
 					}
-					printf(" Done!\n");
-					fclose(fd_aux2);	
+					printf("\n");
+					fclose(fd_aux2);
 				}
 				else	{
 					output_error("Error can't create the file %s\n",buffer_bloom_file);
@@ -4253,7 +4253,10 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_2_%" PRIu64 ".tbl",bsgs_m3);
 				fd_aux3 = fopen(buffer_bloom_file,"wb");
 				if(fd_aux3 != NULL)	{
-					output_success("Writing bP Table to file %s .. ",buffer_bloom_file);
+					output_success("Writing bP Table to file %s\n",buffer_bloom_file);
+					printf("[");
+					output_progress_bar(0, 40);
+					printf("] 0.0%%");
 					fflush(stdout);
 					readed = fwrite(bPtable,bytes,1,fd_aux3);
 					if(readed != 1)	{
@@ -4265,8 +4268,10 @@ int main(int argc, char **argv)	{
 						output_error("Error writing the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
-					printf("Done!\n");
-					fclose(fd_aux3);	
+					printf("\r[");
+					output_progress_bar(100, 40);
+					printf("] 100.0%%\n");
+					fclose(fd_aux3);
 				}
 				else	{
 					output_error("Error can't create the file %s\n",buffer_bloom_file);
@@ -4275,12 +4280,11 @@ int main(int argc, char **argv)	{
 			}
 				if(!FLAGREADEDFILE4)	{
 					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
-									
+
 					/* Writing file for 3rd bloom filter */
 					fd_aux2 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux2 != NULL)	{
-						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
-						fflush(stdout);
+						output_success("Writing bloom filter to file %s\n",buffer_bloom_file);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bPx3rd[i].orig,sizeof(struct bloom),1,fd_aux2);
 							if(readed != 1)	{
@@ -4297,12 +4301,13 @@ int main(int argc, char **argv)	{
 							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						if(i % 64 == 0)	{
-							printf(".");
-							fflush(stdout);
-						}
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[");
+						output_progress_bar(percent, 40);
+						printf("] %.1f%%", percent);
+						fflush(stdout);
 					}
-					printf(" Done!\n");
+					printf("\n");
 					fclose(fd_aux2);
 				}
 				else	{
