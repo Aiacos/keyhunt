@@ -70,6 +70,14 @@ int validate_blocks_per_sm(
     param_validation_result_t *result
 );
 
+// Validate threads per block for GPU kernels
+// Returns: corrected threads_per_block value (may differ from input if invalid)
+int validate_threads_per_block(
+    int user_threads_per_block,
+    const struct gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+);
+
 // Print validation result to user (with colors if supported)
 void print_validation_result(const param_validation_result_t *result, const char *param_name);
 
