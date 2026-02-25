@@ -92,7 +92,7 @@ BSGSD_OBJS := $(OBJDIR)/bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(COMMON_OBJS) $(GMP256K1_OBJS)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/tests
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
 .PHONY: all clean legacy bsgsd directories test sanitize tsan coverage
 
@@ -115,7 +115,7 @@ keyhunt_legacy: directories $(LEGACY_OBJS)
 	$(CXX) $(LDFLAGS) $(LEGACY_OBJS) $(LDLIBS) -lcrypto -lgmp -o $@
 
 clean:
-	$(RM) keyhunt keyhunt_legacy bsgsd run_tests
+	$(RM) keyhunt keyhunt_legacy bsgsd run_tests benchmark_intgroup test_intgroup_avx2
 	$(RM) -r $(OBJDIR)
 
 # ============================================================================
