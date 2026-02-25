@@ -22,6 +22,7 @@
 #include "../core/util.h"
 #include "../hash/sha256.h"
 #include "../hash/sha256_avx2.h"
+#include "../hash/sha256_avx512.h"
 #include "../hash/ripemd160.h"
 
 Secp256K1::Secp256K1() {
@@ -1240,12 +1241,11 @@ void Secp256K1::GetHash160_fromX_AVX512(int type, unsigned char prefix,
     KEYBUFFPREFIX(b14, k14, prefix);
     KEYBUFFPREFIX(b15, k15, prefix);
 
-    // AVX2 SHA256 for first 8, then next 8
-    // (SHA-NI 2-way interleaved would be faster but requires different setup)
-    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
-                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
-    sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
-                  sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
+    // AVX-512 SHA256 for all 16 in one pass
+    sha256avx512_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    b8, b9, b10, b11, b12, b13, b14, b15,
+                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                    sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
 
     // AVX-512 16-way RIPEMD160
     ripemd160avx512_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
@@ -1324,10 +1324,10 @@ void Secp256K1::GetHash160_fromX_02_03_AVX512(int type,
     KEYBUFFPREFIX(b14, k14, 0x02);
     KEYBUFFPREFIX(b15, k15, 0x02);
 
-    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
-                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
-    sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
-                  sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
+    sha256avx512_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    b8, b9, b10, b11, b12, b13, b14, b15,
+                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                    sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
     ripemd160avx512_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
                        sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15,
                        h02_0, h02_1, h02_2, h02_3, h02_4, h02_5, h02_6, h02_7,
@@ -1338,10 +1338,10 @@ void Secp256K1::GetHash160_fromX_02_03_AVX512(int type,
     b8[0] ^= 0x01000000u;  b9[0] ^= 0x01000000u;  b10[0] ^= 0x01000000u; b11[0] ^= 0x01000000u;
     b12[0] ^= 0x01000000u; b13[0] ^= 0x01000000u; b14[0] ^= 0x01000000u; b15[0] ^= 0x01000000u;
 
-    sha256avx2_1B(b0, b1, b2, b3, b4, b5, b6, b7,
-                  sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7);
-    sha256avx2_1B(b8, b9, b10, b11, b12, b13, b14, b15,
-                  sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
+    sha256avx512_1B(b0, b1, b2, b3, b4, b5, b6, b7,
+                    b8, b9, b10, b11, b12, b13, b14, b15,
+                    sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
+                    sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15);
     ripemd160avx512_32(sh0, sh1, sh2, sh3, sh4, sh5, sh6, sh7,
                        sh8, sh9, sh10, sh11, sh12, sh13, sh14, sh15,
                        h03_0, h03_1, h03_2, h03_3, h03_4, h03_5, h03_6, h03_7,
