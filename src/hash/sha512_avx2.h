@@ -11,20 +11,7 @@
 
 #include <stdint.h>
 
-// Check if AVX2 is available on this CPU
-int sha512_avx2_available(void);
-
-// AVX2 4-way parallel SHA512 functions
-void sha512avx2(
-    uint64_t *i0, uint64_t *i1, uint64_t *i2, uint64_t *i3,
-    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
-    int length);
-
-void sha512avx2_hmac(
-    uint8_t *key0, uint8_t *key1, uint8_t *key2, uint8_t *key3,
-    int key_length,
-    uint8_t *msg0, uint8_t *msg1, uint8_t *msg2, uint8_t *msg3,
-    int msg_length,
-    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3);
+// Already declared in sha512.h - this file is for internal includes only
+// Functions are exposed through hash/sha512.h
 
 #endif // SHA512_AVX2_H
