@@ -383,4 +383,22 @@ fuzz_afl: tests/fuzz_json.cpp
 	@echo "  afl-fuzz -i tests/fuzz_corpus -o fuzz_out ./fuzz_json_afl @@"
 	@echo ""
 
+# ============================================================================
+# Benchmarks
+# ============================================================================
+# Build standalone benchmark executables for performance testing
+#
+# Usage:
+#   make benchmark_intgroup     # Build IntGroup::ModInv() benchmark
+#   ./benchmark_intgroup         # Run the benchmark
+# ============================================================================
+
+# IntGroup::ModInv() benchmark - compares original vs optimized
+benchmark_intgroup: directories $(SECP256K1_OBJS)
+	$(CXX) $(CXXFLAGS) -mavx2 $(SRCDIR)/benchmarks/benchmark_intgroup.cpp $(SECP256K1_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+	@echo ""
+	@echo "IntGroup benchmark built successfully. Run with:"
+	@echo "  ./benchmark_intgroup"
+	@echo ""
+
 .PHONY: fuzz fuzz_afl
