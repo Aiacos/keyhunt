@@ -3060,8 +3060,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_11_%" PRIu64 ".blm",bsgs_m);
 				fd_aux1 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux1 != NULL)	{
-					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
-					fflush(stdout);
+					output_success("Reading bloom filter from file %s\n",buffer_bloom_file);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux1);
@@ -3113,12 +3112,13 @@ int main(int argc, char **argv)	{
 								exit(EXIT_FAILURE);
 							}
 					}
-					if(i % 64 == 0 )	{
-						printf(".");
-						fflush(stdout);
-					}
+					double percent = ((double)(i + 1) / 256.0) * 100.0;
+					printf("\r[");
+					output_progress_bar(percent, 40);
+					printf("] %.1f%%", percent);
+					fflush(stdout);
 				}
-				printf(" Done!\n");
+				printf("\n");
 				fclose(fd_aux1);
 				memset(buffer_bloom_file,0,1024);
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_3_%" PRIu64 ".blm",bsgs_m);
@@ -3137,8 +3137,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
-					fflush(stdout);
+					output_success("Reading bloom filter from file %s\n",buffer_bloom_file);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
@@ -3183,20 +3182,21 @@ int main(int argc, char **argv)	{
 						exit(EXIT_FAILURE);
 					}
 						memset(rawvalue,0,32);
-						if(FLAGSKIPCHECKSUM == 0)	{								
+						if(FLAGSKIPCHECKSUM == 0)	{
 							sha256((uint8_t*)bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bPx2nd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx2nd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
 								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 						}
 					}
-					if(i % 64 == 0)	{
-						printf(".");
-						fflush(stdout);
-					}
+					double percent = ((double)(i + 1) / 256.0) * 100.0;
+					printf("\r[");
+					output_progress_bar(percent, 40);
+					printf("] %.1f%%", percent);
+					fflush(stdout);
 				}
 				fclose(fd_aux2);
-				printf(" Done!\n");
+				printf("\n");
 				memset(buffer_bloom_file,0,1024);
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_5_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
@@ -3221,13 +3221,32 @@ int main(int argc, char **argv)	{
 			snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_2_%" PRIu64 ".tbl",bsgs_m3);
 			fd_aux3 = fopen(buffer_bloom_file,"rb");
 			if(fd_aux3 != NULL)	{
-				output_success("Reading bP Table from file %s .",buffer_bloom_file);
+				output_success("Reading bP Table from file %s\n",buffer_bloom_file);
 				fflush(stdout);
-				rsize = fread(bPtable,bytes,1,fd_aux3);
-				if(rsize != 1)	{
-					output_error("Error reading the file %s\n",buffer_bloom_file);
-					exit(EXIT_FAILURE);
+
+				// Read in chunks with progress bar
+				const size_t chunk_size = 10 * 1024 * 1024; // 10 MB chunks
+				uint64_t bytes_read = 0;
+				char *bPtable_ptr = (char*)bPtable;
+
+				while(bytes_read < bytes) {
+					size_t to_read = (bytes - bytes_read > chunk_size) ? chunk_size : (bytes - bytes_read);
+					rsize = fread(bPtable_ptr + bytes_read, 1, to_read, fd_aux3);
+					if(rsize != to_read) {
+						output_error("Error reading the file %s\n",buffer_bloom_file);
+						exit(EXIT_FAILURE);
+					}
+					bytes_read += rsize;
+
+					// Display progress bar
+					double percent = (double)bytes_read / (double)bytes * 100.0;
+					printf("\r  ");
+					output_progress_bar(percent, 40);
+					printf(" %.1f%%", percent);
+					fflush(stdout);
 				}
+				printf("\n");
+
 				rsize = fread(checksum,32,1,fd_aux3);
 				if(rsize != 1)	{
 					output_error("Error reading the file %s\n",buffer_bloom_file);
@@ -3240,7 +3259,7 @@ int main(int argc, char **argv)	{
 						exit(EXIT_FAILURE);
 					}
 				}
-				printf("... Done!\n");
+				output_success("bP Table loaded successfully\n");
 				fclose(fd_aux3);
 				FLAGREADEDFILE3 = 1;
 			}
@@ -3252,8 +3271,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
-					fflush(stdout);
+					output_success("Reading bloom filter from file %s\n",buffer_bloom_file);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
@@ -3298,20 +3316,21 @@ int main(int argc, char **argv)	{
 						exit(EXIT_FAILURE);
 					}
 						memset(rawvalue,0,32);
-						if(FLAGSKIPCHECKSUM == 0)	{							
+						if(FLAGSKIPCHECKSUM == 0)	{
 							sha256((uint8_t*)bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bPx3rd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx3rd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
 								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 					}
-					if(i % 64 == 0)	{
-						printf(".");
-						fflush(stdout);
-					}
+					double percent = ((double)(i + 1) / 256.0) * 100.0;
+					printf("\r[");
+					output_progress_bar(percent, 40);
+					printf("] %.1f%%", percent);
+					fflush(stdout);
 				}
 				fclose(fd_aux2);
-				printf(" Done!\n");
+				printf("\n");
 				FLAGREADEDFILE4 = 1;
 			}
 			else	{
@@ -3343,8 +3362,11 @@ int main(int argc, char **argv)	{
 				if(PERTHREAD_R != 0)	{
 					THREADCYCLES++;
 				}
-				
-				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
+
+				double initial_percent = (bsgs_m > 0) ? ((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100.0 : 0.0;
+				printf("\r[BSGS] ");
+				output_progress_bar(initial_percent, 25);
+				printf(" processing bP points: %lu/%lu (%.1f%%)   ", FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
 				fflush(stdout);
 
 				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
@@ -3391,8 +3413,10 @@ int main(int argc, char **argv)	{
 					{
 						uint64_t current_items = FINISHED_ITEMS.load(std::memory_order_relaxed);
 						if(OLDFINISHED_ITEMS != current_items)	{
-							int percent = (bsgs_m2 > 0) ? (int)(((double)current_items/(double)bsgs_m2)*100) : 0;
-							printf("\r[+] processing %lu/%lu bP points : %i%%\r",current_items,bsgs_m2,percent);
+							double percent = (bsgs_m2 > 0) ? ((double)current_items/(double)bsgs_m2)*100.0 : 0.0;
+							printf("\r[BSGS] ");
+							output_progress_bar(percent, 25);
+							printf(" processing bP points: %lu/%lu (%.1f%%)   ", current_items, bsgs_m2, percent);
 							fflush(stdout);
 							OLDFINISHED_ITEMS = current_items;
 						}
@@ -3411,7 +3435,9 @@ int main(int argc, char **argv)	{
 						}
 					}
 				}while(FINISHED_THREADS_COUNTER < THREADCYCLES);
-				printf("\r[+] processing %lu/%lu bP points : 100%%     \n",bsgs_m2,bsgs_m2);
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" processing bP points: %lu/%lu (100.0%%) ✓\n", bsgs_m2, bsgs_m2);
 				
 				free(tid);
 				free(bPload_mutex);
@@ -3441,8 +3467,11 @@ int main(int argc, char **argv)	{
 					THREADCYCLES++;
 					//if(FLAGDEBUG) printf("[D] PERTHREAD_R: %lu\n",PERTHREAD_R);
 				}
-				
-				printf("\r[+] processing %lu/%lu bP points : %i%%\r",FINISHED_ITEMS.load(std::memory_order_relaxed),bsgs_m,(int) (((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100));
+
+				double initial_percent = (bsgs_m > 0) ? ((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100.0 : 0.0;
+				printf("\r[BSGS] ");
+				output_progress_bar(initial_percent, 25);
+				printf(" processing bP points: %lu/%lu (%.1f%%)   ", FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
 				fflush(stdout);
 
 				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
@@ -3492,7 +3521,10 @@ int main(int argc, char **argv)	{
 					{
 						uint64_t current_items = FINISHED_ITEMS.load(std::memory_order_relaxed);
 						if(OLDFINISHED_ITEMS != current_items)	{
-							printf("\r[+] processing %lu/%lu bP points : %i%%\r",current_items,bsgs_m,(int) (((double)current_items/(double)bsgs_m)*100));
+							double percent = (bsgs_m > 0) ? ((double)current_items/(double)bsgs_m)*100.0 : 0.0;
+							printf("\r[BSGS] ");
+							output_progress_bar(percent, 25);
+							printf(" processing bP points: %lu/%lu (%.1f%%)   ", current_items, bsgs_m, percent);
 							fflush(stdout);
 							OLDFINISHED_ITEMS = current_items;
 						}
@@ -3512,7 +3544,9 @@ int main(int argc, char **argv)	{
 					}
 					
 				}while(FINISHED_THREADS_COUNTER < THREADCYCLES);
-				printf("\r[+] processing %lu/%lu bP points : 100%%     \n",bsgs_m,bsgs_m);
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" processing bP points: %lu/%lu (100.0%%) ✓\n", bsgs_m, bsgs_m);
 				
 				free(tid);
 				free(bPload_mutex);
@@ -3521,42 +3555,80 @@ int main(int argc, char **argv)	{
 			}
 		}
 		
-		if(!FLAGREADEDFILE1 || !FLAGREADEDFILE2 || !FLAGREADEDFILE4)	{
-			output_success("Making checkums .. ");
-			fflush(stdout);
-		}	
 			if(!FLAGREADEDFILE1)	{
+				printf("\r[BSGS] ");
+				output_progress_bar(0.0, 25);
+				printf(" computing bloom_bP checksums: 0/256 (0.0%%)   ");
+				fflush(stdout);
 				for(i = 0; i < 256 ; i++)	{
 					sha256((uint8_t*)bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes,(uint8_t*) bloom_bP_checksums[i].data);
 					memcpy(bloom_bP_checksums[i].backup,bloom_bP_checksums[i].data,32);
+					if ((i + 1) % 16 == 0 || i == 255) {
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[BSGS] ");
+						output_progress_bar(percent, 25);
+						printf(" computing bloom_bP checksums: %" PRIu64 "/256 (%.1f%%)   ", i + 1, percent);
+						fflush(stdout);
+					}
 				}
-				printf(".");
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" computing bloom_bP checksums: 256/256 (100.0%%) ✓\n");
+				fflush(stdout);
 			}
 			if(!FLAGREADEDFILE2)	{
+				printf("\r[BSGS] ");
+				output_progress_bar(0.0, 25);
+				printf(" computing bloom_bPx2nd checksums: 0/256 (0.0%%)   ");
+				fflush(stdout);
 				for(i = 0; i < 256 ; i++)	{
 					sha256((uint8_t*)bloom_bPx2nd[i].orig.bf, bloom_bPx2nd[i].orig.bytes,(uint8_t*) bloom_bPx2nd_checksums[i].data);
 					memcpy(bloom_bPx2nd_checksums[i].backup,bloom_bPx2nd_checksums[i].data,32);
+					if ((i + 1) % 16 == 0 || i == 255) {
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[BSGS] ");
+						output_progress_bar(percent, 25);
+						printf(" computing bloom_bPx2nd checksums: %" PRIu64 "/256 (%.1f%%)   ", i + 1, percent);
+						fflush(stdout);
+					}
 				}
-				printf(".");
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" computing bloom_bPx2nd checksums: 256/256 (100.0%%) ✓\n");
+				fflush(stdout);
 			}
 			if(!FLAGREADEDFILE4)	{
+				printf("\r[BSGS] ");
+				output_progress_bar(0.0, 25);
+				printf(" computing bloom_bPx3rd checksums: 0/256 (0.0%%)   ");
+				fflush(stdout);
 				for(i = 0; i < 256 ; i++)	{
 					sha256((uint8_t*)bloom_bPx3rd[i].orig.bf, bloom_bPx3rd[i].orig.bytes,(uint8_t*) bloom_bPx3rd_checksums[i].data);
 					memcpy(bloom_bPx3rd_checksums[i].backup,bloom_bPx3rd_checksums[i].data,32);
+					if ((i + 1) % 16 == 0 || i == 255) {
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[BSGS] ");
+						output_progress_bar(percent, 25);
+						printf(" computing bloom_bPx3rd checksums: %" PRIu64 "/256 (%.1f%%)   ", i + 1, percent);
+						fflush(stdout);
+					}
 				}
-				printf(".");
-			}
-		if(!FLAGREADEDFILE1 || !FLAGREADEDFILE2 || !FLAGREADEDFILE4)	{
-			printf(" done\n");
-			fflush(stdout);
-		}	
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" computing bloom_bPx3rd checksums: 256/256 (100.0%%) ✓\n");
+				fflush(stdout);
+			}	
 		if(!FLAGREADEDFILE3)	{
-			output_success("Sorting %lu elements... ",bsgs_m3);
+			printf("\r[BSGS] ");
+			output_progress_bar(0.0, 25);
+			printf(" sorting bP table: %lu elements (0.0%%)   ", bsgs_m3);
 			fflush(stdout);
 			bsgs_sort(bPtable,bsgs_m3);
 			sha256((uint8_t*)bPtable, bytes,(uint8_t*) checksum);
 			memcpy(checksum_backup,checksum,32);
-			printf("Done!\n");
+			printf("\r[BSGS] ");
+			output_progress_bar(100.0, 25);
+			printf(" sorting bP table: %lu elements (100.0%%) ✓\n", bsgs_m3);
 			fflush(stdout);
 		}
 		if(FLAGSAVEREADFILE || FLAGUPDATEFILE1 )	{
@@ -3568,11 +3640,10 @@ int main(int argc, char **argv)	{
 					}
 				
 				/* Writing file for 1st bloom filter */
-				
+
 					fd_aux1 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux1 != NULL)	{
-						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
-						fflush(stdout);
+						output_success("Writing bloom filter to file %s\n",buffer_bloom_file);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bP[i].orig,sizeof(struct bloom),1,fd_aux1);
 							if(readed != 1)	{
@@ -3589,12 +3660,13 @@ int main(int argc, char **argv)	{
 							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						if(i % 64 == 0)	{
-							printf(".");
-							fflush(stdout);
-						}
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[");
+						output_progress_bar(percent, 40);
+						printf("] %.1f%%", percent);
+						fflush(stdout);
 					}
-					printf(" Done!\n");
+					printf("\n");
 					fclose(fd_aux1);
 				}
 				else	{
@@ -3605,12 +3677,11 @@ int main(int argc, char **argv)	{
 				if(!FLAGREADEDFILE2  )	{
 					
 					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
-									
+
 					/* Writing file for 2nd bloom filter */
 					fd_aux2 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux2 != NULL)	{
-						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
-						fflush(stdout);
+						output_success("Writing bloom filter to file %s\n",buffer_bloom_file);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bPx2nd[i].orig,sizeof(struct bloom),1,fd_aux2);
 							if(readed != 1)	{
@@ -3627,13 +3698,14 @@ int main(int argc, char **argv)	{
 							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						if(i % 64 == 0)	{
-							printf(".");
-							fflush(stdout);
-						}
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[");
+						output_progress_bar(percent, 40);
+						printf("] %.1f%%", percent);
+						fflush(stdout);
 					}
-					printf(" Done!\n");
-					fclose(fd_aux2);	
+					printf("\n");
+					fclose(fd_aux2);
 				}
 				else	{
 					output_error("Error can't create the file %s\n",buffer_bloom_file);
@@ -3646,7 +3718,10 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_2_%" PRIu64 ".tbl",bsgs_m3);
 				fd_aux3 = fopen(buffer_bloom_file,"wb");
 				if(fd_aux3 != NULL)	{
-					output_success("Writing bP Table to file %s .. ",buffer_bloom_file);
+					output_success("Writing bP Table to file %s\n",buffer_bloom_file);
+					printf("[");
+					output_progress_bar(0, 40);
+					printf("] 0.0%%");
 					fflush(stdout);
 					readed = fwrite(bPtable,bytes,1,fd_aux3);
 					if(readed != 1)	{
@@ -3658,8 +3733,10 @@ int main(int argc, char **argv)	{
 						output_error("Error writing the file %s\n",buffer_bloom_file);
 						exit(EXIT_FAILURE);
 					}
-					printf("Done!\n");
-					fclose(fd_aux3);	
+					printf("\r[");
+					output_progress_bar(100, 40);
+					printf("] 100.0%%\n");
+					fclose(fd_aux3);
 				}
 				else	{
 					output_error("Error can't create the file %s\n",buffer_bloom_file);
@@ -3668,12 +3745,11 @@ int main(int argc, char **argv)	{
 			}
 				if(!FLAGREADEDFILE4)	{
 					snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
-									
+
 					/* Writing file for 3rd bloom filter */
 					fd_aux2 = fopen(buffer_bloom_file,"wb");
 					if(fd_aux2 != NULL)	{
-						output_success("Writing bloom filter to file %s ",buffer_bloom_file);
-						fflush(stdout);
+						output_success("Writing bloom filter to file %s\n",buffer_bloom_file);
 						for(i = 0; i < 256;i++)	{
 							readed = fwrite(&bloom_bPx3rd[i].orig,sizeof(struct bloom),1,fd_aux2);
 							if(readed != 1)	{
@@ -3690,12 +3766,13 @@ int main(int argc, char **argv)	{
 							output_error("Error writing the file %s please delete it\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						if(i % 64 == 0)	{
-							printf(".");
-							fflush(stdout);
-						}
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[");
+						output_progress_bar(percent, 40);
+						printf("] %.1f%%", percent);
+						fflush(stdout);
 					}
-					printf(" Done!\n");
+					printf("\n");
 					fclose(fd_aux2);
 				}
 				else	{
