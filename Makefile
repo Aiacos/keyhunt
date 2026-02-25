@@ -257,10 +257,11 @@ COVERAGE_LDFLAGS := --coverage
 
 # Profile-Guided Optimization (PGO) directories and flags
 PGO_OBJDIR := obj_pgo
+PGO_USE_OBJDIR := obj_pgo_use
 PGO_GEN_FLAGS := -fprofile-generate=$(PGO_OBJDIR) -fprofile-arcs
 PGO_GEN_LDFLAGS := -fprofile-generate=$(PGO_OBJDIR)
-PGO_USE_FLAGS := -fprofile-use=$(PGO_OBJDIR) -fprofile-correction
-PGO_USE_LDFLAGS := -fprofile-use=$(PGO_OBJDIR)
+PGO_USE_FLAGS := -fprofile-use=pgo_data -fprofile-correction -Wno-missing-profile
+PGO_USE_LDFLAGS := -fprofile-use=pgo_data
 
 # PGO generate build: instrumented binary for profiling
 pgo-generate: clean-pgo
@@ -276,7 +277,25 @@ keyhunt_pgo_gen: directories $(KEYHUNT_OBJS)
 	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
 
 clean-pgo:
-	$(RM) -r $(PGO_OBJDIR) keyhunt_pgo_gen *.gcda
+	$(RM) -r $(PGO_OBJDIR) $(PGO_USE_OBJDIR) keyhunt_pgo_gen keyhunt_pgo *.gcda
+
+# PGO use build: optimized binary using profile data
+pgo-use:
+	@echo "Building optimized binary with PGO profile data..."
+	@if [ ! -d pgo_data ]; then \
+		echo "Error: pgo_data directory not found. Run profile collection first."; \
+		exit 1; \
+	fi
+	@mkdir -p $(PGO_USE_OBJDIR)
+	$(MAKE) keyhunt_pgo OBJDIR=$(PGO_USE_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES) $(PGO_USE_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(PGO_USE_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed $(PGO_USE_LDFLAGS)" \
+		GPU_CXXFLAGS="$(GPU_CXXFLAGS)"
+	@echo "PGO-optimized binary created: keyhunt_pgo"
+
+keyhunt_pgo: directories $(KEYHUNT_OBJS)
+	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
 
 # Sanitizer build: AddressSanitizer + UndefinedBehaviorSanitizer
 sanitize: clean-sanitize
@@ -371,7 +390,7 @@ clean-coverage:
 
 .PHONY: sanitize run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
 .PHONY: coverage run_tests_cov coverage-report clean-coverage
-.PHONY: pgo-generate keyhunt_pgo_gen clean-pgo
+.PHONY: pgo-generate keyhunt_pgo_gen pgo-use keyhunt_pgo clean-pgo
 
 # ============================================================================
 # Fuzzing Targets
