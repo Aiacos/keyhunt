@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "sysinfo.h"
+#include "gpu/gpu_backend.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +59,31 @@ uint32_t validate_batch_size(
     param_validation_result_t *result
 );
 
+// GPU parameter validation functions
+// Validate blocks per SM (streaming multiprocessor)
+// Returns: corrected blocks_per_sm value (may differ from input if invalid)
+int validate_blocks_per_sm(
+    int user_blocks_per_sm,
+    const gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+);
+
+// Validate threads per block for GPU kernels
+// Returns: corrected threads_per_block value (may differ from input if invalid)
+int validate_threads_per_block(
+    int user_threads_per_block,
+    const gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+);
+
+// Validate keys per thread for GPU kernels
+// Returns: corrected keys_per_thread value (may differ from input if invalid)
+int validate_keys_per_thread(
+    int user_keys_per_thread,
+    const gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+);
+
 // Print validation result to user (with colors if supported)
 void print_validation_result(const param_validation_result_t *result, const char *param_name);
 
@@ -70,6 +96,16 @@ bool validate_all_parameters(
     uint32_t *batch_size,   // in/out: may be corrected
     const system_info_t *sysinfo,
     bool auto_correct       // if true, apply corrections automatically
+);
+
+// Comprehensive GPU parameter validation (all at once)
+// Returns: true if all GPU parameters are safe to use
+bool validate_gpu_parameters(
+    int *blocks_per_sm,         // in/out: may be corrected
+    int *threads_per_block,     // in/out: may be corrected
+    int *keys_per_thread,       // in/out: may be corrected
+    const gpu_backend_info_t *gpu_info,
+    bool auto_correct           // if true, apply corrections automatically
 );
 
 // Calculate recommended BSGS parameters for target memory usage

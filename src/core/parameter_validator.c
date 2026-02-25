@@ -353,6 +353,390 @@ uint32_t validate_batch_size(
     return user_batch_size;
 }
 
+int validate_blocks_per_sm(
+    int user_blocks_per_sm,
+    const gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+) {
+    memset(result, 0, sizeof(param_validation_result_t));
+    result->original_value = user_blocks_per_sm;
+    result->corrected_value = user_blocks_per_sm;
+
+    // If gpu_info is NULL, we can't validate
+    if (gpu_info == NULL) {
+        result->status = PARAM_WARNING;
+        snprintf(result->message, sizeof(result->message),
+                "GPU info not available - cannot validate blocks_per_sm");
+        return user_blocks_per_sm;
+    }
+
+    // Determine hardware limits based on compute capability
+    int max_blocks_per_sm = 32; // Conservative default
+    int recommended_blocks = 4; // Typical optimal value
+
+    // Set limits based on compute capability
+    if (gpu_info->compute_major == 7) {
+        // Volta/Turing (7.x)
+        max_blocks_per_sm = 32;
+        recommended_blocks = 4;
+    } else if (gpu_info->compute_major == 8) {
+        // Ampere (8.x)
+        max_blocks_per_sm = 32;
+        recommended_blocks = 4;
+    } else if (gpu_info->compute_major >= 9) {
+        // Ada Lovelace/Hopper (9.x+)
+        max_blocks_per_sm = 32;
+        recommended_blocks = 4;
+    } else if (gpu_info->compute_major == 6) {
+        // Pascal (6.x)
+        max_blocks_per_sm = 32;
+        recommended_blocks = 3;
+    } else if (gpu_info->compute_major == 5) {
+        // Maxwell (5.x)
+        max_blocks_per_sm = 32;
+        recommended_blocks = 3;
+    } else {
+        // Older or unknown architecture
+        max_blocks_per_sm = 16;
+        recommended_blocks = 2;
+    }
+
+    result->suggested_value = recommended_blocks;
+
+    // If user specified 0, use auto-tuned/recommended value
+    if (user_blocks_per_sm == 0) {
+        result->corrected_value = recommended_blocks;
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Using recommended value: %d blocks/SM (optimal for compute %d.%d)",
+                result->corrected_value, gpu_info->compute_major, gpu_info->compute_minor);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Validate against maximum hardware limit
+    if (user_blocks_per_sm > max_blocks_per_sm) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = max_blocks_per_sm;
+        snprintf(result->message, sizeof(result->message),
+                "Requested %d blocks/SM exceeds hardware limit (%d). Auto-corrected to %d.",
+                user_blocks_per_sm, max_blocks_per_sm, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is too low (underutilization)
+    if (user_blocks_per_sm == 1) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_blocks_per_sm;
+        snprintf(result->message, sizeof(result->message),
+                "Only 1 block/SM may underutilize GPU. Consider 2-%d for better occupancy.",
+                recommended_blocks * 2);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is too high (may cause resource pressure)
+    if (user_blocks_per_sm > recommended_blocks * 3) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_blocks_per_sm;
+        snprintf(result->message, sizeof(result->message),
+                "Using %d blocks/SM is high. May cause register/shared memory pressure. Optimal: %d-%d",
+                user_blocks_per_sm, recommended_blocks / 2, recommended_blocks * 2);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is optimal
+    if (user_blocks_per_sm == recommended_blocks) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Blocks per SM is optimal for compute %d.%d",
+                gpu_info->compute_major, gpu_info->compute_minor);
+        return result->corrected_value;
+    }
+
+    // Check if value is in reasonable range
+    if (user_blocks_per_sm >= recommended_blocks / 2 &&
+        user_blocks_per_sm <= recommended_blocks * 2) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Blocks per SM is within reasonable range (%d-%d)",
+                recommended_blocks / 2, recommended_blocks * 2);
+        return result->corrected_value;
+    }
+
+    // Value is suboptimal but not dangerous
+    result->status = PARAM_SUBOPTIMAL;
+    snprintf(result->message, sizeof(result->message),
+            "Using %d blocks/SM. Recommended: %d for better performance.",
+            user_blocks_per_sm, recommended_blocks);
+    return result->corrected_value;
+}
+
+int validate_threads_per_block(
+    int user_threads_per_block,
+    const gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+) {
+    memset(result, 0, sizeof(param_validation_result_t));
+    result->original_value = user_threads_per_block;
+    result->corrected_value = user_threads_per_block;
+
+    // If gpu_info is NULL, we can't validate
+    if (gpu_info == NULL) {
+        result->status = PARAM_WARNING;
+        snprintf(result->message, sizeof(result->message),
+                "GPU info not available - cannot validate threads_per_block");
+        return user_threads_per_block;
+    }
+
+    // Get hardware limit from GPU info
+    int max_threads_per_block = gpu_info->max_threads_per_block;
+    if (max_threads_per_block == 0) {
+        max_threads_per_block = 1024; // Safe default for modern GPUs
+    }
+
+    // Determine recommended value based on compute capability
+    int recommended_threads = 256; // Conservative default
+
+    // Set recommendations based on compute capability
+    if (gpu_info->compute_major == 7) {
+        // Volta/Turing (7.x) - good occupancy with 256-512
+        recommended_threads = 256;
+    } else if (gpu_info->compute_major == 8) {
+        // Ampere (8.x) - can handle 512 well
+        recommended_threads = 512;
+    } else if (gpu_info->compute_major >= 9) {
+        // Ada Lovelace/Hopper (9.x+) - efficient with 512-1024
+        recommended_threads = 512;
+    } else if (gpu_info->compute_major == 6) {
+        // Pascal (6.x) - 256 is optimal
+        recommended_threads = 256;
+    } else if (gpu_info->compute_major == 5) {
+        // Maxwell (5.x) - smaller is better
+        recommended_threads = 128;
+    } else {
+        // Older or unknown architecture
+        recommended_threads = 128;
+    }
+
+    result->suggested_value = recommended_threads;
+
+    // If user specified 0, use auto-tuned/recommended value
+    if (user_threads_per_block == 0) {
+        result->corrected_value = recommended_threads;
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Using recommended value: %d threads/block (optimal for compute %d.%d)",
+                result->corrected_value, gpu_info->compute_major, gpu_info->compute_minor);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Validate against maximum hardware limit
+    if (user_threads_per_block > max_threads_per_block) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = max_threads_per_block;
+        snprintf(result->message, sizeof(result->message),
+                "Requested %d threads/block exceeds hardware limit (%d). Auto-corrected to %d.",
+                user_threads_per_block, max_threads_per_block, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Threads per block must be multiple of warp size (32)
+    if (user_threads_per_block % 32 != 0) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = ((user_threads_per_block + 31) / 32) * 32;
+        // Ensure we don't exceed max
+        if (result->corrected_value > max_threads_per_block) {
+            result->corrected_value = (max_threads_per_block / 32) * 32;
+        }
+        snprintf(result->message, sizeof(result->message),
+                "Threads per block must be multiple of 32 (warp size). Corrected %d → %d",
+                user_threads_per_block, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is too low (poor GPU utilization)
+    if (user_threads_per_block < 64) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_threads_per_block;
+        snprintf(result->message, sizeof(result->message),
+                "Only %d threads/block is very low. Consider %d-%d for better GPU utilization.",
+                user_threads_per_block, 128, recommended_threads);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is too high (may cause register pressure)
+    if (user_threads_per_block > 768 && recommended_threads <= 512) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_threads_per_block;
+        snprintf(result->message, sizeof(result->message),
+                "Using %d threads/block is high. May cause register pressure. Optimal: %d",
+                user_threads_per_block, recommended_threads);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is optimal
+    if (user_threads_per_block == recommended_threads) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Threads per block is optimal for compute %d.%d",
+                gpu_info->compute_major, gpu_info->compute_minor);
+        return result->corrected_value;
+    }
+
+    // Check if value is in reasonable range (within 2x of recommended)
+    if (user_threads_per_block >= recommended_threads / 2 &&
+        user_threads_per_block <= recommended_threads * 2 &&
+        user_threads_per_block <= max_threads_per_block) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Threads per block is within reasonable range (%d-%d)",
+                recommended_threads / 2, recommended_threads * 2);
+        return result->corrected_value;
+    }
+
+    // Value is suboptimal but not dangerous
+    result->status = PARAM_SUBOPTIMAL;
+    snprintf(result->message, sizeof(result->message),
+            "Using %d threads/block. Recommended: %d for better performance.",
+            user_threads_per_block, recommended_threads);
+    return result->corrected_value;
+}
+
+int validate_keys_per_thread(
+    int user_keys_per_thread,
+    const gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+) {
+    memset(result, 0, sizeof(param_validation_result_t));
+    result->original_value = user_keys_per_thread;
+    result->corrected_value = user_keys_per_thread;
+
+    // If gpu_info is NULL, we can't validate
+    if (gpu_info == NULL) {
+        result->status = PARAM_WARNING;
+        snprintf(result->message, sizeof(result->message),
+                "GPU info not available - cannot validate keys_per_thread");
+        return user_keys_per_thread;
+    }
+
+    // Determine recommended value based on compute capability
+    int recommended_keys = 1024; // Conservative default
+
+    // Set recommendations based on compute capability
+    if (gpu_info->compute_major == 7) {
+        // Volta/Turing (7.x) - balanced performance with 512-1024
+        recommended_keys = 1024;
+    } else if (gpu_info->compute_major == 8) {
+        // Ampere (8.x) - can handle 1024-2048 efficiently
+        recommended_keys = 1024;
+    } else if (gpu_info->compute_major >= 9) {
+        // Ada Lovelace/Hopper (9.x+) - excellent with 2048
+        recommended_keys = 2048;
+    } else if (gpu_info->compute_major == 6) {
+        // Pascal (6.x) - 512-1024 is optimal
+        recommended_keys = 512;
+    } else if (gpu_info->compute_major == 5) {
+        // Maxwell (5.x) - smaller values better
+        recommended_keys = 512;
+    } else {
+        // Older or unknown architecture
+        recommended_keys = 256;
+    }
+
+    result->suggested_value = recommended_keys;
+
+    // If user specified 0, use auto-tuned/recommended value
+    if (user_keys_per_thread == 0) {
+        result->corrected_value = recommended_keys;
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Using recommended value: %d keys/thread (optimal for compute %d.%d)",
+                result->corrected_value, gpu_info->compute_major, gpu_info->compute_minor);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is dangerously high (will cause register pressure)
+    if (user_keys_per_thread > 8192) {
+        result->status = PARAM_CORRECTED;
+        result->corrected_value = 4096;
+        snprintf(result->message, sizeof(result->message),
+                "Requested %d keys/thread is too high (register pressure). Auto-corrected to %d.",
+                user_keys_per_thread, result->corrected_value);
+        result->applied_correction = true;
+        return result->corrected_value;
+    }
+
+    // Check if value is too low (poor throughput)
+    if (user_keys_per_thread < 64) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_keys_per_thread;
+        snprintf(result->message, sizeof(result->message),
+                "Only %d keys/thread is very low. Consider %d-%d for better throughput.",
+                user_keys_per_thread, 256, recommended_keys);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is not a power of 2 (suboptimal memory access)
+    if (!is_power_of_2(user_keys_per_thread)) {
+        result->status = PARAM_WARNING;
+        uint64_t next_pow2 = next_power_of_2(user_keys_per_thread);
+        snprintf(result->message, sizeof(result->message),
+                "Keys per thread (%d) is not power of 2. Consider %llu for better memory alignment.",
+                user_keys_per_thread, (unsigned long long)next_pow2);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is too high for this architecture (may cause occupancy issues)
+    if (user_keys_per_thread > 4096 && recommended_keys <= 1024) {
+        result->status = PARAM_WARNING;
+        result->corrected_value = user_keys_per_thread;
+        snprintf(result->message, sizeof(result->message),
+                "Using %d keys/thread is high for compute %d.%d. May reduce occupancy. Optimal: %d",
+                user_keys_per_thread, gpu_info->compute_major, gpu_info->compute_minor,
+                recommended_keys);
+        result->applied_correction = false;
+        return result->corrected_value;
+    }
+
+    // Check if value is optimal
+    if (user_keys_per_thread == recommended_keys) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Keys per thread is optimal for compute %d.%d",
+                gpu_info->compute_major, gpu_info->compute_minor);
+        return result->corrected_value;
+    }
+
+    // Check if value is in reasonable range (within 2x of recommended)
+    if (user_keys_per_thread >= recommended_keys / 2 &&
+        user_keys_per_thread <= recommended_keys * 2 &&
+        user_keys_per_thread <= 4096) {
+        result->status = PARAM_OK;
+        snprintf(result->message, sizeof(result->message),
+                "Keys per thread is within reasonable range (%d-%d)",
+                recommended_keys / 2, recommended_keys * 2);
+        return result->corrected_value;
+    }
+
+    // Value is suboptimal but not dangerous
+    result->status = PARAM_SUBOPTIMAL;
+    snprintf(result->message, sizeof(result->message),
+            "Using %d keys/thread. Recommended: %d for better performance.",
+            user_keys_per_thread, recommended_keys);
+    return result->corrected_value;
+}
+
 void print_validation_result(const param_validation_result_t *result, const char *param_name) {
     const char *color;
     const char *prefix;
@@ -444,6 +828,62 @@ bool validate_all_parameters(
         printf("%s[✓] All parameters validated successfully%s\n", COLOR_GREEN, COLOR_RESET);
     } else {
         printf("%s[!] Some parameters were adjusted for safety%s\n", COLOR_YELLOW, COLOR_RESET);
+    }
+    fflush(stdout);
+
+    return all_safe;
+}
+
+bool validate_gpu_parameters(
+    int *blocks_per_sm,
+    int *threads_per_block,
+    int *keys_per_thread,
+    const gpu_backend_info_t *gpu_info,
+    bool auto_correct
+) {
+    param_validation_result_t result;
+    bool all_safe = true;
+
+    printf("\n[+] Validating GPU parameters...\n");
+    fflush(stdout);
+
+    // Validate blocks per SM
+    int validated_blocks = validate_blocks_per_sm(*blocks_per_sm, gpu_info, &result);
+    if (auto_correct && result.applied_correction) {
+        *blocks_per_sm = validated_blocks;
+    }
+    print_validation_result(&result, "Blocks per SM");
+    fflush(stdout);
+    if (result.status == PARAM_WARNING || result.status == PARAM_CORRECTED) {
+        all_safe = false;
+    }
+
+    // Validate threads per block
+    int validated_threads = validate_threads_per_block(*threads_per_block, gpu_info, &result);
+    if (auto_correct && result.applied_correction) {
+        *threads_per_block = validated_threads;
+    }
+    print_validation_result(&result, "Threads per Block");
+    fflush(stdout);
+    if (result.status == PARAM_WARNING || result.status == PARAM_CORRECTED) {
+        all_safe = false;
+    }
+
+    // Validate keys per thread
+    int validated_keys = validate_keys_per_thread(*keys_per_thread, gpu_info, &result);
+    if (auto_correct && result.applied_correction) {
+        *keys_per_thread = validated_keys;
+    }
+    print_validation_result(&result, "Keys per Thread");
+    fflush(stdout);
+    if (result.status == PARAM_WARNING || result.status == PARAM_CORRECTED) {
+        all_safe = false;
+    }
+
+    if (all_safe) {
+        printf("%s[✓] All GPU parameters validated successfully%s\n", COLOR_GREEN, COLOR_RESET);
+    } else {
+        printf("%s[!] Some GPU parameters were adjusted for safety%s\n", COLOR_YELLOW, COLOR_RESET);
     }
     fflush(stdout);
 

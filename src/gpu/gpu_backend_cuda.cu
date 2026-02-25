@@ -16,6 +16,9 @@
 // Optimized hash functions (fully unrolled, register-only)
 #include "gpu_hash_optimized.cuh"
 
+// Parameter validation
+#include "../core/parameter_validator.h"
+
 // Use optimized hash functions
 #define USE_OPTIMIZED_HASH 1
 
@@ -1891,6 +1894,51 @@ int gpu_backend_init(gpu_backend_info_t *info) {
     g_info.multiprocessors = prop->multiProcessorCount;
     g_info.max_threads_per_block = prop->maxThreadsPerBlock;
 
+    // Validate GPU parameters using first GPU's optimal params
+    {
+        int blocks_per_sm = g_gpus[0].optimal_params.blocks_per_sm;
+        int threads_per_block = g_gpus[0].optimal_params.threads_per_block;
+        int keys_per_thread = g_gpus[0].optimal_params.keys_per_thread;
+
+        // Allow runtime override for testing (checked before validation)
+        {
+            const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v >= 1 && v <= 64) {  // Allow low values for testing validation
+                    blocks_per_sm = v;
+                }
+            }
+            env = getenv("KEYHUNT_GPU_THREADS_PER_BLOCK");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v > 0 && v <= 4096) {  // Allow invalid values for testing validation
+                    threads_per_block = v;
+                }
+            }
+            env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v >= 64 && v <= 8192) {  // Allow testing range
+                    keys_per_thread = v;
+                }
+            }
+        }
+
+        validate_gpu_parameters(
+            &blocks_per_sm,
+            &threads_per_block,
+            &keys_per_thread,
+            &g_info,
+            true  // auto_correct enabled
+        );
+
+        // Update optimal params if validation corrected them
+        g_gpus[0].optimal_params.blocks_per_sm = blocks_per_sm;
+        g_gpus[0].optimal_params.threads_per_block = threads_per_block;
+        g_gpus[0].optimal_params.keys_per_thread = keys_per_thread;
+    }
+
     if (info) *info = g_info;
 
     g_available = 1;
@@ -2245,12 +2293,18 @@ int gpu_full_search(const gpu_search_config_t *config) {
 
         // Allow runtime override
         int blocks_per_sm = params->blocks_per_sm;
+        int threads_per_block = params->threads_per_block;
         uint64_t keys_per_thread = params->keys_per_thread;
         {
             const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
             if (env && *env) {
                 int v = atoi(env);
                 if (v >= 4 && v <= 64) blocks_per_sm = v;
+            }
+            env = getenv("KEYHUNT_GPU_THREADS_PER_BLOCK");
+            if (env && *env) {
+                int v = atoi(env);
+                if (v > 0 && v <= 4096) threads_per_block = v;
             }
             env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
             if (env && *env) {
@@ -2260,7 +2314,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
         }
 
         int blocks = ctx->props.multiProcessorCount * blocks_per_sm;
-        uint64_t keys_per_launch = (uint64_t)blocks * params->threads_per_block * keys_per_thread;
+        uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
         total_keys_per_round += keys_per_launch;
 
         // Initialize streams for this GPU
@@ -2338,6 +2392,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
 
             // Use architecture-optimized parameters (with optional override)
             int blocks_per_sm = params->blocks_per_sm;
+            int threads_per_block = params->threads_per_block;
             uint64_t keys_per_thread = params->keys_per_thread;
             {
                 const char *env = getenv("KEYHUNT_GPU_BLOCKS_PER_SM");
@@ -2345,14 +2400,17 @@ int gpu_full_search(const gpu_search_config_t *config) {
                     int v = atoi(env);
                     if (v >= 4 && v <= 64) blocks_per_sm = v;
                 }
+                env = getenv("KEYHUNT_GPU_THREADS_PER_BLOCK");
+                if (env && *env) {
+                    int v = atoi(env);
+                    if (v > 0 && v <= 4096) threads_per_block = v;
+                }
                 env = getenv("KEYHUNT_GPU_KEYS_PER_THREAD");
                 if (env && *env) {
                     unsigned long long v = strtoull(env, NULL, 10);
                     if (v >= 64 && v <= 65536) keys_per_thread = (uint64_t)v;
                 }
             }
-
-            int threads_per_block = params->threads_per_block;
             int blocks = ctx->props.multiProcessorCount * blocks_per_sm;
             uint64_t keys_per_launch = (uint64_t)blocks * threads_per_block * keys_per_thread;
 
