@@ -4090,35 +4090,69 @@ int main(int argc, char **argv)	{
 			}
 		}
 		
-		if(!FLAGREADEDFILE1 || !FLAGREADEDFILE2 || !FLAGREADEDFILE4)	{
-			output_success("Making checkums .. ");
-			fflush(stdout);
-		}	
 			if(!FLAGREADEDFILE1)	{
+				printf("\r[BSGS] ");
+				output_progress_bar(0.0, 25);
+				printf(" computing bloom_bP checksums: 0/256 (0.0%%)   ");
+				fflush(stdout);
 				for(i = 0; i < 256 ; i++)	{
 					sha256((uint8_t*)bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes,(uint8_t*) bloom_bP_checksums[i].data);
 					memcpy(bloom_bP_checksums[i].backup,bloom_bP_checksums[i].data,32);
+					if ((i + 1) % 16 == 0 || i == 255) {
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[BSGS] ");
+						output_progress_bar(percent, 25);
+						printf(" computing bloom_bP checksums: %" PRIu64 "/256 (%.1f%%)   ", i + 1, percent);
+						fflush(stdout);
+					}
 				}
-				printf(".");
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" computing bloom_bP checksums: 256/256 (100.0%%) ✓\n");
+				fflush(stdout);
 			}
 			if(!FLAGREADEDFILE2)	{
+				printf("\r[BSGS] ");
+				output_progress_bar(0.0, 25);
+				printf(" computing bloom_bPx2nd checksums: 0/256 (0.0%%)   ");
+				fflush(stdout);
 				for(i = 0; i < 256 ; i++)	{
 					sha256((uint8_t*)bloom_bPx2nd[i].orig.bf, bloom_bPx2nd[i].orig.bytes,(uint8_t*) bloom_bPx2nd_checksums[i].data);
 					memcpy(bloom_bPx2nd_checksums[i].backup,bloom_bPx2nd_checksums[i].data,32);
+					if ((i + 1) % 16 == 0 || i == 255) {
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[BSGS] ");
+						output_progress_bar(percent, 25);
+						printf(" computing bloom_bPx2nd checksums: %" PRIu64 "/256 (%.1f%%)   ", i + 1, percent);
+						fflush(stdout);
+					}
 				}
-				printf(".");
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" computing bloom_bPx2nd checksums: 256/256 (100.0%%) ✓\n");
+				fflush(stdout);
 			}
 			if(!FLAGREADEDFILE4)	{
+				printf("\r[BSGS] ");
+				output_progress_bar(0.0, 25);
+				printf(" computing bloom_bPx3rd checksums: 0/256 (0.0%%)   ");
+				fflush(stdout);
 				for(i = 0; i < 256 ; i++)	{
 					sha256((uint8_t*)bloom_bPx3rd[i].orig.bf, bloom_bPx3rd[i].orig.bytes,(uint8_t*) bloom_bPx3rd_checksums[i].data);
 					memcpy(bloom_bPx3rd_checksums[i].backup,bloom_bPx3rd_checksums[i].data,32);
+					if ((i + 1) % 16 == 0 || i == 255) {
+						double percent = ((double)(i + 1) / 256.0) * 100.0;
+						printf("\r[BSGS] ");
+						output_progress_bar(percent, 25);
+						printf(" computing bloom_bPx3rd checksums: %" PRIu64 "/256 (%.1f%%)   ", i + 1, percent);
+						fflush(stdout);
+					}
 				}
-				printf(".");
-			}
-		if(!FLAGREADEDFILE1 || !FLAGREADEDFILE2 || !FLAGREADEDFILE4)	{
-			printf(" done\n");
-			fflush(stdout);
-		}	
+				printf("\r[BSGS] ");
+				output_progress_bar(100.0, 25);
+				printf(" computing bloom_bPx3rd checksums: 256/256 (100.0%%) ✓\n");
+				fflush(stdout);
+			}	
 		if(!FLAGREADEDFILE3)	{
 			printf("\r[BSGS] ");
 			output_progress_bar(0.0, 25);
