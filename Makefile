@@ -224,6 +224,10 @@ $(OBJDIR)/bsgs/bsgs_ops.o: $(SRCDIR)/bsgs/bsgs_ops.cpp | directories
 $(OBJDIR)/bsgs/bsgs_fast.o: $(SRCDIR)/bsgs/bsgs_fast.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
 
+# Secp256k1 AVX2 optimizations
+$(OBJDIR)/secp256k1/IntMod.o: $(SRCDIR)/secp256k1/IntMod.cpp | directories
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
 # ============================================================================
 # Sanitizer Builds (Memory Safety Testing)
 # ============================================================================
