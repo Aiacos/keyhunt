@@ -16,6 +16,9 @@
 // Optimized hash functions (fully unrolled, register-only)
 #include "gpu_hash_optimized.cuh"
 
+// Parameter validation
+#include "../core/parameter_validator.h"
+
 // Use optimized hash functions
 #define USE_OPTIMIZED_HASH 1
 
@@ -1890,6 +1893,26 @@ int gpu_backend_init(gpu_backend_info_t *info) {
     g_info.compute_minor = prop->minor;
     g_info.multiprocessors = prop->multiProcessorCount;
     g_info.max_threads_per_block = prop->maxThreadsPerBlock;
+
+    // Validate GPU parameters using first GPU's optimal params
+    {
+        int blocks_per_sm = g_gpus[0].optimal_params.blocks_per_sm;
+        int threads_per_block = g_gpus[0].optimal_params.threads_per_block;
+        int keys_per_thread = g_gpus[0].optimal_params.keys_per_thread;
+
+        validate_gpu_parameters(
+            &blocks_per_sm,
+            &threads_per_block,
+            &keys_per_thread,
+            &g_info,
+            true  // auto_correct enabled
+        );
+
+        // Update optimal params if validation corrected them
+        g_gpus[0].optimal_params.blocks_per_sm = blocks_per_sm;
+        g_gpus[0].optimal_params.threads_per_block = threads_per_block;
+        g_gpus[0].optimal_params.keys_per_thread = keys_per_thread;
+    }
 
     if (info) *info = g_info;
 
