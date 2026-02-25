@@ -165,6 +165,9 @@ The tool operates in 6 distinct modes, each optimized for different search scena
 - `ripemd160_avx2.cpp`: **AVX2 8-way parallel (256-bit SIMD)** - 2× faster than SSE2
 - `ripemd160_avx512.cpp`: AVX-512 16-way parallel (512-bit SIMD) - cutting-edge CPUs
 - `sha256.cpp`, `sha256_sse.cpp`: SHA256 implementations (SHA-NI available)
+- `sha512.cpp`: SHA512 reference implementation
+- `sha512_avx2.cpp`: AVX2 4-way parallel (256-bit SIMD, 64-bit operations)
+- `sha512_avx512.cpp`: AVX-512 8-way parallel (512-bit SIMD) - for HD wallet key derivation
 
 **Runtime CPU feature detection**: The program automatically selects the best implementation based on detected CPU features. See `g_avx2_available` in keyhunt.cpp:66.
 
