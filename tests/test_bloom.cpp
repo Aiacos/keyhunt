@@ -12,6 +12,7 @@
 
 extern "C" {
 #include "bloom/bloom.h"
+#include "bloom/bloom_simd.h"
 }
 
 #include <time.h>
@@ -328,6 +329,176 @@ TEST(bloom_duplicate_add) {
 }
 
 /* ============================================================================
+ * SIMD Batch Check Tests
+ * ============================================================================ */
+
+TEST(bloom_simd_batch_various_sizes) {
+    struct bloom_simd bf;
+    bloom_simd_init(&bf, 10000, 0.01);
+
+    /* Prepare test data: 20-byte hashes */
+    const int max_test_items = 1024;
+    uint8_t test_hashes[max_test_items][20];
+    const uint8_t *hash_ptrs[max_test_items];
+    uint8_t results[max_test_items];
+
+    /* Generate unique test hashes */
+    for (int i = 0; i < max_test_items; i++) {
+        for (int j = 0; j < 20; j++) {
+            test_hashes[i][j] = (uint8_t)((i * 37 + j * 17) & 0xFF);
+        }
+        hash_ptrs[i] = test_hashes[i];
+    }
+
+    /* Add first half to bloom filter */
+    const int num_inserted = max_test_items / 2;
+    for (int i = 0; i < num_inserted; i++) {
+        bloom_simd_add(&bf, test_hashes[i], 20);
+    }
+
+    /* Test various batch sizes */
+    int test_sizes[] = {1, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+    int num_sizes = sizeof(test_sizes) / sizeof(test_sizes[0]);
+
+    for (int s = 0; s < num_sizes; s++) {
+        int batch_size = test_sizes[s];
+        if (batch_size > max_test_items) continue;
+
+        /* Clear results */
+        memset(results, 0, sizeof(results));
+
+        /* Check batch */
+        bloom_simd_check_rmd160_batch(&bf, hash_ptrs, batch_size, results);
+
+        /* Verify results for inserted items (first half) */
+        int correct_positives = 0;
+        for (int i = 0; i < batch_size && i < num_inserted; i++) {
+            if (results[i] == 1) {
+                correct_positives++;
+            }
+        }
+
+        /* All inserted items should be found (no false negatives) */
+        int expected_positives = (batch_size < num_inserted) ? batch_size : num_inserted;
+        ASSERT_EQ(expected_positives, correct_positives);
+
+        /* Note: We don't check false positive rate here as it varies with batch size
+         * and hash generation. The bloom_simd_batch_correctness test validates FP rate. */
+    }
+
+    bloom_simd_free(&bf);
+}
+
+TEST(bloom_simd_batch_edge_cases) {
+    struct bloom_simd bf;
+    bloom_simd_init(&bf, 1000, 0.01);
+
+    /* Test single item batch */
+    uint8_t hash1[20] = {0x01, 0x02, 0x03, 0x04, 0x05,
+                         0x06, 0x07, 0x08, 0x09, 0x0A,
+                         0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+                         0x10, 0x11, 0x12, 0x13, 0x14};
+    const uint8_t *hash_ptr = hash1;
+    uint8_t result;
+
+    bloom_simd_add(&bf, hash1, 20);
+    bloom_simd_check_rmd160_batch(&bf, &hash_ptr, 1, &result);
+    ASSERT_EQ(1, result);
+
+    /* Test max batch size (BLOOM_BATCH_MAX = 1024) */
+    const int max_batch = 1024;
+    uint8_t hashes[max_batch][20];
+    const uint8_t *hash_ptrs[max_batch];
+    uint8_t results[max_batch];
+
+    for (int i = 0; i < max_batch; i++) {
+        for (int j = 0; j < 20; j++) {
+            hashes[i][j] = (uint8_t)((i * 3 + j) & 0xFF);
+        }
+        hash_ptrs[i] = hashes[i];
+        bloom_simd_add(&bf, hashes[i], 20);
+    }
+
+    memset(results, 0, sizeof(results));
+    bloom_simd_check_rmd160_batch(&bf, hash_ptrs, max_batch, results);
+
+    /* All items should be found */
+    int found = 0;
+    for (int i = 0; i < max_batch; i++) {
+        if (results[i] == 1) {
+            found++;
+        }
+    }
+    ASSERT_EQ(max_batch, found);
+
+    bloom_simd_free(&bf);
+}
+
+TEST(bloom_simd_batch_correctness) {
+    struct bloom_simd bf;
+    bloom_simd_init(&bf, 5000, 0.01);
+
+    /* Create distinct sets of inserted and not-inserted hashes */
+    const int batch_size = 100;
+    uint8_t inserted_hashes[batch_size][20];
+    uint8_t not_inserted_hashes[batch_size][20];
+    const uint8_t *hash_ptrs[batch_size];
+    uint8_t results[batch_size];
+
+    /* Generate and insert first set */
+    for (int i = 0; i < batch_size; i++) {
+        for (int j = 0; j < 20; j++) {
+            inserted_hashes[i][j] = (uint8_t)((i * 5 + j * 7) & 0xFF);
+        }
+        bloom_simd_add(&bf, inserted_hashes[i], 20);
+    }
+
+    /* Generate second set (NOT inserted) */
+    for (int i = 0; i < batch_size; i++) {
+        for (int j = 0; j < 20; j++) {
+            not_inserted_hashes[i][j] = (uint8_t)((i * 11 + j * 13 + 128) & 0xFF);
+        }
+    }
+
+    /* Batch check inserted hashes - all should be found */
+    for (int i = 0; i < batch_size; i++) {
+        hash_ptrs[i] = inserted_hashes[i];
+    }
+    memset(results, 0, sizeof(results));
+    bloom_simd_check_rmd160_batch(&bf, hash_ptrs, batch_size, results);
+
+    int found = 0;
+    for (int i = 0; i < batch_size; i++) {
+        if (results[i] == 1) {
+            found++;
+        }
+    }
+    /* No false negatives allowed */
+    ASSERT_EQ(batch_size, found);
+
+    /* Batch check not-inserted hashes - some may be false positives */
+    for (int i = 0; i < batch_size; i++) {
+        hash_ptrs[i] = not_inserted_hashes[i];
+    }
+    memset(results, 0, sizeof(results));
+    bloom_simd_check_rmd160_batch(&bf, hash_ptrs, batch_size, results);
+
+    int false_positives = 0;
+    for (int i = 0; i < batch_size; i++) {
+        if (results[i] == 1) {
+            false_positives++;
+        }
+    }
+
+    /* False positive rate should be within reasonable bounds */
+    double fp_rate = (double)false_positives / batch_size;
+    printf("\n    (Batch FP rate: %.4f, target: 0.01, max: 0.05)\n", fp_rate);
+    ASSERT_TRUE(fp_rate <= 0.05);
+
+    bloom_simd_free(&bf);
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -366,6 +537,11 @@ int run_bloom_tests(void) {
     RUN_TEST(bloom_empty_key);
     RUN_TEST(bloom_single_byte_key);
     RUN_TEST(bloom_duplicate_add);
+
+    TEST_SECTION("SIMD Batch Operations");
+    RUN_TEST(bloom_simd_batch_various_sizes);
+    RUN_TEST(bloom_simd_batch_edge_cases);
+    RUN_TEST(bloom_simd_batch_correctness);
 
     return TEST_RESULTS();
 }
