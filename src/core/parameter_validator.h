@@ -100,6 +100,16 @@ bool validate_all_parameters(
     bool auto_correct       // if true, apply corrections automatically
 );
 
+// Comprehensive GPU parameter validation (all at once)
+// Returns: true if all GPU parameters are safe to use
+bool validate_gpu_parameters(
+    int *blocks_per_sm,         // in/out: may be corrected
+    int *threads_per_block,     // in/out: may be corrected
+    int *keys_per_thread,       // in/out: may be corrected
+    const struct gpu_backend_info_t *gpu_info,
+    bool auto_correct           // if true, apply corrections automatically
+);
+
 // Calculate recommended BSGS parameters for target memory usage
 void recommend_bsgs_params(
     const system_info_t *sysinfo,

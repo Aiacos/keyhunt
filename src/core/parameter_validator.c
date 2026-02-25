@@ -834,6 +834,62 @@ bool validate_all_parameters(
     return all_safe;
 }
 
+bool validate_gpu_parameters(
+    int *blocks_per_sm,
+    int *threads_per_block,
+    int *keys_per_thread,
+    const struct gpu_backend_info_t *gpu_info,
+    bool auto_correct
+) {
+    param_validation_result_t result;
+    bool all_safe = true;
+
+    printf("\n[+] Validating GPU parameters...\n");
+    fflush(stdout);
+
+    // Validate blocks per SM
+    int validated_blocks = validate_blocks_per_sm(*blocks_per_sm, gpu_info, &result);
+    if (auto_correct && result.applied_correction) {
+        *blocks_per_sm = validated_blocks;
+    }
+    print_validation_result(&result, "Blocks per SM");
+    fflush(stdout);
+    if (result.status == PARAM_WARNING || result.status == PARAM_CORRECTED) {
+        all_safe = false;
+    }
+
+    // Validate threads per block
+    int validated_threads = validate_threads_per_block(*threads_per_block, gpu_info, &result);
+    if (auto_correct && result.applied_correction) {
+        *threads_per_block = validated_threads;
+    }
+    print_validation_result(&result, "Threads per Block");
+    fflush(stdout);
+    if (result.status == PARAM_WARNING || result.status == PARAM_CORRECTED) {
+        all_safe = false;
+    }
+
+    // Validate keys per thread
+    int validated_keys = validate_keys_per_thread(*keys_per_thread, gpu_info, &result);
+    if (auto_correct && result.applied_correction) {
+        *keys_per_thread = validated_keys;
+    }
+    print_validation_result(&result, "Keys per Thread");
+    fflush(stdout);
+    if (result.status == PARAM_WARNING || result.status == PARAM_CORRECTED) {
+        all_safe = false;
+    }
+
+    if (all_safe) {
+        printf("%s[✓] All GPU parameters validated successfully%s\n", COLOR_GREEN, COLOR_RESET);
+    } else {
+        printf("%s[!] Some GPU parameters were adjusted for safety%s\n", COLOR_YELLOW, COLOR_RESET);
+    }
+    fflush(stdout);
+
+    return all_safe;
+}
+
 void recommend_bsgs_params(
     const system_info_t *sysinfo,
     uint64_t target_ram_mb,
