@@ -401,4 +401,12 @@ benchmark_intgroup: directories $(SECP256K1_OBJS)
 	@echo "  ./benchmark_intgroup"
 	@echo ""
 
+# IntGroup AVX2 unit tests
+test_intgroup_avx2: directories $(SECP256K1_OBJS)
+	$(CXX) $(CXXFLAGS) -mavx2 tests/test_intgroup_avx2.cpp $(SECP256K1_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+	@echo ""
+	@echo "IntGroup AVX2 test suite built successfully. Run with:"
+	@echo "  ./test_intgroup_avx2"
+	@echo ""
+
 .PHONY: fuzz fuzz_afl
