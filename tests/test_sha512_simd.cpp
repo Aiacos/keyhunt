@@ -6,6 +6,11 @@
  * - Correctness vs scalar implementation
  * - Known test vectors (NIST/FIPS)
  * - Parallel processing (4-way AVX2, 8-way AVX-512)
+ *
+ * IMPORTANT: The SIMD functions (sha512avx2_128, sha512avx512_128) are raw
+ * SHA-512 compression functions that process pre-padded 128-byte blocks.
+ * The scalar sha512() function handles padding internally. Therefore, all
+ * SIMD test inputs must be properly padded before comparison with scalar.
  */
 
 #include "test_framework.h"
@@ -14,6 +19,25 @@
 #include "hash/sha512_avx512.h"
 #include <cstring>  /* memcmp, memset */
 #include <cstdio>   /* printf */
+
+/* ============================================================================
+ * SHA-512 Padding Helper
+ *
+ * SIMD hash functions are compression functions - they process raw 128-byte
+ * blocks. To compare against the scalar sha512() (which pads internally),
+ * we must pre-pad inputs using SHA-512 padding rules:
+ *   [message] [0x80] [zeros] [128-bit big-endian bit length]
+ * ============================================================================ */
+
+static void sha512_pad_block(uint8_t block[128], const uint8_t *msg, size_t len) {
+    memset(block, 0, 128);
+    if (len > 0) memcpy(block, msg, len);
+    block[len] = 0x80;
+    /* Write message length in bits as big-endian uint64 at offset 120 */
+    uint64_t bit_len = (uint64_t)len * 8;
+    for (int i = 0; i < 8; i++)
+        block[120 + i] = (uint8_t)(bit_len >> (56 - i * 8));
+}
 
 /* ============================================================================
  * Test Vectors - NIST SHA-512 Test Vectors
@@ -51,15 +75,6 @@ static const uint8_t test_expected_448[64] = {
     0x31, 0xad, 0x85, 0xc7, 0xa7, 0x1d, 0xd7, 0x03, 0x54, 0xec, 0x63, 0x12,
     0x38, 0xca, 0x34, 0x45
 };
-
-/* Helper function to print hash for debugging */
-static void print_hash(const char *label, const uint8_t *hash, size_t len) {
-    printf("    %s: ", label);
-    for (size_t i = 0; i < len; i++) {
-        printf("%02x", hash[i]);
-    }
-    printf("\n");
-}
 
 /* ============================================================================
  * CPU Feature Detection Tests
@@ -102,64 +117,34 @@ TEST(sha512_scalar_448) {
 }
 
 /* ============================================================================
- * AVX2 Tests (4-way parallel)
- * Test suite: test_sha512_avx2, test_sha512_avx512
+ * AVX2 Tests (4-way parallel, 8 hashes via 2x4-way)
  * ============================================================================ */
 
 TEST(sha512_avx2_basic) {
     if (!sha512_avx2_available()) {
-        /* Skip test if AVX2 not supported */
         return;
     }
 
-    /* Prepare 4 copies of "abc" padded to 128 bytes (SHA-512 block size) */
-    uint8_t input0[128], input1[128], input2[128], input3[128];
-    uint8_t digest0[64], digest1[64], digest2[64], digest3[64];
+    uint8_t input[8][128];
+    uint8_t digest[8][64];
     uint8_t scalar_digest[64];
 
-    /* Initialize inputs with test data */
-    memset(input0, 0, 128);
-    memset(input1, 0, 128);
-    memset(input2, 0, 128);
-    memset(input3, 0, 128);
-
-    memcpy(input0, test_input_abc, 3);
-    memcpy(input1, test_input_abc, 3);
-    memcpy(input2, test_input_abc, 3);
-    memcpy(input3, test_input_abc, 3);
-
-    /* Compute with AVX2 (8-way parallel from sha512.h declaration) */
-    /* Note: sha512avx2_128 takes 8 inputs as per sha512.h */
-    uint8_t input4[128], input5[128], input6[128], input7[128];
-    uint8_t digest4[64], digest5[64], digest6[64], digest7[64];
-
-    memset(input4, 0, 128);
-    memset(input5, 0, 128);
-    memset(input6, 0, 128);
-    memset(input7, 0, 128);
-
-    memcpy(input4, test_input_abc, 3);
-    memcpy(input5, test_input_abc, 3);
-    memcpy(input6, test_input_abc, 3);
-    memcpy(input7, test_input_abc, 3);
+    /* Pre-pad all inputs with SHA-512 padding for "abc" */
+    for (int i = 0; i < 8; i++)
+        sha512_pad_block(input[i], test_input_abc, 3);
 
     sha512avx2_128(
-        input0, input1, input2, input3, input4, input5, input6, input7,
-        digest0, digest1, digest2, digest3, digest4, digest5, digest6, digest7
+        input[0], input[1], input[2], input[3],
+        input[4], input[5], input[6], input[7],
+        digest[0], digest[1], digest[2], digest[3],
+        digest[4], digest[5], digest[6], digest[7]
     );
 
-    /* Compute with scalar implementation for comparison */
     sha512((unsigned char*)test_input_abc, 3, scalar_digest);
 
-    /* Verify all 8 digests match the scalar result */
-    ASSERT_MEM_EQ(scalar_digest, digest0, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest1, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest2, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest3, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest4, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest5, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest6, 64);
-    ASSERT_MEM_EQ(scalar_digest, digest7, 64);
+    for (int i = 0; i < 8; i++) {
+        ASSERT_MEM_EQ(scalar_digest, digest[i], 64);
+    }
 }
 
 TEST(sha512_avx2_empty) {
@@ -167,30 +152,23 @@ TEST(sha512_avx2_empty) {
         return;
     }
 
-    uint8_t input0[128], input1[128], input2[128], input3[128];
-    uint8_t input4[128], input5[128], input6[128], input7[128];
-    uint8_t digest0[64], digest1[64], digest2[64], digest3[64];
-    uint8_t digest4[64], digest5[64], digest6[64], digest7[64];
+    uint8_t input[8][128];
+    uint8_t digest[8][64];
 
-    memset(input0, 0, 128);
-    memset(input1, 0, 128);
-    memset(input2, 0, 128);
-    memset(input3, 0, 128);
-    memset(input4, 0, 128);
-    memset(input5, 0, 128);
-    memset(input6, 0, 128);
-    memset(input7, 0, 128);
+    /* Pre-pad empty string inputs */
+    for (int i = 0; i < 8; i++)
+        sha512_pad_block(input[i], test_input_empty, 0);
 
     sha512avx2_128(
-        input0, input1, input2, input3, input4, input5, input6, input7,
-        digest0, digest1, digest2, digest3, digest4, digest5, digest6, digest7
+        input[0], input[1], input[2], input[3],
+        input[4], input[5], input[6], input[7],
+        digest[0], digest[1], digest[2], digest[3],
+        digest[4], digest[5], digest[6], digest[7]
     );
 
-    /* All digests should match empty string hash */
-    ASSERT_MEM_EQ(test_expected_empty, digest0, 64);
-    ASSERT_MEM_EQ(test_expected_empty, digest1, 64);
-    ASSERT_MEM_EQ(test_expected_empty, digest2, 64);
-    ASSERT_MEM_EQ(test_expected_empty, digest3, 64);
+    for (int i = 0; i < 8; i++) {
+        ASSERT_MEM_EQ(test_expected_empty, digest[i], 64);
+    }
 }
 
 TEST(sha512_avx2_mixed) {
@@ -198,60 +176,48 @@ TEST(sha512_avx2_mixed) {
         return;
     }
 
-    /* Test with different inputs in each lane */
-    uint8_t input0[128], input1[128], input2[128], input3[128];
-    uint8_t input4[128], input5[128], input6[128], input7[128];
-    uint8_t digest0[64], digest1[64], digest2[64], digest3[64];
-    uint8_t digest4[64], digest5[64], digest6[64], digest7[64];
+    uint8_t input[8][128];
+    uint8_t digest[8][64];
 
-    memset(input0, 0, 128);
-    memset(input1, 0, 128);
-    memset(input2, 0, 128);
-    memset(input3, 0, 128);
-    memset(input4, 0, 128);
-    memset(input5, 0, 128);
-    memset(input6, 0, 128);
-    memset(input7, 0, 128);
-
-    /* Lane 0: empty, Lane 1: "abc", Lane 2: empty, Lane 3: "abc" */
-    memcpy(input1, test_input_abc, 3);
-    memcpy(input3, test_input_abc, 3);
-    memcpy(input5, test_input_abc, 3);
-    memcpy(input7, test_input_abc, 3);
+    /* Alternating: even=empty, odd="abc" */
+    for (int i = 0; i < 8; i++) {
+        if (i % 2 == 0)
+            sha512_pad_block(input[i], test_input_empty, 0);
+        else
+            sha512_pad_block(input[i], test_input_abc, 3);
+    }
 
     sha512avx2_128(
-        input0, input1, input2, input3, input4, input5, input6, input7,
-        digest0, digest1, digest2, digest3, digest4, digest5, digest6, digest7
+        input[0], input[1], input[2], input[3],
+        input[4], input[5], input[6], input[7],
+        digest[0], digest[1], digest[2], digest[3],
+        digest[4], digest[5], digest[6], digest[7]
     );
 
-    /* Verify each lane independently */
-    ASSERT_MEM_EQ(test_expected_empty, digest0, 64);
-    ASSERT_MEM_EQ(test_expected_abc, digest1, 64);
-    ASSERT_MEM_EQ(test_expected_empty, digest2, 64);
-    ASSERT_MEM_EQ(test_expected_abc, digest3, 64);
+    for (int i = 0; i < 8; i++) {
+        if (i % 2 == 0)
+            ASSERT_MEM_EQ(test_expected_empty, digest[i], 64);
+        else
+            ASSERT_MEM_EQ(test_expected_abc, digest[i], 64);
+    }
 }
 
 /* ============================================================================
- * AVX-512 Tests (16-way parallel)
+ * AVX-512 Tests (8-way parallel, 16 hashes via 2x8-way)
  * ============================================================================ */
 
 TEST(sha512_avx512_basic) {
     if (!sha512_avx512_available()) {
-        /* Skip test if AVX-512 not supported */
         return;
     }
 
-    /* Prepare 16 copies of "abc" padded to 128 bytes */
     uint8_t input[16][128];
     uint8_t digest[16][64];
     uint8_t scalar_digest[64];
 
-    for (int i = 0; i < 16; i++) {
-        memset(input[i], 0, 128);
-        memcpy(input[i], test_input_abc, 3);
-    }
+    for (int i = 0; i < 16; i++)
+        sha512_pad_block(input[i], test_input_abc, 3);
 
-    /* Compute with AVX-512 (16-way parallel) */
     sha512avx512_128(
         input[0],  input[1],  input[2],  input[3],
         input[4],  input[5],  input[6],  input[7],
@@ -263,10 +229,8 @@ TEST(sha512_avx512_basic) {
         digest[12], digest[13], digest[14], digest[15]
     );
 
-    /* Compute with scalar implementation for comparison */
     sha512((unsigned char*)test_input_abc, 3, scalar_digest);
 
-    /* Verify all 16 digests match the scalar result */
     for (int i = 0; i < 16; i++) {
         ASSERT_MEM_EQ(scalar_digest, digest[i], 64);
     }
@@ -280,9 +244,8 @@ TEST(sha512_avx512_empty) {
     uint8_t input[16][128];
     uint8_t digest[16][64];
 
-    for (int i = 0; i < 16; i++) {
-        memset(input[i], 0, 128);
-    }
+    for (int i = 0; i < 16; i++)
+        sha512_pad_block(input[i], test_input_empty, 0);
 
     sha512avx512_128(
         input[0],  input[1],  input[2],  input[3],
@@ -295,7 +258,6 @@ TEST(sha512_avx512_empty) {
         digest[12], digest[13], digest[14], digest[15]
     );
 
-    /* All digests should match empty string hash */
     for (int i = 0; i < 16; i++) {
         ASSERT_MEM_EQ(test_expected_empty, digest[i], 64);
     }
@@ -306,15 +268,14 @@ TEST(sha512_avx512_mixed) {
         return;
     }
 
-    /* Test with alternating empty and "abc" inputs */
     uint8_t input[16][128];
     uint8_t digest[16][64];
 
     for (int i = 0; i < 16; i++) {
-        memset(input[i], 0, 128);
-        if (i % 2 == 1) {
-            memcpy(input[i], test_input_abc, 3);
-        }
+        if (i % 2 == 0)
+            sha512_pad_block(input[i], test_input_empty, 0);
+        else
+            sha512_pad_block(input[i], test_input_abc, 3);
     }
 
     sha512avx512_128(
@@ -328,13 +289,11 @@ TEST(sha512_avx512_mixed) {
         digest[12], digest[13], digest[14], digest[15]
     );
 
-    /* Verify alternating pattern */
     for (int i = 0; i < 16; i++) {
-        if (i % 2 == 0) {
+        if (i % 2 == 0)
             ASSERT_MEM_EQ(test_expected_empty, digest[i], 64);
-        } else {
+        else
             ASSERT_MEM_EQ(test_expected_abc, digest[i], 64);
-        }
     }
 }
 
@@ -344,13 +303,6 @@ TEST(sha512_avx512_mixed) {
 
 TEST(sha512_simd_consistency) {
     uint8_t scalar_digest[64];
-    uint8_t avx2_digest0[64], avx2_digest1[64], avx2_digest2[64], avx2_digest3[64];
-    uint8_t avx2_digest4[64], avx2_digest5[64], avx2_digest6[64], avx2_digest7[64];
-    uint8_t avx512_digest0[64];
-    uint8_t input[128];
-
-    memset(input, 0, 128);
-    memcpy(input, test_input_448, 56);
 
     /* Compute with scalar */
     sha512((unsigned char*)test_input_448, 56, scalar_digest);
@@ -361,19 +313,21 @@ TEST(sha512_simd_consistency) {
     /* Compute with AVX2 if available */
     if (sha512_avx2_available()) {
         uint8_t inputs[8][128];
-        for (int i = 0; i < 8; i++) {
-            memset(inputs[i], 0, 128);
-            memcpy(inputs[i], test_input_448, 56);
-        }
+        uint8_t digests[8][64];
+
+        for (int i = 0; i < 8; i++)
+            sha512_pad_block(inputs[i], test_input_448, 56);
 
         sha512avx2_128(
             inputs[0], inputs[1], inputs[2], inputs[3],
             inputs[4], inputs[5], inputs[6], inputs[7],
-            avx2_digest0, avx2_digest1, avx2_digest2, avx2_digest3,
-            avx2_digest4, avx2_digest5, avx2_digest6, avx2_digest7
+            digests[0], digests[1], digests[2], digests[3],
+            digests[4], digests[5], digests[6], digests[7]
         );
 
-        ASSERT_MEM_EQ(scalar_digest, avx2_digest0, 64);
+        for (int i = 0; i < 8; i++) {
+            ASSERT_MEM_EQ(scalar_digest, digests[i], 64);
+        }
     }
 
     /* Compute with AVX-512 if available */
@@ -381,10 +335,8 @@ TEST(sha512_simd_consistency) {
         uint8_t inputs[16][128];
         uint8_t digests[16][64];
 
-        for (int i = 0; i < 16; i++) {
-            memset(inputs[i], 0, 128);
-            memcpy(inputs[i], test_input_448, 56);
-        }
+        for (int i = 0; i < 16; i++)
+            sha512_pad_block(inputs[i], test_input_448, 56);
 
         sha512avx512_128(
             inputs[0],  inputs[1],  inputs[2],  inputs[3],
@@ -397,7 +349,9 @@ TEST(sha512_simd_consistency) {
             digests[12], digests[13], digests[14], digests[15]
         );
 
-        ASSERT_MEM_EQ(scalar_digest, digests[0], 64);
+        for (int i = 0; i < 16; i++) {
+            ASSERT_MEM_EQ(scalar_digest, digests[i], 64);
+        }
     }
 }
 

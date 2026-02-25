@@ -280,6 +280,16 @@ void sha512avx512_128(
     }
 }
 
+// Pad a message into a SHA-512 block (for messages <= 111 bytes)
+static void sha512_pad_block(uint8_t block[128], const char *msg, size_t len) {
+    memset(block, 0, 128);
+    if (len > 0) memcpy(block, msg, len);
+    block[len] = 0x80;
+    uint64_t bit_len = (uint64_t)len * 8;
+    for (int i = 0; i < 8; i++)
+        block[120 + i] = (uint8_t)(bit_len >> (56 - i * 8));
+}
+
 // Test function for AVX-512 SHA-512 implementation
 void sha512avx512_test(void) {
     if (!sha512_avx512_available()) {
@@ -287,29 +297,32 @@ void sha512avx512_test(void) {
         return;
     }
 
-    // Allocate test data (16 inputs of 128 bytes each)
+    const char *messages[16] = {
+        "Test message 01 for AVX-512 SHA-512",
+        "Test message 02 for AVX-512 SHA-512",
+        "Test message 03 for AVX-512 SHA-512",
+        "Test message 04 for AVX-512 SHA-512",
+        "Test message 05 for AVX-512 SHA-512",
+        "Test message 06 for AVX-512 SHA-512",
+        "Test message 07 for AVX-512 SHA-512",
+        "Test message 08 for AVX-512 SHA-512",
+        "Test message 09 for AVX-512 SHA-512",
+        "Test message 10 for AVX-512 SHA-512",
+        "Test message 11 for AVX-512 SHA-512",
+        "Test message 12 for AVX-512 SHA-512",
+        "Test message 13 for AVX-512 SHA-512",
+        "Test message 14 for AVX-512 SHA-512",
+        "Test message 15 for AVX-512 SHA-512",
+        "Test message 16 for AVX-512 SHA-512"
+    };
+
     uint8_t input[16][128];
     uint8_t hash_simd[16][64];
     uint8_t hash_scalar[16][64];
 
-    // Initialize test inputs with different messages
-    memset(input, 0, sizeof(input));
-    strncpy((char*)input[0],  "Test message 01 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[1],  "Test message 02 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[2],  "Test message 03 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[3],  "Test message 04 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[4],  "Test message 05 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[5],  "Test message 06 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[6],  "Test message 07 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[7],  "Test message 08 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[8],  "Test message 09 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[9],  "Test message 10 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[10], "Test message 11 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[11], "Test message 12 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[12], "Test message 13 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[13], "Test message 14 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[14], "Test message 15 for AVX-512 SHA-512", 127);
-    strncpy((char*)input[15], "Test message 16 for AVX-512 SHA-512", 127);
+    // Pre-pad inputs (SIMD processes raw 128-byte blocks, not padded messages)
+    for (int i = 0; i < 16; i++)
+        sha512_pad_block(input[i], messages[i], strlen(messages[i]));
 
     // Compute SIMD hashes (16-way parallel via 2x8-way)
     sha512avx512_128(
@@ -323,9 +336,9 @@ void sha512avx512_test(void) {
         hash_simd[12], hash_simd[13], hash_simd[14], hash_simd[15]
     );
 
-    // Compute scalar reference hashes
+    // Compute scalar reference hashes (sha512() handles padding internally)
     for (int i = 0; i < 16; i++) {
-        sha512(input[i], (int)strlen((char*)input[i]), hash_scalar[i]);
+        sha512((unsigned char *)messages[i], (int)strlen(messages[i]), hash_scalar[i]);
     }
 
     // Compare results
@@ -352,24 +365,24 @@ void sha512avx512_test(void) {
 
 // Stub functions for future implementation
 void sha512avx512(
-    uint64_t *i0, uint64_t *i1, uint64_t *i2, uint64_t *i3,
-    uint64_t *i4, uint64_t *i5, uint64_t *i6, uint64_t *i7,
-    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
-    uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7,
-    int length)
+    uint64_t * /*i0*/, uint64_t * /*i1*/, uint64_t * /*i2*/, uint64_t * /*i3*/,
+    uint64_t * /*i4*/, uint64_t * /*i5*/, uint64_t * /*i6*/, uint64_t * /*i7*/,
+    uint8_t * /*d0*/, uint8_t * /*d1*/, uint8_t * /*d2*/, uint8_t * /*d3*/,
+    uint8_t * /*d4*/, uint8_t * /*d5*/, uint8_t * /*d6*/, uint8_t * /*d7*/,
+    int /*length*/)
 {
     // TODO: Variable-length API (not required for current spec)
 }
 
 void sha512avx512_hmac(
-    uint8_t *key0, uint8_t *key1, uint8_t *key2, uint8_t *key3,
-    uint8_t *key4, uint8_t *key5, uint8_t *key6, uint8_t *key7,
-    int key_length,
-    uint8_t *msg0, uint8_t *msg1, uint8_t *msg2, uint8_t *msg3,
-    uint8_t *msg4, uint8_t *msg5, uint8_t *msg6, uint8_t *msg7,
-    int msg_length,
-    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
-    uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7)
+    uint8_t * /*key0*/, uint8_t * /*key1*/, uint8_t * /*key2*/, uint8_t * /*key3*/,
+    uint8_t * /*key4*/, uint8_t * /*key5*/, uint8_t * /*key6*/, uint8_t * /*key7*/,
+    int /*key_length*/,
+    uint8_t * /*msg0*/, uint8_t * /*msg1*/, uint8_t * /*msg2*/, uint8_t * /*msg3*/,
+    uint8_t * /*msg4*/, uint8_t * /*msg5*/, uint8_t * /*msg6*/, uint8_t * /*msg7*/,
+    int /*msg_length*/,
+    uint8_t * /*d0*/, uint8_t * /*d1*/, uint8_t * /*d2*/, uint8_t * /*d3*/,
+    uint8_t * /*d4*/, uint8_t * /*d5*/, uint8_t * /*d6*/, uint8_t * /*d7*/)
 {
     // TODO: HMAC variant (not required for current spec)
 }
