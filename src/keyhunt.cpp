@@ -3561,8 +3561,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_11_%" PRIu64 ".blm",bsgs_m);
 				fd_aux1 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux1 != NULL)	{
-					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
-					fflush(stdout);
+					output_success("Reading bloom filter from file %s\n",buffer_bloom_file);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux1);
@@ -3614,12 +3613,13 @@ int main(int argc, char **argv)	{
 								exit(EXIT_FAILURE);
 							}
 					}
-					if(i % 64 == 0 )	{
-						printf(".");
-						fflush(stdout);
-					}
+					double percent = ((double)(i + 1) / 256.0) * 100.0;
+					printf("\r[");
+					output_progress_bar(percent, 40);
+					printf("] %.1f%%", percent);
+					fflush(stdout);
 				}
-				printf(" Done!\n");
+				printf("\n");
 				fclose(fd_aux1);
 				memset(buffer_bloom_file,0,1024);
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_3_%" PRIu64 ".blm",bsgs_m);
@@ -3638,8 +3638,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_12_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
-					fflush(stdout);
+					output_success("Reading bloom filter from file %s\n",buffer_bloom_file);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
@@ -3684,20 +3683,21 @@ int main(int argc, char **argv)	{
 						exit(EXIT_FAILURE);
 					}
 						memset(rawvalue,0,32);
-						if(FLAGSKIPCHECKSUM == 0)	{								
+						if(FLAGSKIPCHECKSUM == 0)	{
 							sha256((uint8_t*)bloom_bPx2nd[i].orig.bf,bloom_bPx2nd[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bPx2nd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx2nd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
 								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 						}
 					}
-					if(i % 64 == 0)	{
-						printf(".");
-						fflush(stdout);
-					}
+					double percent = ((double)(i + 1) / 256.0) * 100.0;
+					printf("\r[");
+					output_progress_bar(percent, 40);
+					printf("] %.1f%%", percent);
+					fflush(stdout);
 				}
 				fclose(fd_aux2);
-				printf(" Done!\n");
+				printf("\n");
 				memset(buffer_bloom_file,0,1024);
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_5_%" PRIu64 ".blm",bsgs_m2);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
@@ -3772,8 +3772,7 @@ int main(int argc, char **argv)	{
 				snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_13_%" PRIu64 ".blm",bsgs_m3);
 				fd_aux2 = fopen(buffer_bloom_file,"rb");
 				if(fd_aux2 != NULL)	{
-					output_success("Reading bloom filter from file %s ",buffer_bloom_file);
-					fflush(stdout);
+					output_success("Reading bloom filter from file %s\n",buffer_bloom_file);
 					for(i = 0; i < 256;i++)	{
 						struct bloom tmp_bloom;
 						readed = fread(&tmp_bloom,sizeof(struct bloom),1,fd_aux2);
@@ -3818,20 +3817,21 @@ int main(int argc, char **argv)	{
 						exit(EXIT_FAILURE);
 					}
 						memset(rawvalue,0,32);
-						if(FLAGSKIPCHECKSUM == 0)	{							
+						if(FLAGSKIPCHECKSUM == 0)	{
 							sha256((uint8_t*)bloom_bPx3rd[i].orig.bf,bloom_bPx3rd[i].orig.bytes,(uint8_t*)rawvalue);
 							if(memcmp(bloom_bPx3rd_checksums[i].data,rawvalue,32) != 0 || memcmp(bloom_bPx3rd_checksums[i].backup,rawvalue,32) != 0 )	{		/* Verification */
 								output_error("Error checksum file mismatch! %s\n",buffer_bloom_file);
 								exit(EXIT_FAILURE);
 							}
 					}
-					if(i % 64 == 0)	{
-						printf(".");
-						fflush(stdout);
-					}
+					double percent = ((double)(i + 1) / 256.0) * 100.0;
+					printf("\r[");
+					output_progress_bar(percent, 40);
+					printf("] %.1f%%", percent);
+					fflush(stdout);
 				}
 				fclose(fd_aux2);
-				printf(" Done!\n");
+				printf("\n");
 				FLAGREADEDFILE4 = 1;
 			}
 			else	{
