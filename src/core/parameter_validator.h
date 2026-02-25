@@ -58,6 +58,18 @@ uint32_t validate_batch_size(
     param_validation_result_t *result
 );
 
+// GPU parameter validation functions
+// Forward declaration (gpu_backend.h types)
+struct gpu_backend_info_t;
+
+// Validate blocks per SM (streaming multiprocessor)
+// Returns: corrected blocks_per_sm value (may differ from input if invalid)
+int validate_blocks_per_sm(
+    int user_blocks_per_sm,
+    const struct gpu_backend_info_t *gpu_info,
+    param_validation_result_t *result
+);
+
 // Print validation result to user (with colors if supported)
 void print_validation_result(const param_validation_result_t *result, const char *param_name);
 
