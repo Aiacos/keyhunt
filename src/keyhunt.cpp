@@ -3722,13 +3722,32 @@ int main(int argc, char **argv)	{
 			snprintf(buffer_bloom_file,1024,"keyhunt_bsgs_2_%" PRIu64 ".tbl",bsgs_m3);
 			fd_aux3 = fopen(buffer_bloom_file,"rb");
 			if(fd_aux3 != NULL)	{
-				output_success("Reading bP Table from file %s .",buffer_bloom_file);
+				output_success("Reading bP Table from file %s\n",buffer_bloom_file);
 				fflush(stdout);
-				rsize = fread(bPtable,bytes,1,fd_aux3);
-				if(rsize != 1)	{
-					output_error("Error reading the file %s\n",buffer_bloom_file);
-					exit(EXIT_FAILURE);
+
+				// Read in chunks with progress bar
+				const size_t chunk_size = 10 * 1024 * 1024; // 10 MB chunks
+				uint64_t bytes_read = 0;
+				char *bPtable_ptr = (char*)bPtable;
+
+				while(bytes_read < bytes) {
+					size_t to_read = (bytes - bytes_read > chunk_size) ? chunk_size : (bytes - bytes_read);
+					rsize = fread(bPtable_ptr + bytes_read, 1, to_read, fd_aux3);
+					if(rsize != to_read) {
+						output_error("Error reading the file %s\n",buffer_bloom_file);
+						exit(EXIT_FAILURE);
+					}
+					bytes_read += rsize;
+
+					// Display progress bar
+					double percent = (double)bytes_read / (double)bytes * 100.0;
+					printf("\r  ");
+					output_progress_bar(percent, 40);
+					printf(" %.1f%%", percent);
+					fflush(stdout);
 				}
+				printf("\n");
+
 				rsize = fread(checksum,32,1,fd_aux3);
 				if(rsize != 1)	{
 					output_error("Error reading the file %s\n",buffer_bloom_file);
@@ -3741,7 +3760,7 @@ int main(int argc, char **argv)	{
 						exit(EXIT_FAILURE);
 					}
 				}
-				printf("... Done!\n");
+				output_success("bP Table loaded successfully\n");
 				fclose(fd_aux3);
 				FLAGREADEDFILE3 = 1;
 			}
