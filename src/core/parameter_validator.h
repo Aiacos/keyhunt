@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "sysinfo.h"
-#include "gpu_backend.h"
+#include "gpu/gpu_backend.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,14 +60,11 @@ uint32_t validate_batch_size(
 );
 
 // GPU parameter validation functions
-// Forward declaration (gpu_backend.h types)
-struct gpu_backend_info_t;
-
 // Validate blocks per SM (streaming multiprocessor)
 // Returns: corrected blocks_per_sm value (may differ from input if invalid)
 int validate_blocks_per_sm(
     int user_blocks_per_sm,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     param_validation_result_t *result
 );
 
@@ -75,7 +72,7 @@ int validate_blocks_per_sm(
 // Returns: corrected threads_per_block value (may differ from input if invalid)
 int validate_threads_per_block(
     int user_threads_per_block,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     param_validation_result_t *result
 );
 
@@ -83,7 +80,7 @@ int validate_threads_per_block(
 // Returns: corrected keys_per_thread value (may differ from input if invalid)
 int validate_keys_per_thread(
     int user_keys_per_thread,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     param_validation_result_t *result
 );
 
@@ -107,7 +104,7 @@ bool validate_gpu_parameters(
     int *blocks_per_sm,         // in/out: may be corrected
     int *threads_per_block,     // in/out: may be corrected
     int *keys_per_thread,       // in/out: may be corrected
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     bool auto_correct           // if true, apply corrections automatically
 );
 

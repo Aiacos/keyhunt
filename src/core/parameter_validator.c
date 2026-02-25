@@ -355,7 +355,7 @@ uint32_t validate_batch_size(
 
 int validate_blocks_per_sm(
     int user_blocks_per_sm,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     param_validation_result_t *result
 ) {
     memset(result, 0, sizeof(param_validation_result_t));
@@ -476,7 +476,7 @@ int validate_blocks_per_sm(
 
 int validate_threads_per_block(
     int user_threads_per_block,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     param_validation_result_t *result
 ) {
     memset(result, 0, sizeof(param_validation_result_t));
@@ -612,7 +612,7 @@ int validate_threads_per_block(
 
 int validate_keys_per_thread(
     int user_keys_per_thread,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     param_validation_result_t *result
 ) {
     memset(result, 0, sizeof(param_validation_result_t));
@@ -838,7 +838,7 @@ bool validate_gpu_parameters(
     int *blocks_per_sm,
     int *threads_per_block,
     int *keys_per_thread,
-    const struct gpu_backend_info_t *gpu_info,
+    const gpu_backend_info_t *gpu_info,
     bool auto_correct
 ) {
     param_validation_result_t result;
