@@ -102,6 +102,10 @@ typedef struct {
     char webhook_discord_url[512];   /* Discord webhook URL for notifications */
     char webhook_telegram_url[512];  /* Telegram bot token or webhook URL */
 
+    /* Progress reporting (opt-in) */
+    bool report_progress_enabled;    /* Enable progress reporting to community endpoint */
+    char report_progress_url[512];   /* URL endpoint for progress reporting */
+
     /* Runtime state (not saved to JSON) */
     bool is_server;
     bool server_also_worker;
