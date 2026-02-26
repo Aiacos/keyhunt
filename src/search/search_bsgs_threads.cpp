@@ -106,7 +106,6 @@ void *thread_process_bsgs(void *vargp)	{
 	Point base_point, point_aux, point_found, offset_point;
 	Point startP;
 	Point pp, pn;
-	Point pts[CPU_GRP_SIZE];
 
 	// Unsigned integer variables
 	uint32_t k, l, r, salir, thread_number, cycles;
@@ -182,64 +181,12 @@ platform_mutex_unlock(&bsgs_thread);
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint32_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
-					int i;
-					for(i = 0; i < hLength; i++) {
-						dx[i].ModSub(&GSn[i].x,&startP.x);
-					}
-					dx[i].ModSub(&GSn[i].x,&startP.x);  // For the first point
-					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
-					// Grouped ModInv
-					grp->ModInvOptimized();  // Use 8x unrolled version
-					/*
-					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
-					We compute key in the positive and negative way from the center of the group
-					*/
-					// center point
-					pts[CPU_GRP_SIZE / 2] = startP;
-					for(i = 0; i<hLength; i++) {
-						pp = startP;
-						pn = startP;
+					// Use optimized batch point computation
+					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
-						// P = startP + i*G
-						dy.ModSub(&GSn[i].y,&pp.y);
-
-						_s.ModMulK1(&dy,&dx[i]);        // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pp.x.ModNeg();
-						pp.x.ModAdd(&_p);
-						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
-						dyn.Set(&GSn[i].y);
-						dyn.ModNeg();
-						dyn.ModSub(&pn.y);
-
-						_s.ModMulK1(&dyn,&dx[i]);       // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pn.x.ModNeg();
-						pn.x.ModAdd(&_p);
-						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
-						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
-					}
-					// First point (startP - (GRP_SZIE/2)*G)
-					pn = startP;
-					dyn.Set(&GSn[i].y);
-					dyn.ModNeg();
-					dyn.ModSub(&pn.y);
-
-					_s.ModMulK1(&dyn,&dx[i]);
-					_p.ModSquareK1(&_s);
-
-					pn.x.ModNeg();
-					pn.x.ModAdd(&_p);
-					pn.x.ModSub(&GSn[i].x);
-
-					pts[0] = pn;
+					// Check all computed points against bloom filter
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.GetHi16Bytes(xpoint_raw);
+						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
@@ -275,7 +222,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[i + 1]);
+					_s.ModMulK1(&dy,&dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -323,7 +270,6 @@ void *thread_process_bsgs_random(void *vargp)	{
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 
 	Int dx[CPU_GRP_SIZE / 2 + 1];
-	Point pts[CPU_GRP_SIZE];
 
 	Int dy;
 	Int dyn;
@@ -398,74 +344,12 @@ platform_mutex_unlock(&bsgs_thread);
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint32_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
+					// Use optimized batch point computation
+					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
-					int i;
-					for(i = 0; i < hLength; i++) {
-						dx[i].ModSub(&GSn[i].x,&startP.x);
-					}
-					dx[i].ModSub(&GSn[i].x,&startP.x);  // For the first point
-					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
-
-					// Grouped ModInv
-					grp->ModInvOptimized();  // Use 8x unrolled version
-
-					/*
-					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
-					We compute key in the positive and negative way from the center of the group
-					*/
-
-					// center point
-					pts[CPU_GRP_SIZE / 2] = startP;
-
-					for(i = 0; i<hLength; i++) {
-
-						pp = startP;
-						pn = startP;
-
-						// P = startP + i*G
-						dy.ModSub(&GSn[i].y,&pp.y);
-
-						_s.ModMulK1(&dy,&dx[i]);        // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pp.x.ModNeg();
-						pp.x.ModAdd(&_p);
-						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-
-						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
-						dyn.Set(&GSn[i].y);
-						dyn.ModNeg();
-						dyn.ModSub(&pn.y);
-
-						_s.ModMulK1(&dyn,&dx[i]);       // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pn.x.ModNeg();
-						pn.x.ModAdd(&_p);
-						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
-						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
-
-					}
-
-					// First point (startP - (GRP_SZIE/2)*G)
-					pn = startP;
-					dyn.Set(&GSn[i].y);
-					dyn.ModNeg();
-					dyn.ModSub(&pn.y);
-
-					_s.ModMulK1(&dyn,&dx[i]);
-					_p.ModSquareK1(&_s);
-
-					pn.x.ModNeg();
-					pn.x.ModAdd(&_p);
-					pn.x.ModSub(&GSn[i].x);
-
-					pts[0] = pn;
-
+					// Check all computed points against bloom filter
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.GetHi16Bytes(xpoint_raw);
+						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
@@ -505,7 +389,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[i + 1]);
+					_s.ModMulK1(&dy,&dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -957,75 +841,12 @@ platform_mutex_unlock(&bsgs_thread);
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint32_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
+					// Use optimized batch point computation
+					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
-					int i;
-
-					for(i = 0; i < hLength; i++) {
-						dx[i].ModSub(&GSn[i].x,&startP.x);
-					}
-					dx[i].ModSub(&GSn[i].x,&startP.x);  // For the first point
-					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
-
-					// Grouped ModInv
-					grp->ModInvOptimized();  // Use 8x unrolled version
-
-					/*
-					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
-					We compute key in the positive and negative way from the center of the group
-					*/
-
-					// center point
-					pts[CPU_GRP_SIZE / 2] = startP;
-
-					for(i = 0; i<hLength; i++) {
-
-						pp = startP;
-						pn = startP;
-
-						// P = startP + i*G
-						dy.ModSub(&GSn[i].y,&pp.y);
-
-						_s.ModMulK1(&dy,&dx[i]);        // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pp.x.ModNeg();
-						pp.x.ModAdd(&_p);
-						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-
-						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
-						dyn.Set(&GSn[i].y);
-						dyn.ModNeg();
-						dyn.ModSub(&pn.y);
-
-						_s.ModMulK1(&dyn,&dx[i]);       // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pn.x.ModNeg();
-						pn.x.ModAdd(&_p);
-						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
-						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
-
-					}
-
-					// First point (startP - (GRP_SZIE/2)*G)
-					pn = startP;
-					dyn.Set(&GSn[i].y);
-					dyn.ModNeg();
-					dyn.ModSub(&pn.y);
-
-					_s.ModMulK1(&dyn,&dx[i]);
-					_p.ModSquareK1(&_s);
-
-					pn.x.ModNeg();
-					pn.x.ModAdd(&_p);
-					pn.x.ModSub(&GSn[i].x);
-
-					pts[0] = pn;
-
+					// Check all computed points against bloom filter
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.GetHi16Bytes(xpoint_raw);
+						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
@@ -1065,7 +886,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[i + 1]);
+					_s.ModMulK1(&dy,&dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -1112,7 +933,6 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 
 	Int dx[CPU_GRP_SIZE / 2 + 1];
-	Point pts[CPU_GRP_SIZE];
 
 	Int dy;
 	Int dyn;
@@ -1196,73 +1016,12 @@ platform_mutex_unlock(&bsgs_thread);
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint32_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
-					int i;
-					for(i = 0; i < hLength; i++) {
-						dx[i].ModSub(&GSn[i].x,&startP.x);
-					}
-					dx[i].ModSub(&GSn[i].x,&startP.x);  // For the first point
-					dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
+					// Use optimized batch point computation
+					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
-					// Grouped ModInv
-					grp->ModInvOptimized();  // Use 8x unrolled version
-
-					/*
-					We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
-					We compute key in the positive and negative way from the center of the group
-					*/
-
-					// center point
-					pts[CPU_GRP_SIZE / 2] = startP;
-
-					for(i = 0; i<hLength; i++) {
-
-						pp = startP;
-						pn = startP;
-
-						// P = startP + i*G
-						dy.ModSub(&GSn[i].y,&pp.y);
-
-						_s.ModMulK1(&dy,&dx[i]);        // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pp.x.ModNeg();
-						pp.x.ModAdd(&_p);
-						pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-
-						// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
-						dyn.Set(&GSn[i].y);
-						dyn.ModNeg();
-						dyn.ModSub(&pn.y);
-
-						_s.ModMulK1(&dyn,&dx[i]);       // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-						_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-						pn.x.ModNeg();
-						pn.x.ModAdd(&_p);
-						pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-						pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
-						pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
-
-					}
-
-					// First point (startP - (GRP_SZIE/2)*G)
-					pn = startP;
-					dyn.Set(&GSn[i].y);
-					dyn.ModNeg();
-					dyn.ModSub(&pn.y);
-
-					_s.ModMulK1(&dyn,&dx[i]);
-					_p.ModSquareK1(&_s);
-
-					pn.x.ModNeg();
-					pn.x.ModAdd(&_p);
-					pn.x.ModSub(&GSn[i].x);
-
-					pts[0] = pn;
-
+					// Check all computed points against bloom filter
 					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-						pts[i].x.GetHi16Bytes(xpoint_raw);
+						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
 							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
@@ -1302,7 +1061,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[i + 1]);
+					_s.ModMulK1(&dy,&dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -1348,7 +1107,6 @@ void *thread_process_bsgs_both(void *vargp)	{
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 
 	Int dx[CPU_GRP_SIZE / 2 + 1];
-	Point pts[CPU_GRP_SIZE];
 
 	Int dy;
 	Int dyn;
@@ -1460,73 +1218,12 @@ platform_mutex_unlock(&bsgs_thread);
 					startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 					uint32_t j = 0;
 					while( j < cycles && bsgs_found[k]== 0 )	{
-						int i;
-						for(i = 0; i < hLength; i++) {
-							dx[i].ModSub(&GSn[i].x,&startP.x);
-						}
-						dx[i].ModSub(&GSn[i].x,&startP.x);  // For the first point
-						dx[i+1].ModSub(&_2GSn.x,&startP.x); // For the next center point
+						// Use optimized batch point computation
+						bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
-						// Grouped ModInv
-						grp->ModInvOptimized();  // Use 8x unrolled version
-
-						/*
-						We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
-						We compute key in the positive and negative way from the center of the group
-						*/
-
-						// center point
-						pts[CPU_GRP_SIZE / 2] = startP;
-
-						for(i = 0; i<hLength; i++) {
-
-							pp = startP;
-							pn = startP;
-
-							// P = startP + i*G
-							dy.ModSub(&GSn[i].y,&pp.y);
-
-							_s.ModMulK1(&dy,&dx[i]);        // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-							_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-							pp.x.ModNeg();
-							pp.x.ModAdd(&_p);
-							pp.x.ModSub(&GSn[i].x);           // rx = pow2(s) - p1.x - p2.x;
-
-							// P = startP - i*G  , if (x,y) = i*G then (x,-y) = -i*G
-							dyn.Set(&GSn[i].y);
-							dyn.ModNeg();
-							dyn.ModSub(&pn.y);
-
-							_s.ModMulK1(&dyn,&dx[i]);       // s = (p2.y-p1.y)*inverse(p2.x-p1.x);
-							_p.ModSquareK1(&_s);            // _p = pow2(s)
-
-							pn.x.ModNeg();
-							pn.x.ModAdd(&_p);
-							pn.x.ModSub(&GSn[i].x);          // rx = pow2(s) - p1.x - p2.x;
-
-							pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
-							pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
-
-						}
-
-						// First point (startP - (GRP_SZIE/2)*G)
-						pn = startP;
-						dyn.Set(&GSn[i].y);
-						dyn.ModNeg();
-						dyn.ModSub(&pn.y);
-
-						_s.ModMulK1(&dyn,&dx[i]);
-						_p.ModSquareK1(&_s);
-
-						pn.x.ModNeg();
-						pn.x.ModAdd(&_p);
-						pn.x.ModSub(&GSn[i].x);
-
-						pts[0] = pn;
-
+						// Check all computed points against bloom filter
 						for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
-							pts[i].x.GetHi16Bytes(xpoint_raw);
+							batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 							r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 							if(r) {
 								r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
@@ -1566,7 +1263,7 @@ platform_mutex_unlock(&write_keys);
 						pp = startP;
 						dy.ModSub(&_2GSn.y,&pp.y);
 
-						_s.ModMulK1(&dy,&dx[i + 1]);
+						_s.ModMulK1(&dy,&dx[hLength + 1]);
 						_p.ModSquareK1(&_s);
 
 						pp.x.ModNeg();
