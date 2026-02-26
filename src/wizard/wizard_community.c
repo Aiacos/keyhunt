@@ -1129,3 +1129,100 @@ int wizard_load_local_progress_count(int puzzle_number) {
     fclose(f);
     return count;
 }
+
+/* ============================================================================
+ * Multi-Source Aggregation (Combined Community Progress)
+ * ============================================================================ */
+
+int wizard_community_fetch_all_sources(int puzzle_number,
+                                        community_range_t **btc_ranges,
+                                        int *btc_count,
+                                        privatekeys_progress_t *privatekeys_progress,
+                                        keyslol_progress_t *keyslol_progress) {
+    if (!btc_ranges || !btc_count || !privatekeys_progress || !keyslol_progress) {
+        return -1;
+    }
+
+    /* Initialize all outputs */
+    *btc_ranges = NULL;
+    *btc_count = 0;
+    memset(privatekeys_progress, 0, sizeof(*privatekeys_progress));
+    memset(keyslol_progress, 0, sizeof(*keyslol_progress));
+
+    int success_count = 0;
+
+    printf("[+] Fetching community progress from all sources...\n");
+    printf("    Puzzle #%d\n\n", puzzle_number);
+
+    /* Source 1: BTCPuzzle.info (scanned ranges) */
+    printf("[1/3] BTCPuzzle.info:\n");
+    int btc_result = wizard_community_fetch(puzzle_number, btc_ranges, btc_count);
+    if (btc_result == 0) {
+        printf("      ✓ Success: %d scanned ranges\n", *btc_count);
+        success_count++;
+    } else {
+        printf("      ✗ Failed to fetch\n");
+    }
+
+    /* Source 2: privatekeys.pw */
+    printf("[2/3] Privatekeys.pw:\n");
+    int pk_result = wizard_privatekeys_get_progress(puzzle_number, privatekeys_progress);
+    if (pk_result == 0 && privatekeys_progress->percent_scanned > 0.0) {
+        printf("      ✓ Success: %.6f%% scanned", privatekeys_progress->percent_scanned);
+        if (privatekeys_progress->keys_scanned > 0) {
+            printf(" (%llu keys)", (unsigned long long)privatekeys_progress->keys_scanned);
+        }
+        printf("\n");
+        success_count++;
+    } else {
+        printf("      ✗ No data available\n");
+    }
+
+    /* Source 3: Keys.lol */
+    printf("[3/3] Keys.lol:\n");
+    int kl_result = wizard_keyslol_get_progress(puzzle_number, keyslol_progress);
+    if (kl_result == 0 && keyslol_progress->percent_scanned > 0.0) {
+        printf("      ✓ Success: %.4f%% scanned", keyslol_progress->percent_scanned);
+        if (keyslol_progress->keys_scanned > 0) {
+            printf(" (%llu keys)", (unsigned long long)keyslol_progress->keys_scanned);
+        }
+        printf("\n");
+        success_count++;
+    } else {
+        printf("      ✗ No data available\n");
+    }
+
+    printf("\n");
+
+    /* Summary */
+    if (success_count == 0) {
+        printf("[-] No community progress data available from any source\n");
+        return -1;
+    }
+
+    printf("[+] Successfully fetched data from %d/%d sources\n", success_count, 3);
+
+    /* Calculate combined progress (use maximum of all sources) */
+    double max_percent = 0.0;
+    const char *max_source = NULL;
+
+    if (privatekeys_progress->percent_scanned > max_percent) {
+        max_percent = privatekeys_progress->percent_scanned;
+        max_source = "privatekeys.pw";
+    }
+
+    if (keyslol_progress->percent_scanned > max_percent) {
+        max_percent = keyslol_progress->percent_scanned;
+        max_source = "Keys.lol";
+    }
+
+    if (max_percent > 0.0) {
+        printf("[+] Combined progress: %.6f%% (highest from %s)\n", max_percent, max_source);
+    }
+
+    if (*btc_count > 0) {
+        printf("[+] Additional %d specific ranges to exclude from BTCPuzzle.info\n", *btc_count);
+    }
+
+    return 0;
+}

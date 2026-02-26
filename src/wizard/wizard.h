@@ -233,6 +233,21 @@ int wizard_community_merge_exclusions(const char *exclusion_file,
  */
 bool wizard_is_range_excluded(const char *exclusion_file, const char *range_start);
 
+/**
+ * Fetch and aggregate progress from all community sources
+ * @param puzzle_number Puzzle to check
+ * @param btc_ranges Output: BTCPuzzle.info ranges (caller must free)
+ * @param btc_count Output: number of BTCPuzzle.info ranges
+ * @param privatekeys_progress Output: privatekeys.pw progress data
+ * @param keyslol_progress Output: keys.lol progress data
+ * @return 0 on success (at least one source), -1 on complete failure
+ */
+int wizard_community_fetch_all_sources(int puzzle_number,
+                                        community_range_t **btc_ranges,
+                                        int *btc_count,
+                                        privatekeys_progress_t *privatekeys_progress,
+                                        keyslol_progress_t *keyslol_progress);
+
 /* ============================================================================
  * Privatekeys.pw Cloud Search Integration
  * ============================================================================ */
