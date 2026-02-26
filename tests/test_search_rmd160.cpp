@@ -679,6 +679,37 @@ TEST(rmd160_uncompressed_simple_no_matches) {
     ASSERT_EQ(0, writekey_called);
 }
 
+TEST(rmd160_uncompressed_simple_structure) {
+    /* Test that batch function accepts correct parameters */
+    setup_test_bloom();
+
+    /* Create batch of hashes [4][20] - 4 points */
+    char hashes[4][20];
+    memset(hashes, 0, sizeof(hashes));
+
+    Int key_mpz;
+    Int stride;
+    key_mpz.SetInt32(100);
+    stride.SetInt32(10);
+
+    writekey_called = 0;
+
+    /* Should execute without crashing */
+    int matches = rmd160_check_uncompressed_simple(
+        hashes,
+        0,
+        &key_mpz,
+        &stride,
+        &test_bloom,
+        test_targets,
+        1,
+        mock_writekey
+    );
+
+    /* No matches expected, but function should complete */
+    ASSERT_EQ(0, matches);
+}
+
 TEST(rmd160_uncompressed_simple_with_match) {
     setup_test_bloom();
 
@@ -720,6 +751,56 @@ TEST(rmd160_uncompressed_simple_with_match) {
 
     ASSERT_EQ(1, matches);
     ASSERT_EQ(1, writekey_called);
+}
+
+TEST(rmd160_uncompressed_simple_multiple_matches) {
+    setup_test_bloom();
+
+    /* Create batch with multiple matching hashes */
+    char hashes[4][20];
+    memset(hashes, 0, sizeof(hashes));
+
+    /* Create two target hashes */
+    unsigned char target1[20] = {
+        0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+        0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55
+    };
+    unsigned char target2[20] = {
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66
+    };
+
+    /* Place target hashes at point 1 and point 2 */
+    memcpy(hashes[1], target1, 20);
+    memcpy(hashes[2], target2, 20);
+
+    /* Set up targets in bloom and array */
+    memcpy(test_targets[0].address, target1, 20);
+    memcpy(test_targets[1].address, target2, 20);
+    bloom_ext_add(&test_bloom, (const char *)target1, 20);
+    bloom_ext_add(&test_bloom, (const char *)target2, 20);
+
+    Int key_mpz;
+    Int stride;
+    key_mpz.SetInt32(4500);
+    stride.SetInt32(5);
+
+    writekey_called = 0;
+
+    /* Check batch - should find 2 matches */
+    int matches = rmd160_check_uncompressed_simple(
+        hashes,
+        0,
+        &key_mpz,
+        &stride,
+        &test_bloom,
+        test_targets,
+        2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(2, matches);
+    ASSERT_EQ(2, writekey_called);
 }
 
 /* ============================================================================
@@ -770,6 +851,90 @@ TEST(rmd160_uncompressed_endomorphism_no_matches) {
     ASSERT_EQ(0, writekey_called);
 }
 
+TEST(rmd160_uncompressed_endomorphism_structure) {
+    /* Test that endomorphism batch function accepts correct parameters */
+    setup_test_bloom();
+    setup_test_secp();
+
+    /* Create batch of hashes [12][4][20] */
+    char hashes[12][4][20];
+    memset(hashes, 0, sizeof(hashes));
+
+    Int key_mpz, stride, lambda, lambda2;
+    key_mpz.SetInt32(100);
+    stride.SetInt32(10);
+    lambda.SetBase16((char *)"5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72");
+    lambda2.SetBase16((char *)"ac9c52b33fa3cf1f5ad9e3fd77ed9ba4a880b9fc8ec739c2e0cfc810b51283ce");
+
+    writekey_called = 0;
+
+    /* Should execute without crashing */
+    int matches = rmd160_check_uncompressed_endomorphism(
+        hashes,
+        0,
+        &key_mpz,
+        &stride,
+        test_secp,
+        &test_bloom,
+        test_targets,
+        1,
+        &lambda,
+        &lambda2,
+        mock_writekey
+    );
+
+    /* No matches expected, but function should complete */
+    ASSERT_EQ(0, matches);
+}
+
+TEST(rmd160_uncompressed_endomorphism_original_match) {
+    setup_test_bloom();
+    setup_test_secp();
+
+    /* Create batch of hashes */
+    char hashes[12][4][20];
+    memset(hashes, 0, sizeof(hashes));
+
+    /* Create a target hash for original point (variant 0, point 2) */
+    unsigned char target_hash[20] = {
+        0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+        0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77
+    };
+
+    /* Place at variant 0 (original), point 2 */
+    memcpy(hashes[0][2], target_hash, 20);
+
+    /* Set up target */
+    memcpy(test_targets[0].address, target_hash, 20);
+    bloom_ext_add(&test_bloom, (const char *)target_hash, 20);
+
+    Int key_mpz, stride, lambda, lambda2;
+    key_mpz.SetInt32(5500);
+    stride.SetInt32(1);
+    lambda.SetBase16((char *)"5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72");
+    lambda2.SetBase16((char *)"ac9c52b33fa3cf1f5ad9e3fd77ed9ba4a880b9fc8ec739c2e0cfc810b51283ce");
+
+    writekey_called = 0;
+
+    /* Check batch - should find 1 match */
+    int matches = rmd160_check_uncompressed_endomorphism(
+        hashes,
+        0,
+        &key_mpz,
+        &stride,
+        test_secp,
+        &test_bloom,
+        test_targets,
+        1,
+        &lambda,
+        &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(1, matches);
+    ASSERT_EQ(1, writekey_called);
+}
+
 TEST(rmd160_uncompressed_endomorphism_beta_match) {
     setup_test_bloom();
     setup_test_secp();
@@ -816,6 +981,118 @@ TEST(rmd160_uncompressed_endomorphism_beta_match) {
 
     ASSERT_EQ(1, matches);
     ASSERT_EQ(1, writekey_called);
+}
+
+TEST(rmd160_uncompressed_endomorphism_beta2_match) {
+    /* Test match on beta^2-transformed point */
+    setup_test_bloom();
+    setup_test_secp();
+
+    /* Create batch of hashes */
+    char hashes[12][4][20];
+    memset(hashes, 0, sizeof(hashes));
+
+    /* Create a target hash for beta2 point (variants 4-5 are beta2 with parities) */
+    unsigned char target_hash[20] = {
+        0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+        0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00
+    };
+
+    /* Place at variant 4 (beta2, positive Y), point 1 */
+    memcpy(hashes[4][1], target_hash, 20);
+
+    /* Set up target */
+    memcpy(test_targets[0].address, target_hash, 20);
+    bloom_ext_add(&test_bloom, (const char *)target_hash, 20);
+
+    Int key_mpz, stride, lambda, lambda2;
+    key_mpz.SetInt32(7000);
+    stride.SetInt32(1);
+    lambda.SetBase16((char *)"5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72");
+    lambda2.SetBase16((char *)"ac9c52b33fa3cf1f5ad9e3fd77ed9ba4a880b9fc8ec739c2e0cfc810b51283ce");
+
+    writekey_called = 0;
+
+    /* Check batch - should find 1 match */
+    int matches = rmd160_check_uncompressed_endomorphism(
+        hashes,
+        0,
+        &key_mpz,
+        &stride,
+        test_secp,
+        &test_bloom,
+        test_targets,
+        1,
+        &lambda,
+        &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(1, matches);
+    ASSERT_EQ(1, writekey_called);
+}
+
+TEST(rmd160_uncompressed_endomorphism_multiple_matches) {
+    /* Test multiple matches across different variants */
+    setup_test_bloom();
+    setup_test_secp();
+
+    /* Create batch of hashes */
+    char hashes[12][4][20];
+    memset(hashes, 0, sizeof(hashes));
+
+    /* Create three target hashes for different variants */
+    unsigned char target1[20] = {
+        0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE,
+        0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE
+    };
+    unsigned char target2[20] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+    };
+    unsigned char target3[20] = {
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33
+    };
+
+    /* Place at: variant 0 (original) point 1, variant 2 (beta pos) point 3, variant 5 (beta2 neg) point 2 */
+    memcpy(hashes[0][1], target1, 20);
+    memcpy(hashes[2][3], target2, 20);
+    memcpy(hashes[5][2], target3, 20);
+
+    /* Set up targets */
+    memcpy(test_targets[0].address, target1, 20);
+    memcpy(test_targets[1].address, target2, 20);
+    memcpy(test_targets[2].address, target3, 20);
+    bloom_ext_add(&test_bloom, (const char *)target1, 20);
+    bloom_ext_add(&test_bloom, (const char *)target2, 20);
+    bloom_ext_add(&test_bloom, (const char *)target3, 20);
+
+    Int key_mpz, stride, lambda, lambda2;
+    key_mpz.SetInt32(7500);
+    stride.SetInt32(1);
+    lambda.SetBase16((char *)"5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72");
+    lambda2.SetBase16((char *)"ac9c52b33fa3cf1f5ad9e3fd77ed9ba4a880b9fc8ec739c2e0cfc810b51283ce");
+
+    writekey_called = 0;
+
+    /* Check batch - should find 3 matches */
+    int matches = rmd160_check_uncompressed_endomorphism(
+        hashes,
+        0,
+        &key_mpz,
+        &stride,
+        test_secp,
+        &test_bloom,
+        test_targets,
+        3,
+        &lambda,
+        &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(3, matches);
+    ASSERT_EQ(3, writekey_called);
 }
 
 /* ============================================================================
@@ -942,11 +1219,17 @@ int run_search_rmd160_tests(void) {
 
     TEST_SECTION("Uncompressed Mode - Simple");
     RUN_TEST(rmd160_uncompressed_simple_no_matches);
+    RUN_TEST(rmd160_uncompressed_simple_structure);
     RUN_TEST(rmd160_uncompressed_simple_with_match);
+    RUN_TEST(rmd160_uncompressed_simple_multiple_matches);
 
     TEST_SECTION("Uncompressed Mode - Endomorphism");
     RUN_TEST(rmd160_uncompressed_endomorphism_no_matches);
+    RUN_TEST(rmd160_uncompressed_endomorphism_structure);
+    RUN_TEST(rmd160_uncompressed_endomorphism_original_match);
     RUN_TEST(rmd160_uncompressed_endomorphism_beta_match);
+    RUN_TEST(rmd160_uncompressed_endomorphism_beta2_match);
+    RUN_TEST(rmd160_uncompressed_endomorphism_multiple_matches);
 
     TEST_SECTION("Edge Cases");
     RUN_TEST(rmd160_check_null_hash);
