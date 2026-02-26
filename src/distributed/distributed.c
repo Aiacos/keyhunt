@@ -1311,6 +1311,14 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 
     } else if (strcmp(type, "heartbeat") == 0) {
         worker->last_heartbeat = time_ms();
+
+        /* Enhanced audit logging: heartbeat with key count (DEBUG level) */
+        uint64_t keys_since_last = json_get_int(msg, "keys");
+        if (keys_since_last > 0) {
+            printf(LOG_SERVER LOG_DEBUG "Worker " CLR_CYAN "#%d" CLR_RESET " heartbeat (+%llu keys)\n",
+                   worker->id, (unsigned long long)keys_since_last);
+        }
+
         send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
 
     } else if (strcmp(type, "leave") == 0) {
@@ -1328,6 +1336,9 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             pthread_mutex_lock(&coord->work_mutex);
             dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
             if (unit->status == WORK_STATUS_ASSIGNED && unit->assigned_worker == worker->id) {
+                /* Enhanced audit logging: work reassignment during graceful leave */
+                printf(LOG_SERVER LOG_INFO "Work unit " CLR_CYAN "#%d" CLR_RESET " reassigned from worker #%d to pool (reason: graceful leave)\n",
+                       unit->id, worker->id);
                 unit->status = WORK_STATUS_PENDING;
                 unit->assigned_worker = -1;
                 coord->work_units_pending++;
@@ -1514,7 +1525,15 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                                  coord->tls_enabled ? "true" : "false");
                         send_msg_ex(worker->socket_fd, worker->ssl, welcome);
 
-                        /* Print connection info with hardware details and speeds */
+                        /* Enhanced audit logging: worker join with key hardware details */
+                        printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " (%s) joined [CPU: %d cores, GPU: %s, Perf: %.1f Mkeys/s]\n",
+                               worker->id,
+                               worker->hostname[0] ? worker->hostname : "localhost",
+                               worker->cpu_cores,
+                               worker->gpu_name[0] ? worker->gpu_name : "none",
+                               worker->cpu_speed_mkeys + worker->gpu_speed_mkeys);
+
+                        /* Print detailed connection info with hardware details and speeds */
                         printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
                                worker->id, worker->hostname[0] ? worker->hostname : "localhost");
                         if (worker->cpu_name[0]) {
@@ -1598,7 +1617,10 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 }
 
                 if (should_reassign) {
-                    printf(LOG_SERVER LOG_WARN "Work unit #%d timed out, reassigning\n", unit->id);
+                    /* Enhanced audit logging: work reassignment with reason */
+                    const char *reason = !worker_connected ? "worker disconnected" : "worker unresponsive";
+                    printf(LOG_SERVER LOG_WARN "Work unit " CLR_YELLOW "#%d" CLR_RESET " reassigned from worker #%d to pool (reason: %s)\n",
+                           unit->id, unit->assigned_worker, reason);
                     unit->status = WORK_STATUS_PENDING;
                     unit->assigned_worker = -1;
                     coord->work_units_pending++;
@@ -1621,8 +1643,10 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             if (worker->connected && worker->socket_fd >= 0) {
                 /* Worker is stuck if no heartbeat within configured timeout */
                 if (now_ms - worker->last_heartbeat > stuck_timeout_ms) {
-                    printf(LOG_SERVER LOG_WARN "Worker #%d (%s) stuck (no heartbeat), forcing disconnect\n",
-                           worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+                    /* Enhanced audit logging: worker timeout with duration */
+                    printf(LOG_SERVER LOG_WARN "Worker " CLR_YELLOW "#%d" CLR_RESET " (%s) timed out (no heartbeat for %d sec)\n",
+                           worker->id, worker->hostname[0] ? worker->hostname : "localhost",
+                           coord->worker_timeout_sec);
 
                     /* Stop the handler thread - it will clean up the socket */
                     worker->handler_running = false;
@@ -1635,6 +1659,9 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         worker->current_work_id < coord->work_unit_count) {
                         dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
                         if (unit->status == WORK_STATUS_ASSIGNED) {
+                            /* Enhanced audit logging: work reassignment with reason */
+                            printf(LOG_SERVER LOG_INFO "Work unit " CLR_CYAN "#%d" CLR_RESET " reassigned from worker #%d to pool (reason: worker timeout)\n",
+                                   unit->id, worker->id);
                             unit->status = WORK_STATUS_PENDING;
                             unit->assigned_worker = -1;
                             coord->work_units_pending++;
@@ -1642,7 +1669,6 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                             if (unit->id < coord->next_pending_hint) {
                                 coord->next_pending_hint = unit->id;
                             }
-                            printf(LOG_SERVER LOG_INFO "Work unit #%d reassigned to pool\n", unit->id);
                         }
                     }
                     pthread_mutex_unlock(&coord->work_mutex);
