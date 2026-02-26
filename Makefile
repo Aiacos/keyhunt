@@ -67,7 +67,7 @@ ifdef ENABLE_TLS
 endif
 
 # Object files organized by module (all in obj/ directory)
-BLOOM_OBJS := $(OBJDIR)/oldbloom/bloom.o $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
+BLOOM_OBJS := $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
 HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_shani.o $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/sha512_avx2.o $(OBJDIR)/hash/sha512_avx512.o
 SHA3_OBJS := $(OBJDIR)/sha3/sha3.o $(OBJDIR)/sha3/keccak.o
 PLATFORM_OBJS := $(OBJDIR)/platform/platform_thread.o $(OBJDIR)/platform/platform_mutex.o $(OBJDIR)/platform/platform_time.o
@@ -96,7 +96,7 @@ BSGSD_OBJS := $(OBJDIR)/bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(COMMON_OBJS) $(GMP256K1_OBJS)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/oldbloom $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests
 
 .PHONY: all clean legacy bsgsd directories test sanitize tsan coverage
 

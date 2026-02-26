@@ -23,7 +23,6 @@
 
 #include "../bloom/bloom.h"
 #include "../bloom/bloom_wrapper.h"
-#include "../oldbloom/oldbloom.h"
 
 #ifdef __cplusplus
 extern "C" {

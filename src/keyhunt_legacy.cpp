@@ -13,7 +13,6 @@ email: albertobsd@gmail.com
 #include <algorithm>
 #include <inttypes.h>
 #include "base58/libbase58.h"
-#include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
 #include "core/util.h"
 #include "core/hashing.h"
@@ -323,7 +322,7 @@ char buffer_bloom_file[1024];
 bsgs_xvalue *bPtable;  // From bsgs/bsgs_sort.h
 struct address_value *addressTable;
 
-struct oldbloom oldbloom_bP;
+struct bloom_legacy_header bloom_legacy_bP;
 
 struct bloom *bloom_bP;
 struct bloom *bloom_bPx2nd; //2nd Bloom filter check
@@ -1655,29 +1654,22 @@ int main(int argc, char **argv)	{
 					fflush(stdout);
 					for(i = 0; i < 256;i++)	{
 						bf_ptr = (char*) bloom_bP[i].bf;	/*We need to save the current bf pointer*/
-						readed = fread(&oldbloom_bP,sizeof(struct oldbloom),1,fd_aux1);
-						
-						/*
-						if(FLAGDEBUG)	{
-							printf("old Bloom filter %i\n",i);
-							oldbloom_print(&oldbloom_bP);
-						}
-						*/
-						
+						readed = fread(&bloom_legacy_bP,sizeof(struct bloom_legacy_header),1,fd_aux1);
+
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						memcpy(&bloom_bP[i],&oldbloom_bP,sizeof(struct bloom));//We only need to copy the part data to the new bloom size, not from the old size
+						memcpy(&bloom_bP[i],&bloom_legacy_bP,sizeof(struct bloom));//We only need to copy the part data to the new bloom size, not from the old size
 						bloom_bP[i].bf = (uint8_t*)bf_ptr;	/* Restoring the bf pointer*/
-						
+
 						readed = fread(bloom_bP[i].bf,bloom_bP[i].bytes,1,fd_aux1);
 						if(readed != 1)	{
 							fprintf(stderr,"[E] Error reading the file %s\n",buffer_bloom_file);
 							exit(EXIT_FAILURE);
 						}
-						memcpy(bloom_bP_checksums[i].data,oldbloom_bP.checksum,32);
-						memcpy(bloom_bP_checksums[i].backup,oldbloom_bP.checksum_backup,32);
+						memcpy(bloom_bP_checksums[i].data,bloom_legacy_bP.checksum,32);
+						memcpy(bloom_bP_checksums[i].backup,bloom_legacy_bP.checksum_backup,32);
 						memset(rawvalue,0,32);
 						if(FLAGSKIPCHECKSUM == 0)	{
 							sha256((uint8_t*)bloom_bP[i].bf,bloom_bP[i].bytes,(uint8_t*)rawvalue);

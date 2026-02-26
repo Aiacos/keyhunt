@@ -242,6 +242,61 @@ int bloom_reset(struct bloom * bloom);
  */
 const char * bloom_version();
 
+
+/** ***************************************************************************
+ * Legacy bloom filter header for reading old BSGS cache files.
+ *
+ * The old format (struct oldbloom from oldbloom/oldbloom.h) stored extra fields
+ * (checksum, checksum_backup, bf pointer, and a platform mutex) that are no
+ * longer needed for the current bloom filter.  This struct reproduces the
+ * exact binary layout so that old cache files can still be read with
+ * fread(&hdr, sizeof(bloom_legacy_header), 1, fp) without breaking the
+ * file offset.
+ *
+ * Layout (x86-64, sizeof(long double) == 16):
+ *   offset  0: entries      (uint64_t)
+ *   offset  8: bits         (uint64_t)
+ *   offset 16: bytes        (uint64_t)
+ *   offset 24: hashes       (uint8_t)
+ *   offset 32: error        (long double, 16 bytes with padding)
+ *   offset 48: ready        (uint8_t)
+ *   offset 49: major        (uint8_t)
+ *   offset 50: minor        (uint8_t)
+ *   offset 56: bpe          (double)
+ *   offset 64: checksum     (32 bytes)
+ *   offset 96: checksum_backup (32 bytes)
+ *   offset128: _tail_pad    (48 bytes — replaces bf pointer + mutex)
+ *   total  176 bytes == old sizeof(struct oldbloom)
+ *
+ * IMPORTANT: Do NOT reorder fields.  The layout must match the old struct
+ * byte-for-byte so that fread produces valid metadata in the first 64 bytes
+ * (which are then memcpy'd into a struct bloom) and valid checksums at
+ * offsets 64 and 96.
+ */
+struct bloom_legacy_header
+{
+    /* Public metadata (same layout as struct bloom up to bpe) */
+    uint64_t entries;
+    uint64_t bits;
+    uint64_t bytes;
+    uint8_t  hashes;
+    long double error;
+
+    uint8_t  ready;
+    uint8_t  major;
+    uint8_t  minor;
+    double   bpe;
+
+    /* Checksum fields from old struct */
+    uint8_t  checksum[32];
+    uint8_t  checksum_backup[32];
+
+    /* Padding to match sizeof(struct oldbloom) = 176 bytes.
+     * In the old struct these bytes held {uint8_t *bf; platform_mutex_t mutex;}
+     * which are 8 + 40 = 48 bytes on x86-64 Linux. */
+    uint8_t  _tail_pad[48];
+};
+
 #ifdef __cplusplus
 }
 #endif

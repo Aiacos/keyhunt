@@ -10,7 +10,6 @@
 #include "secp256k1/Int.h"
 #include "bloom/bloom.h"
 #include "bloom/bloom_wrapper.h"
-#include "oldbloom/oldbloom.h"
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include <windows.h>
@@ -270,8 +269,6 @@ extern char checksum_backup[32];
 extern char buffer_bloom_file[1024];
 extern struct bsgs_xvalue *bPtable;
 extern struct address_value *addressTable;
-
-extern struct oldbloom oldbloom_bP;
 
 extern bloom_extended_t *bloom_bP;
 extern bloom_extended_t *bloom_bPx2nd;
