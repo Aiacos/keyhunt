@@ -2482,7 +2482,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
             cudaError_t launch_err = cudaGetLastError();
             if (launch_err != cudaSuccess) {
                 fprintf(stderr, "[GPU %d] Kernel launch failed: %s\n",
-                        worker->gpu_id, cudaGetErrorString(launch_err));
+                        worker->gpu_idx, cudaGetErrorString(launch_err));
                 worker->active = 0;
                 break;
             }

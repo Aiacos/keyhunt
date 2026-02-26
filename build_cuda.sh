@@ -313,7 +313,7 @@ if [[ -n "$GCC_VERSION" ]]; then
 fi
 
 # Build NVCC flags
-NVCC_FLAGS="-O3 -std=c++17 -arch=$CUDA_ARCH -allow-unsupported-compiler"
+NVCC_FLAGS="-O3 -std=c++17 -arch=$CUDA_ARCH -allow-unsupported-compiler -Isrc -DHAVE_CUDA_BACKEND=1"
 if [[ -n "$CCBIN_DIR" ]]; then
     NVCC_FLAGS="$NVCC_FLAGS --compiler-bindir=$CCBIN_DIR -Xcompiler -U_GNU_SOURCE"
 fi

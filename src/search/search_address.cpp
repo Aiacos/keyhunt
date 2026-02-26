@@ -524,9 +524,6 @@ DWORD WINAPI thread_process(LPVOID vargp) {
 void *thread_process(void *vargp)	{
 #endif
 	struct tothread *tt;
-	struct thread_args *targs = NULL;
-	keyhunt_config_t *cfg = NULL;
-
 	Point pts[CPU_GRP_SIZE];
 	Point endomorphism_beta[CPU_GRP_SIZE];
 	Point endomorphism_beta2[CPU_GRP_SIZE];

@@ -36,6 +36,7 @@ ifeq ($(HAVE_NVCC),)
 else
   GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
   GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
+  NVCCFLAGS += -DHAVE_CUDA_BACKEND=1
 endif
 
 CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
