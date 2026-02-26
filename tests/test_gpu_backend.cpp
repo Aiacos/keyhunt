@@ -15,8 +15,9 @@
 
 #include "test_framework.h"
 
-extern "C" {
 #include "gpu/gpu_backend.h"
+
+extern "C" {
 #include "gpu/multi_gpu_scheduler.h"
 #include "gpu/async_pipeline.h"
 }

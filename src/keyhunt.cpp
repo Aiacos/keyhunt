@@ -34,7 +34,6 @@
 #include <atomic>
 #include <inttypes.h>
 #include "base58/libbase58.h"
-#include "oldbloom/oldbloom.h"
 #include "bloom/bloom.h"
 #include "bloom/bloom_wrapper.h"
 #include "sha3/sha3.h"
@@ -773,8 +772,6 @@ char checksum[32],checksum_backup[32];
 char buffer_bloom_file[1024];
 bsgs_xvalue *bPtable;  // From bsgs/bsgs_sort.h
 struct address_value *addressTable;
-
-struct oldbloom oldbloom_bP;
 
 // BSGS bloom filters use extended wrapper to enable fast bloom
 bloom_extended_t *bloom_bP;
@@ -4823,12 +4820,11 @@ static void *gpu_hybrid_thread(void *arg) {
 
 			if (g_work_pool.enabled) {
 				g_gpu_keys_checked_cur.store(0, std::memory_order_release);
-				// Note: reinterpret_cast is safe for lock-free atomics (same memory representation)
-				config.keys_checked = reinterpret_cast<volatile uint64_t*>(&g_gpu_keys_checked_cur);
+				config.keys_checked = &g_gpu_keys_checked_cur;
 			} else {
-				config.keys_checked = reinterpret_cast<volatile uint64_t*>(&g_gpu_keys_checked);
+				config.keys_checked = &g_gpu_keys_checked;
 			}
-		config.should_stop = reinterpret_cast<volatile int*>(&g_gpu_should_stop);
+		config.should_stop = &g_gpu_should_stop;
 		config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
 
 		output_success("Starting GPU full search (ECC + hash160 + matching on GPU)\n");

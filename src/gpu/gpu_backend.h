@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
+#include <atomic>
 extern "C" {
 #endif
 
@@ -50,8 +51,13 @@ typedef struct {
     void *callback_userdata;
 
     // Statistics output (updated by GPU)
+#ifdef __cplusplus
+    std::atomic<uint64_t> *keys_checked;
+    std::atomic<int> *should_stop;
+#else
     volatile uint64_t *keys_checked;
     volatile int *should_stop;
+#endif
 
     // If non-zero, suppress periodic GPU progress output (still updates keys_checked).
     int quiet;

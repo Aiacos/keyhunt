@@ -7,6 +7,7 @@
  */
 
 #include "gpu_backend.h"
+#include "cuda_check.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1797,12 +1798,12 @@ static void cleanup_search_streams(void) {
 
     for (int i = 0; i < NUM_SEARCH_STREAMS; i++) {
         if (g_search_streams[i].stream) {
-            cudaStreamSynchronize(g_search_streams[i].stream);
-            cudaStreamDestroy(g_search_streams[i].stream);
+            CUDA_CHECK_WARN(cudaStreamSynchronize(g_search_streams[i].stream));
+            CUDA_CHECK_WARN(cudaStreamDestroy(g_search_streams[i].stream));
         }
-        if (g_search_streams[i].start_event) cudaEventDestroy(g_search_streams[i].start_event);
-        if (g_search_streams[i].end_event) cudaEventDestroy(g_search_streams[i].end_event);
-        if (g_search_streams[i].d_should_stop) cudaFree(g_search_streams[i].d_should_stop);
+        if (g_search_streams[i].start_event) CUDA_CHECK_WARN(cudaEventDestroy(g_search_streams[i].start_event));
+        if (g_search_streams[i].end_event) CUDA_CHECK_WARN(cudaEventDestroy(g_search_streams[i].end_event));
+        if (g_search_streams[i].d_should_stop) CUDA_CHECK_WARN(cudaFree(g_search_streams[i].d_should_stop));
         memset(&g_search_streams[i], 0, sizeof(search_stream_t));
     }
     g_search_streams_initialized = 0;
@@ -1961,17 +1962,17 @@ void gpu_backend_shutdown(void) {
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
 
-        cudaSetDevice(ctx->device_id);
+        CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
         // Clean up device memory
-        if (ctx->d_GTable) { cudaFree(ctx->d_GTable); ctx->d_GTable = NULL; }
-        if (ctx->d_targets) { cudaFree(ctx->d_targets); ctx->d_targets = NULL; }
-        if (ctx->d_bloom) { cudaFree(ctx->d_bloom); ctx->d_bloom = NULL; }
+        if (ctx->d_GTable) { CUDA_CHECK_WARN(cudaFree(ctx->d_GTable)); ctx->d_GTable = NULL; }
+        if (ctx->d_targets) { CUDA_CHECK_WARN(cudaFree(ctx->d_targets)); ctx->d_targets = NULL; }
+        if (ctx->d_bloom) { CUDA_CHECK_WARN(cudaFree(ctx->d_bloom)); ctx->d_bloom = NULL; }
 
         // Clean up streams
         for (int s = 0; s < NUM_STREAMS_PER_GPU; s++) {
-            if (ctx->streams[s]) { cudaStreamDestroy(ctx->streams[s]); ctx->streams[s] = NULL; }
-            if (ctx->d_should_stop[s]) { cudaFree(ctx->d_should_stop[s]); ctx->d_should_stop[s] = NULL; }
+            if (ctx->streams[s]) { CUDA_CHECK_WARN(cudaStreamDestroy(ctx->streams[s])); ctx->streams[s] = NULL; }
+            if (ctx->d_should_stop[s]) { CUDA_CHECK_WARN(cudaFree(ctx->d_should_stop[s])); ctx->d_should_stop[s] = NULL; }
         }
 
         ctx->active = 0;
@@ -1984,10 +1985,10 @@ void gpu_backend_shutdown(void) {
     if (h_bloom_copy) { free(h_bloom_copy); h_bloom_copy = NULL; }
 
     // Clean up legacy single-stream context
-    if (d_x32) { cudaFree(d_x32); d_x32 = NULL; }
-    if (d_out02) { cudaFree(d_out02); d_out02 = NULL; }
-    if (d_out03) { cudaFree(d_out03); d_out03 = NULL; }
-    if (g_stream) { cudaStreamDestroy(g_stream); g_stream = NULL; }
+    if (d_x32) { CUDA_CHECK_WARN(cudaFree(d_x32)); d_x32 = NULL; }
+    if (d_out02) { CUDA_CHECK_WARN(cudaFree(d_out02)); d_out02 = NULL; }
+    if (d_out03) { CUDA_CHECK_WARN(cudaFree(d_out03)); d_out03 = NULL; }
+    if (g_stream) { CUDA_CHECK_WARN(cudaStreamDestroy(g_stream)); g_stream = NULL; }
     g_capacity = 0;
 
     // Clean up pinned memory pool
@@ -2002,25 +2003,30 @@ static uint8_t *h_out02_pinned = NULL;
 static uint8_t *h_out03_pinned = NULL;
 static size_t g_pinned_capacity = 0;
 
-static void ensure_pinned_memory(size_t count) {
-    if (count <= g_pinned_capacity) return;
+static int ensure_pinned_memory(size_t count) {
+    if (count <= g_pinned_capacity) return 0;
 
     // Free old pinned memory
-    if (h_x32_pinned) cudaFreeHost(h_x32_pinned);
-    if (h_out02_pinned) cudaFreeHost(h_out02_pinned);
-    if (h_out03_pinned) cudaFreeHost(h_out03_pinned);
+    if (h_x32_pinned) CUDA_CHECK_WARN(cudaFreeHost(h_x32_pinned));
+    if (h_out02_pinned) CUDA_CHECK_WARN(cudaFreeHost(h_out02_pinned));
+    if (h_out03_pinned) CUDA_CHECK_WARN(cudaFreeHost(h_out03_pinned));
+
+    h_x32_pinned = NULL;
+    h_out02_pinned = NULL;
+    h_out03_pinned = NULL;
 
     // Allocate new pinned memory
-    cudaMallocHost(&h_x32_pinned, count * 32);
-    cudaMallocHost(&h_out02_pinned, count * 20);
-    cudaMallocHost(&h_out03_pinned, count * 20);
+    CUDA_CHECK(cudaMallocHost(&h_x32_pinned, count * 32));
+    CUDA_CHECK(cudaMallocHost(&h_out02_pinned, count * 20));
+    CUDA_CHECK(cudaMallocHost(&h_out03_pinned, count * 20));
     g_pinned_capacity = count;
+    return 0;
 }
 
 static void cleanup_pinned_memory(void) {
-    if (h_x32_pinned) { cudaFreeHost(h_x32_pinned); h_x32_pinned = NULL; }
-    if (h_out02_pinned) { cudaFreeHost(h_out02_pinned); h_out02_pinned = NULL; }
-    if (h_out03_pinned) { cudaFreeHost(h_out03_pinned); h_out03_pinned = NULL; }
+    if (h_x32_pinned) { CUDA_CHECK_WARN(cudaFreeHost(h_x32_pinned)); h_x32_pinned = NULL; }
+    if (h_out02_pinned) { CUDA_CHECK_WARN(cudaFreeHost(h_out02_pinned)); h_out02_pinned = NULL; }
+    if (h_out03_pinned) { CUDA_CHECK_WARN(cudaFreeHost(h_out03_pinned)); h_out03_pinned = NULL; }
     g_pinned_capacity = 0;
 }
 
@@ -2030,24 +2036,26 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
 
     // Ensure device memory is allocated
     if (count > g_capacity) {
-        if (d_x32) cudaFree(d_x32);
-        if (d_out02) cudaFree(d_out02);
-        if (d_out03) cudaFree(d_out03);
+        if (d_x32) { CUDA_CHECK_WARN(cudaFree(d_x32)); d_x32 = NULL; }
+        if (d_out02) { CUDA_CHECK_WARN(cudaFree(d_out02)); d_out02 = NULL; }
+        if (d_out03) { CUDA_CHECK_WARN(cudaFree(d_out03)); d_out03 = NULL; }
 
-        cudaMalloc(&d_x32, count * 32);
-        cudaMalloc(&d_out02, count * 20);
-        cudaMalloc(&d_out03, count * 20);
+        CUDA_CHECK(cudaMalloc(&d_x32, count * 32));
+        CUDA_CHECK(cudaMalloc(&d_out02, count * 20));
+        CUDA_CHECK(cudaMalloc(&d_out03, count * 20));
         g_capacity = count;
 
-        if (!g_stream) cudaStreamCreate(&g_stream);
+        if (!g_stream) {
+            CUDA_CHECK(cudaStreamCreate(&g_stream));
+        }
     }
 
     // Ensure pinned host memory for faster transfers
-    ensure_pinned_memory(count);
+    if (ensure_pinned_memory(count) < 0) return 1;
 
     // Copy to pinned memory, then async transfer to device
     memcpy(h_x32_pinned, x32_be, count * 32);
-    cudaMemcpyAsync(d_x32, h_x32_pinned, count * 32, cudaMemcpyHostToDevice, g_stream);
+    CUDA_CHECK(cudaMemcpyAsync(d_x32, h_x32_pinned, count * 32, cudaMemcpyHostToDevice, g_stream));
 
     // Launch kernel
     int threads = 256;
@@ -2055,16 +2063,16 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
     kernel_hash160_fromX<<<blocks, threads, 0, g_stream>>>(d_x32, count, d_out02, d_out03);
 
     // Copy results to pinned memory, then to output
-    cudaMemcpyAsync(h_out02_pinned, d_out02, count * 20, cudaMemcpyDeviceToHost, g_stream);
-    cudaMemcpyAsync(h_out03_pinned, d_out03, count * 20, cudaMemcpyDeviceToHost, g_stream);
+    CUDA_CHECK(cudaMemcpyAsync(h_out02_pinned, d_out02, count * 20, cudaMemcpyDeviceToHost, g_stream));
+    CUDA_CHECK(cudaMemcpyAsync(h_out03_pinned, d_out03, count * 20, cudaMemcpyDeviceToHost, g_stream));
 
-    cudaStreamSynchronize(g_stream);
+    CUDA_CHECK(cudaStreamSynchronize(g_stream));
 
     // Copy from pinned to output (fast memcpy from page-locked memory)
     memcpy(out02, h_out02_pinned, count * 20);
     memcpy(out03, h_out03_pinned, count * 20);
 
-    return (cudaGetLastError() == cudaSuccess) ? 0 : 1;
+    return (cudaGetLastError() == cudaSuccess) ? 0 : -1;
 }
 
 int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
@@ -2084,21 +2092,23 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
 
-        cudaSetDevice(ctx->device_id);
+        CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
-        if (ctx->d_GTable) cudaFree(ctx->d_GTable);
+        if (ctx->d_GTable) { CUDA_CHECK_WARN(cudaFree(ctx->d_GTable)); ctx->d_GTable = NULL; }
 
         cudaError_t err = cudaMalloc(&ctx->d_GTable, size);
         if (err != cudaSuccess) {
-            printf("[W] GPU %d: Failed to allocate G table memory\n", ctx->device_id);
+            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc G table: %s (%d)\n",
+                    ctx->device_id, cudaGetErrorString(err), (int)err);
             continue;
         }
 
         err = cudaMemcpy(ctx->d_GTable, gtable, size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            cudaFree(ctx->d_GTable);
+            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMemcpy G table: %s (%d)\n",
+                    ctx->device_id, cudaGetErrorString(err), (int)err);
+            CUDA_CHECK_WARN(cudaFree(ctx->d_GTable));
             ctx->d_GTable = NULL;
-            printf("[W] GPU %d: Failed to upload G table\n", ctx->device_id);
             continue;
         }
 
@@ -2126,21 +2136,23 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
 
-        cudaSetDevice(ctx->device_id);
+        CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
-        if (ctx->d_targets) cudaFree(ctx->d_targets);
+        if (ctx->d_targets) { CUDA_CHECK_WARN(cudaFree(ctx->d_targets)); ctx->d_targets = NULL; }
 
         cudaError_t err = cudaMalloc(&ctx->d_targets, size);
         if (err != cudaSuccess) {
-            printf("[W] GPU %d: Failed to allocate targets memory\n", ctx->device_id);
+            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc targets: %s (%d)\n",
+                    ctx->device_id, cudaGetErrorString(err), (int)err);
             continue;
         }
 
         err = cudaMemcpy(ctx->d_targets, targets, size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            cudaFree(ctx->d_targets);
+            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMemcpy targets: %s (%d)\n",
+                    ctx->device_id, cudaGetErrorString(err), (int)err);
+            CUDA_CHECK_WARN(cudaFree(ctx->d_targets));
             ctx->d_targets = NULL;
-            printf("[W] GPU %d: Failed to upload targets\n", ctx->device_id);
             continue;
         }
 
@@ -2148,10 +2160,10 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
         {
             int small_count = 0;
             if (count > 0 && count <= MAX_SMALL_TARGETS) {
-                cudaMemcpyToSymbol(d_targets_small, targets, size);
+                CUDA_CHECK_WARN(cudaMemcpyToSymbol(d_targets_small, targets, size));
                 small_count = (int)count;
             }
-            cudaMemcpyToSymbol(d_targets_small_count, &small_count, sizeof(int));
+            CUDA_CHECK_WARN(cudaMemcpyToSymbol(d_targets_small_count, &small_count, sizeof(int)));
         }
 
         success++;
@@ -2176,21 +2188,23 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
 
-        cudaSetDevice(ctx->device_id);
+        CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
-        if (ctx->d_bloom) cudaFree(ctx->d_bloom);
+        if (ctx->d_bloom) { CUDA_CHECK_WARN(cudaFree(ctx->d_bloom)); ctx->d_bloom = NULL; }
 
         cudaError_t err = cudaMalloc(&ctx->d_bloom, bloom_size);
         if (err != cudaSuccess) {
-            printf("[W] GPU %d: Failed to allocate bloom filter memory\n", ctx->device_id);
+            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc bloom: %s (%d)\n",
+                    ctx->device_id, cudaGetErrorString(err), (int)err);
             continue;
         }
 
         err = cudaMemcpy(ctx->d_bloom, bloom_data, bloom_size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            cudaFree(ctx->d_bloom);
+            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMemcpy bloom: %s (%d)\n",
+                    ctx->device_id, cudaGetErrorString(err), (int)err);
+            CUDA_CHECK_WARN(cudaFree(ctx->d_bloom));
             ctx->d_bloom = NULL;
-            printf("[W] GPU %d: Failed to upload bloom filter\n", ctx->device_id);
             continue;
         }
 
@@ -2217,18 +2231,16 @@ typedef struct {
 
 // Initialize streams for a specific GPU
 static int init_gpu_streams(gpu_context_t *ctx) {
-    cudaSetDevice(ctx->device_id);
+    CUDA_CHECK(cudaSetDevice(ctx->device_id));
 
     for (int s = 0; s < NUM_STREAMS_PER_GPU; s++) {
         if (!ctx->streams[s]) {
-            cudaError_t err = cudaStreamCreateWithFlags(&ctx->streams[s], cudaStreamNonBlocking);
-            if (err != cudaSuccess) return -1;
+            CUDA_CHECK(cudaStreamCreateWithFlags(&ctx->streams[s], cudaStreamNonBlocking));
         }
         if (!ctx->d_should_stop[s]) {
-            cudaError_t err = cudaMalloc(&ctx->d_should_stop[s], sizeof(int));
-            if (err != cudaSuccess) return -1;
+            CUDA_CHECK(cudaMalloc(&ctx->d_should_stop[s], sizeof(int)));
             int zero = 0;
-            cudaMemcpy(ctx->d_should_stop[s], &zero, sizeof(int), cudaMemcpyHostToDevice);
+            CUDA_CHECK(cudaMemcpy(ctx->d_should_stop[s], &zero, sizeof(int), cudaMemcpyHostToDevice));
         }
     }
     return 0;
@@ -2325,9 +2337,9 @@ int gpu_full_search(const gpu_search_config_t *config) {
         }
 
         // Reset found keys counter on this GPU
-        cudaSetDevice(ctx->device_id);
+        CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
         int zero = 0;
-        cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+        CUDA_CHECK_WARN(cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int)));
     }
 
     // Distribute work range across GPUs proportionally to their SM count
@@ -2379,7 +2391,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
     int zero = 0;
 
     // Main search loop - round-robin across GPUs
-    while (!*(config->should_stop) && u256_cmp_host(&cursor, &end_key) < 0) {
+    while (!config->should_stop->load(std::memory_order_acquire) && u256_cmp_host(&cursor, &end_key) < 0) {
         // Launch kernels on all GPUs
         for (int w = 0; w < worker_count; w++) {
             gpu_worker_state_t *worker = &workers[w];
@@ -2388,7 +2400,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
             gpu_context_t *ctx = worker->ctx;
             arch_params_t *params = &ctx->optimal_params;
 
-            cudaSetDevice(ctx->device_id);
+            CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
             // Use architecture-optimized parameters (with optional override)
             int blocks_per_sm = params->blocks_per_sm;
@@ -2432,9 +2444,9 @@ int gpu_full_search(const gpu_search_config_t *config) {
             }
 
             // Update should_stop
-            int should_stop_val = *(config->should_stop);
-            cudaMemcpyAsync(ctx->d_should_stop[worker->stream_idx], &should_stop_val, sizeof(int),
-                           cudaMemcpyHostToDevice, ctx->streams[worker->stream_idx]);
+            int should_stop_val = config->should_stop->load(std::memory_order_acquire);
+            CUDA_CHECK_WARN(cudaMemcpyAsync(ctx->d_should_stop[worker->stream_idx], &should_stop_val, sizeof(int),
+                           cudaMemcpyHostToDevice, ctx->streams[worker->stream_idx]));
 
             // Launch kernel (keep the compressed-only kernel as the fast path)
             if (config->search_uncompressed) {
@@ -2480,24 +2492,25 @@ int gpu_full_search(const gpu_search_config_t *config) {
             if (!worker->active) continue;
 
             gpu_context_t *ctx = worker->ctx;
-            cudaSetDevice(ctx->device_id);
+            CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
             // Wait for the previous stream
             int prev_stream = (worker->stream_idx + NUM_STREAMS_PER_GPU - 1) % NUM_STREAMS_PER_GPU;
             cudaError_t err = cudaStreamSynchronize(ctx->streams[prev_stream]);
             if (err != cudaSuccess) {
-                fprintf(stderr, "\n[!] GPU %d kernel error: %s\n", ctx->device_id, cudaGetErrorString(err));
+                fprintf(stderr, "\n[CUDA ERROR] GPU %d kernel error: %s (%d)\n",
+                        ctx->device_id, cudaGetErrorString(err), (int)err);
                 worker->active = 0;
                 continue;
             }
 
             // Check for found keys
             int found_count = 0;
-            cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
+            CUDA_CHECK_WARN(cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int)));
 
             if (found_count > 0) {
                 FoundKey h_found[MAX_FOUND_KEYS];
-                cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
+                CUDA_CHECK_WARN(cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count));
 
                 for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
                     if (h_found[i].valid) {
@@ -2521,13 +2534,13 @@ int gpu_full_search(const gpu_search_config_t *config) {
                     }
                 }
 
-                cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int));
+                CUDA_CHECK_WARN(cudaMemcpyToSymbol(d_found_count, &zero, sizeof(int)));
             }
         }
 
         // Update keys_checked
         if (config->keys_checked) {
-            *(config->keys_checked) = total_keys;
+            config->keys_checked->store(total_keys, std::memory_order_release);
         }
 
         // Progress output
@@ -2573,19 +2586,19 @@ int gpu_full_search(const gpu_search_config_t *config) {
         gpu_worker_state_t *worker = &workers[w];
         gpu_context_t *ctx = worker->ctx;
 
-        cudaSetDevice(ctx->device_id);
+        CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
         for (int s = 0; s < NUM_STREAMS_PER_GPU; s++) {
-            cudaStreamSynchronize(ctx->streams[s]);
+            CUDA_CHECK_WARN(cudaStreamSynchronize(ctx->streams[s]));
         }
 
         // Final check for found keys
         int found_count = 0;
-        cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int));
+        CUDA_CHECK_WARN(cudaMemcpyFromSymbol(&found_count, d_found_count, sizeof(int)));
 
         if (found_count > 0) {
             FoundKey h_found[MAX_FOUND_KEYS];
-            cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count);
+            CUDA_CHECK_WARN(cudaMemcpyFromSymbol(h_found, d_found_keys, sizeof(FoundKey) * found_count));
 
             for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
                 if (h_found[i].valid) {

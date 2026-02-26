@@ -19,6 +19,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+#include <atomic>
+#endif
+
 /* Import shared type definitions from cli.h to avoid ODR violations */
 #include "../cli.h"
 
@@ -139,10 +143,17 @@ typedef struct {
     int  threads_per_block;       /* Threads per CUDA block */
     int  keys_per_thread;         /* Keys processed per GPU thread */
 
-    /* Runtime stats (volatile, updated during search) */
+#ifdef __cplusplus
+    /* Runtime stats (atomic, thread-safe GPU counters) */
+    std::atomic<uint64_t> keys_checked{0};      /* Total GPU keys checked */
+    std::atomic<uint64_t> keys_checked_cur{0};  /* Current block keys */
+    std::atomic<int>      should_stop{0};       /* Signal GPU to stop */
+#else
+    /* Runtime stats (volatile fallback for C) */
     volatile uint64_t keys_checked;      /* Total GPU keys checked */
     volatile uint64_t keys_checked_cur;  /* Current block keys */
     volatile int      should_stop;       /* Signal GPU to stop */
+#endif
 
     /* Bloom filter state */
     bool bloom_uploaded;          /* GPU-side bloom filter ready */

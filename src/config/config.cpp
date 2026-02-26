@@ -147,7 +147,8 @@ void kh_bsgs_config_init(bsgs_config_t *cfg) {
 void kh_gpu_config_init(gpu_config_t *cfg) {
     if (!cfg) return;
 
-    memset(cfg, 0, sizeof(gpu_config_t));
+    /* NOTE: Cannot use memset() because gpu_config_t contains std::atomic members.
+     * All fields are explicitly initialized below. */
 
     /* Defaults */
     cfg->enabled = 0;  /* Off by default */
@@ -165,9 +166,9 @@ void kh_gpu_config_init(gpu_config_t *cfg) {
     cfg->threads_per_block = 256;
     cfg->keys_per_thread = 256;
 
-    cfg->keys_checked = 0;
-    cfg->keys_checked_cur = 0;
-    cfg->should_stop = 0;
+    cfg->keys_checked.store(0, std::memory_order_relaxed);
+    cfg->keys_checked_cur.store(0, std::memory_order_relaxed);
+    cfg->should_stop.store(0, std::memory_order_relaxed);
 
     cfg->bloom_uploaded = false;
 }
@@ -252,7 +253,8 @@ void kh_autotune_config_init(autotune_config_t *cfg) {
 void kh_config_init(keyhunt_config_t *cfg) {
     if (!cfg) return;
 
-    memset(cfg, 0, sizeof(keyhunt_config_t));
+    /* NOTE: Cannot use memset() on keyhunt_config_t because it contains
+     * gpu_config_t which has std::atomic members. Zero each section explicitly. */
 
     cfg->version = KH_CONFIG_VERSION;
 
