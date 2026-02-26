@@ -410,6 +410,30 @@ void dist_coordinator_set_bind_address(dist_coordinator_t *coordinator,
                                        const char *address);
 
 /**
+ * Set worker timeout (time before marking worker as dead)
+ * @param coordinator Coordinator state
+ * @param timeout_sec Timeout in seconds (0 = use default: 3x heartbeat interval)
+ */
+void dist_coordinator_set_worker_timeout(dist_coordinator_t *coordinator,
+                                         int timeout_sec);
+
+/**
+ * Set work redistribution timeout (time before reassigning stalled work)
+ * @param coordinator Coordinator state
+ * @param timeout_sec Timeout in seconds (0 = use default: 5x heartbeat interval)
+ */
+void dist_coordinator_set_work_timeout(dist_coordinator_t *coordinator,
+                                       int timeout_sec);
+
+/**
+ * Set connection timeout for accepting new clients
+ * @param coordinator Coordinator state
+ * @param timeout_sec Timeout in seconds (0 = use default: 30)
+ */
+void dist_coordinator_set_connection_timeout(dist_coordinator_t *coordinator,
+                                             int timeout_sec);
+
+/**
  * Enable rate limiting to prevent DoS attacks
  * @param coordinator Coordinator state
  * @param max_connections Max connections per IP per window (0 = default 10)

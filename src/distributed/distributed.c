@@ -2135,6 +2135,24 @@ void dist_coordinator_set_auth_token(dist_coordinator_t *coordinator,
     }
 }
 
+void dist_coordinator_set_worker_timeout(dist_coordinator_t *coordinator,
+                                         int timeout_sec) {
+    if (!coordinator) return;
+    coordinator->worker_timeout_sec = timeout_sec > 0 ? timeout_sec : 180;
+}
+
+void dist_coordinator_set_work_timeout(dist_coordinator_t *coordinator,
+                                       int timeout_sec) {
+    if (!coordinator) return;
+    coordinator->work_timeout_sec = timeout_sec > 0 ? timeout_sec : 300;
+}
+
+void dist_coordinator_set_connection_timeout(dist_coordinator_t *coordinator,
+                                             int timeout_sec) {
+    if (!coordinator) return;
+    coordinator->connection_timeout_sec = timeout_sec > 0 ? timeout_sec : 30;
+}
+
 void dist_worker_set_hardware_info(dist_worker_client_t *client,
                                    int cpu_cores, int cpu_threads,
                                    const char *cpu_name,
