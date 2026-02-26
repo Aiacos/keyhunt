@@ -551,15 +551,15 @@ Point Secp256K1::ScalarMultiplication(Point &P,Int *scalar)	{
 }
 
 #define KEYBUFFCOMP(buff,p) \
-(buff)[0] = ((p).x.bits[7] >> 8) | ((uint32_t)(0x2 + (p).y.IsOdd()) << 24); \
-(buff)[1] = ((p).x.bits[6] >> 8) | ((p).x.bits[7] <<24); \
-(buff)[2] = ((p).x.bits[5] >> 8) | ((p).x.bits[6] <<24); \
-(buff)[3] = ((p).x.bits[4] >> 8) | ((p).x.bits[5] <<24); \
-(buff)[4] = ((p).x.bits[3] >> 8) | ((p).x.bits[4] <<24); \
-(buff)[5] = ((p).x.bits[2] >> 8) | ((p).x.bits[3] <<24); \
-(buff)[6] = ((p).x.bits[1] >> 8) | ((p).x.bits[2] <<24); \
-(buff)[7] = ((p).x.bits[0] >> 8) | ((p).x.bits[1] <<24); \
-(buff)[8] = 0x00800000 | ((p).x.bits[0] <<24); \
+(buff)[0] = ((p).x.getBits(7) >> 8) | ((uint32_t)(0x2 + (p).y.IsOdd()) << 24); \
+(buff)[1] = ((p).x.getBits(6) >> 8) | ((p).x.getBits(7) <<24); \
+(buff)[2] = ((p).x.getBits(5) >> 8) | ((p).x.getBits(6) <<24); \
+(buff)[3] = ((p).x.getBits(4) >> 8) | ((p).x.getBits(5) <<24); \
+(buff)[4] = ((p).x.getBits(3) >> 8) | ((p).x.getBits(4) <<24); \
+(buff)[5] = ((p).x.getBits(2) >> 8) | ((p).x.getBits(3) <<24); \
+(buff)[6] = ((p).x.getBits(1) >> 8) | ((p).x.getBits(2) <<24); \
+(buff)[7] = ((p).x.getBits(0) >> 8) | ((p).x.getBits(1) <<24); \
+(buff)[8] = 0x00800000 | ((p).x.getBits(0) <<24); \
 (buff)[9] = 0; \
 (buff)[10] = 0; \
 (buff)[11] = 0; \
@@ -569,23 +569,23 @@ Point Secp256K1::ScalarMultiplication(Point &P,Int *scalar)	{
 (buff)[15] = 0x108;
 
 #define KEYBUFFUNCOMP(buff,p) \
-(buff)[0] = ((p).x.bits[7] >> 8) | 0x04000000; \
-(buff)[1] = ((p).x.bits[6] >> 8) | ((p).x.bits[7] <<24); \
-(buff)[2] = ((p).x.bits[5] >> 8) | ((p).x.bits[6] <<24); \
-(buff)[3] = ((p).x.bits[4] >> 8) | ((p).x.bits[5] <<24); \
-(buff)[4] = ((p).x.bits[3] >> 8) | ((p).x.bits[4] <<24); \
-(buff)[5] = ((p).x.bits[2] >> 8) | ((p).x.bits[3] <<24); \
-(buff)[6] = ((p).x.bits[1] >> 8) | ((p).x.bits[2] <<24); \
-(buff)[7] = ((p).x.bits[0] >> 8) | ((p).x.bits[1] <<24); \
-(buff)[8] = ((p).y.bits[7] >> 8) | ((p).x.bits[0] <<24); \
-(buff)[9] = ((p).y.bits[6] >> 8) | ((p).y.bits[7] <<24); \
-(buff)[10] = ((p).y.bits[5] >> 8) | ((p).y.bits[6] <<24); \
-(buff)[11] = ((p).y.bits[4] >> 8) | ((p).y.bits[5] <<24); \
-(buff)[12] = ((p).y.bits[3] >> 8) | ((p).y.bits[4] <<24); \
-(buff)[13] = ((p).y.bits[2] >> 8) | ((p).y.bits[3] <<24); \
-(buff)[14] = ((p).y.bits[1] >> 8) | ((p).y.bits[2] <<24); \
-(buff)[15] = ((p).y.bits[0] >> 8) | ((p).y.bits[1] <<24); \
-(buff)[16] = 0x00800000 | ((p).y.bits[0] <<24); \
+(buff)[0] = ((p).x.getBits(7) >> 8) | 0x04000000; \
+(buff)[1] = ((p).x.getBits(6) >> 8) | ((p).x.getBits(7) <<24); \
+(buff)[2] = ((p).x.getBits(5) >> 8) | ((p).x.getBits(6) <<24); \
+(buff)[3] = ((p).x.getBits(4) >> 8) | ((p).x.getBits(5) <<24); \
+(buff)[4] = ((p).x.getBits(3) >> 8) | ((p).x.getBits(4) <<24); \
+(buff)[5] = ((p).x.getBits(2) >> 8) | ((p).x.getBits(3) <<24); \
+(buff)[6] = ((p).x.getBits(1) >> 8) | ((p).x.getBits(2) <<24); \
+(buff)[7] = ((p).x.getBits(0) >> 8) | ((p).x.getBits(1) <<24); \
+(buff)[8] = ((p).y.getBits(7) >> 8) | ((p).x.getBits(0) <<24); \
+(buff)[9] = ((p).y.getBits(6) >> 8) | ((p).y.getBits(7) <<24); \
+(buff)[10] = ((p).y.getBits(5) >> 8) | ((p).y.getBits(6) <<24); \
+(buff)[11] = ((p).y.getBits(4) >> 8) | ((p).y.getBits(5) <<24); \
+(buff)[12] = ((p).y.getBits(3) >> 8) | ((p).y.getBits(4) <<24); \
+(buff)[13] = ((p).y.getBits(2) >> 8) | ((p).y.getBits(3) <<24); \
+(buff)[14] = ((p).y.getBits(1) >> 8) | ((p).y.getBits(2) <<24); \
+(buff)[15] = ((p).y.getBits(0) >> 8) | ((p).y.getBits(1) <<24); \
+(buff)[16] = 0x00800000 | ((p).y.getBits(0) <<24); \
 (buff)[17] = 0; \
 (buff)[18] = 0; \
 (buff)[19] = 0; \
@@ -764,15 +764,15 @@ void Secp256K1::GetHash160(int type, bool compressed, Point &pubKey, unsigned ch
 
 
 #define KEYBUFFPREFIX(buff,k,fix) \
-(buff)[0] = (k->bits[7] >> 8) | ((uint32_t)(fix) << 24); \
-(buff)[1] = (k->bits[6] >> 8) | (k->bits[7] <<24); \
-(buff)[2] = (k->bits[5] >> 8) | (k->bits[6] <<24); \
-(buff)[3] = (k->bits[4] >> 8) | (k->bits[5] <<24); \
-(buff)[4] = (k->bits[3] >> 8) | (k->bits[4] <<24); \
-(buff)[5] = (k->bits[2] >> 8) | (k->bits[3] <<24); \
-(buff)[6] = (k->bits[1] >> 8) | (k->bits[2] <<24); \
-(buff)[7] = (k->bits[0] >> 8) | (k->bits[1] <<24); \
-(buff)[8] = 0x00800000 | (k->bits[0] <<24); \
+(buff)[0] = (k->getBits(7) >> 8) | ((uint32_t)(fix) << 24); \
+(buff)[1] = (k->getBits(6) >> 8) | (k->getBits(7) <<24); \
+(buff)[2] = (k->getBits(5) >> 8) | (k->getBits(6) <<24); \
+(buff)[3] = (k->getBits(4) >> 8) | (k->getBits(5) <<24); \
+(buff)[4] = (k->getBits(3) >> 8) | (k->getBits(4) <<24); \
+(buff)[5] = (k->getBits(2) >> 8) | (k->getBits(3) <<24); \
+(buff)[6] = (k->getBits(1) >> 8) | (k->getBits(2) <<24); \
+(buff)[7] = (k->getBits(0) >> 8) | (k->getBits(1) <<24); \
+(buff)[8] = 0x00800000 | (k->getBits(0) <<24); \
 (buff)[9] = 0; \
 (buff)[10] = 0; \
 (buff)[11] = 0; \

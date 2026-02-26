@@ -170,17 +170,17 @@ public:
   // Check function
   //static void Check();
 
-  /*
-  // Align to 16 bytes boundary
-  union {
-    __declspec(align(16)) uint32_t bits[NB32BLOCK];
-    __declspec(align(16)) uint64_t bits64[NB64BLOCK];
-  };
-  */
-  union {
-    uint32_t bits[NB32BLOCK];
-    uint64_t bits64[NB64BLOCK];
-  };
+  uint64_t bits64[NB64BLOCK];
+
+  // Accessors replacing old union .bits[] member (avoids strict aliasing UB)
+  inline uint32_t getBits(int i) const {
+      return static_cast<uint32_t>(bits64[i >> 1] >> ((i & 1) << 5));
+  }
+  inline void setBits(int i, uint32_t val) {
+      int idx = i >> 1;
+      int shift = (i & 1) << 5;
+      bits64[idx] = (bits64[idx] & ~(0xFFFFFFFFULL << shift)) | (static_cast<uint64_t>(val) << shift);
+  }
 
 private:
 
@@ -417,11 +417,11 @@ inline bool Int::IsNegative() {
 }
 
 inline bool Int::IsEven() {
-  return (bits[0] & 0x1) == 0;
+  return (getBits(0) & 0x1) == 0;
 }
 
 inline bool Int::IsOdd() {
-  return (bits[0] & 0x1) == 1;
+  return (getBits(0) & 0x1) == 1;
 }
 
 #endif // BIGINTH

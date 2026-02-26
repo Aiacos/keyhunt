@@ -46,7 +46,7 @@ Int::Int(int32_t i32) {
   } else {
 	  CLEAR();
   }
-  bits[0] = i32;
+  setBits(0, i32);
 }
 
 Int::Int(int64_t i64) {
@@ -202,13 +202,13 @@ void Int::SetInt64(uint64_t value) {
 
 void Int::SetInt32(uint32_t value) {
   CLEAR();
-  bits[0]=value;
+  setBits(0, value);
 }
 
 // ------------------------------------------------
 
 uint32_t Int::GetInt32() {
-  return bits[0];
+  return getBits(0);
 }
 
 uint64_t Int::GetInt64() {
@@ -220,7 +220,7 @@ uint64_t Int::GetInt64() {
 
 unsigned char Int::GetByte(int n) {
 
-  unsigned char *bbPtr = (unsigned char *)bits;
+  unsigned char *bbPtr = (unsigned char *)bits64;
   return bbPtr[n];
 
 }
@@ -264,7 +264,7 @@ void Int::GetLo16Bytes(unsigned char *buff) {
 
 void Int::SetByte(int n,unsigned char byte) {
 
-	unsigned char *bbPtr = (unsigned char *)bits;
+	unsigned char *bbPtr = (unsigned char *)bits64;
 	bbPtr[n] = byte;
 
 }
@@ -272,7 +272,7 @@ void Int::SetByte(int n,unsigned char byte) {
 // ------------------------------------------------
 
 void Int::SetDWord(int n,uint32_t b) {
-  bits[n] = b;
+  setBits(n, b);
 }
 
 // ------------------------------------------------
@@ -362,9 +362,9 @@ void Int::Neg() {
 void Int::ShiftL32Bit() {
 
   for(int i=NB32BLOCK-1;i>0;i--) {
-    bits[i]=bits[i-1];
+    setBits(i, getBits(i-1));
   }
-  bits[0]=0;
+  setBits(0, 0);
 
 }
 
@@ -387,9 +387,9 @@ void Int::ShiftL32BitAndSub(Int *a,int n) {
   int i=NB32BLOCK-1;
 
   for(;i>=n;i--)
-    b.bits[i] = ~a->bits[i-n];
+    b.setBits(i, ~a->getBits(i-n));
   for(;i>=0;i--)
-    b.bits[i] = 0xFFFFFFFF;
+    b.setBits(i, 0xFFFFFFFF);
 
   Add(&b);
   AddOne();
@@ -421,12 +421,12 @@ void Int::ShiftL(uint32_t n) {
 void Int::ShiftR32Bit() {
 
   for(int i=0;i<NB32BLOCK-1;i++) {
-    bits[i]=bits[i+1];
+    setBits(i, getBits(i+1));
   }
-  if(((int32_t)bits[NB32BLOCK-2])<0)
-    bits[NB32BLOCK-1] = 0xFFFFFFFF;
+  if(((int32_t)getBits(NB32BLOCK-2))<0)
+    setBits(NB32BLOCK-1, 0xFFFFFFFF);
   else
-    bits[NB32BLOCK-1]=0;
+    setBits(NB32BLOCK-1, 0);
 
 }
 
@@ -577,9 +577,9 @@ int Int::GetBitLength() {
 	  t.Neg();
 
   int i=NB32BLOCK-1;
-  while(i>=0 && t.bits[i]==0) i--;
+  while(i>=0 && t.getBits(i)==0) i--;
   if(i<0) return 0;
-  return (32-bitLength(t.bits[i])) + i*32;
+  return (32-bitLength(t.getBits(i))) + i*32;
 
 }
 
@@ -588,7 +588,7 @@ int Int::GetBitLength() {
 int Int::GetSize() {
 
   int i=NB32BLOCK-1;
-  while(i>0 && bits[i]==0) i--;
+  while(i>0 && getBits(i)==0) i--;
   return i+1;
 
 }
@@ -630,7 +630,7 @@ int Int::GetLowestBit() {
 void Int::MaskByte(int n) {
 
   for (int i = n; i < NB32BLOCK; i++)
-	  bits[i] = 0;
+	  setBits(i, 0);
 
 }
 
@@ -655,8 +655,8 @@ void Int::Rand(int nbit) {
 	mask = (mask << leftBit) - 1;
 	uint32_t i=0;
 	for(;i<nb;i++)
-		bits[i]=rndl();
-	bits[i]=rndl()&mask;
+		setBits(i, rndl());
+	setBits(i, rndl()&mask);
 
 }
 
@@ -669,7 +669,7 @@ void Int::Rand(Int *min,Int *max) {
   diff.Sub(min);
 	uint32_t i=0;
 	for(;i<nb;i++)
-		bits[i]=rndl();
+		setBits(i, rndl());
   this->Mod(&diff);
   this->Add(min);
 }
@@ -708,15 +708,15 @@ void Int::Div(Int *a,Int *mod) {
   uint32_t qSize = tSize - dSize + 1;
 
   // D1 normalize the divisor
-  uint32_t shift = bitLength(d.bits[dSize-1]);
+  uint32_t shift = bitLength(d.getBits(dSize-1));
   if (shift > 0) {
     d.ShiftL(shift);
     rem.ShiftL(shift);
   }
 
-  uint32_t  _dh    = d.bits[dSize-1];
+  uint32_t  _dh    = d.getBits(dSize-1);
   uint64_t  dhLong = _dh;
-  uint32_t  _dl    = (dSize>1)?d.bits[dSize-2]:0;
+  uint32_t  _dl    = (dSize>1)?d.getBits(dSize-2):0;
   int sb = tSize-1;
 
   // D2 Initialize j
@@ -726,8 +726,8 @@ void Int::Div(Int *a,Int *mod) {
     uint32_t qhat = 0;
     uint32_t qrem = 0;
     int skipCorrection = false;
-    uint32_t nh = rem.bits[sb-j+1];
-    uint32_t nm = rem.bits[sb-j];
+    uint32_t nh = rem.getBits(sb-j+1);
+    uint32_t nm = rem.getBits(sb-j);
 
     if (nh == _dh) {
       qhat = ~0;
@@ -745,7 +745,7 @@ void Int::Div(Int *a,Int *mod) {
     if (!skipCorrection) {
 
       // Correct qhat
-      uint64_t nl = (uint64_t)rem.bits[sb-j-1];
+      uint64_t nl = (uint64_t)rem.getBits(sb-j-1);
       uint64_t rs = ((uint64_t)qrem << 32) | nl;
       uint64_t estProduct = (uint64_t)_dl * (uint64_t)(qhat);
 
@@ -771,7 +771,7 @@ void Int::Div(Int *a,Int *mod) {
       qhat--;
     }
 
-    bits[qSize-j-1] = qhat;
+    setBits(qSize-j-1, qhat);
 
  }
 
@@ -873,7 +873,7 @@ char* Int::GetBlockStr() {
 	char bStr[256];
 	tmp[0] = 0;
 	for (int i = NB32BLOCK-3; i>=0 ; i--) {
-	  sprintf(bStr, "%08X", bits[i]);
+	  sprintf(bStr, "%08X", getBits(i));
 	  strcat(tmp, bStr);
 	  if(i!=0) strcat(tmp, " ");
 	}
@@ -973,7 +973,7 @@ int Int::GetBit(uint32_t n) {
   uint32_t byte = n>>5;
   uint32_t bit  = n&31;
   uint32_t mask = 1 << bit;
-  return (bits[byte] & mask)!=0;
+  return (getBits(byte) & mask)!=0;
 }
 
 // ------------------------------------------------
@@ -983,7 +983,7 @@ char* Int::GetBase2() {
   for(int i=0;i<NB32BLOCK-1;i++) {
     unsigned int mask=0x80000000;
     for(int j=0;j<32;j++) {
-      if(bits[i]&mask) ret[k]='1';
+      if(getBits(i)&mask) ret[k]='1';
       else             ret[k]='0';
       k++;
       mask=mask>>1;

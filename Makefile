@@ -15,11 +15,8 @@ CFLAGS ?=
 # Include path for src/
 INCLUDES := -I$(SRCDIR)
 
-# LTO enabled with -fno-strict-aliasing to fix GCC optimization bug
-# The Int class uses a union with uint32_t bits[] and uint64_t bits64[]
-# Type punning through this union causes incorrect aliasing assumptions in LTO
-# See secp256k1/Int.h for the union definition
-LTO_FLAGS ?= -flto=auto -fno-strict-aliasing
+# Union removed from Int class - strict aliasing is now safe
+LTO_FLAGS ?= -flto=auto
 
 # Optional CUDA backend (auto-detected if nvcc is available)
 NVCC ?= nvcc

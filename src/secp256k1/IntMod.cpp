@@ -215,7 +215,7 @@ void Int::ModInv() {
   Int n2(&_P);
   int k = 0;
   int T;
-  int Q = _P.bits[0] & 3;
+  int Q = _P.getBits(0) & 3;
   shiftL(1,n2.bits64);
 
   // Penk's Algorithm (With DRS2 optimisation)
@@ -239,7 +239,7 @@ void Int::ModInv() {
 
     if (u.IsGreater(&v)) {
 
-      if ((u.bits[0] & 2) == (v.bits[0] & 2)) {
+      if ((u.getBits(0) & 2) == (v.getBits(0) & 2)) {
         u.Sub(&v);
         r.Sub(&s);
       } else {
@@ -247,7 +247,7 @@ void Int::ModInv() {
         r.Add(&s);
       }
       shiftR(2,u.bits64);
-      T = r.bits[0] & 3;
+      T = r.getBits(0) & 3;
       if (T == 0) {
         shiftR(2,r.bits64);
       } else if (T == 2) {
@@ -275,7 +275,7 @@ void Int::ModInv() {
 
     } else {
 
-      if ((u.bits[0] & 2) == (v.bits[0] & 2)) {
+      if ((u.getBits(0) & 2) == (v.getBits(0) & 2)) {
         v.Sub(&u);
         s.Sub(&r);
       } else {
@@ -287,7 +287,7 @@ void Int::ModInv() {
         break;
 
       shiftR(2, v.bits64);
-      T = s.bits[0] & 3;
+      T = s.getBits(0) & 3;
       if (T == 0) {
         shiftR(2,s.bits64);
       } else if (T == 2) {
