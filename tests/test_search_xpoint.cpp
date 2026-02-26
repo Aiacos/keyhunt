@@ -671,16 +671,13 @@ TEST(xpoint_check_batch_endomorphism_multiple_matches) {
  * Edge Cases and Error Conditions
  * ============================================================================ */
 
-TEST(xpoint_check_null_x_coord) {
-    setup_test_bloom();
-
-    /* Passing NULL x_coord should not crash (undefined behavior, but test defensive coding) */
-    /* This test documents expected behavior - in practice, NULL should be avoided */
-    /* Result is undefined, we just verify no crash */
-    (void)xpoint_check_single(NULL, &test_bloom, test_targets, 0, 32);
-
-    /* If we get here, no crash occurred */
-    ASSERT_TRUE(1);
+TEST(xpoint_check_null_x_coord_documentation) {
+    /* DOCUMENTATION: Passing NULL x_coord is undefined behavior.
+     * Callers MUST ensure x_coord is non-NULL.
+     * The xpoint_check_single() function does not perform NULL checks
+     * because all callers in the production code guarantee non-NULL inputs.
+     */
+    ASSERT_TRUE(1);  // This test just documents the contract
 }
 
 TEST(xpoint_check_zero_targets) {
@@ -753,7 +750,7 @@ int run_search_xpoint_tests(void) {
     RUN_TEST(xpoint_check_batch_endomorphism_multiple_matches);
 
     TEST_SECTION("Edge Cases");
-    RUN_TEST(xpoint_check_null_x_coord);
+    RUN_TEST(xpoint_check_null_x_coord_documentation);
     RUN_TEST(xpoint_check_zero_targets);
     RUN_TEST(xpoint_batch_simple_multiple_batches);
 

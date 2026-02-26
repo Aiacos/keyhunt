@@ -16,7 +16,7 @@ struct address_value {
 /*
  * Mock binary search function for testing.
  *
- * Simple implementation that compares data against first target's address.
+ * Simple implementation that compares data against all targets in array.
  * Real implementation in keyhunt.cpp performs binary search on sorted array.
  *
  * Parameters:
@@ -25,19 +25,17 @@ struct address_value {
  *   array_length - Number of targets in buffer
  *
  * Returns:
- *   1 if match found in first target, 0 otherwise
+ *   1 if match found in any target, 0 otherwise
  */
 int searchbinary(struct address_value *buffer, char *data, int64_t array_length) {
-    /* For XPOINT mode: compare 32 bytes (X-coordinate) */
-    /* For RMD160 mode: compare 20 bytes (hash) */
-    /* We check both lengths to be safe */
-    if (array_length > 0) {
+    /* Iterate through all targets to find a match */
+    for (int64_t i = 0; i < array_length; i++) {
         /* Try 32-byte comparison first (XPOINT) */
-        if (memcmp(buffer[0].address, data, 32) == 0) {
+        if (memcmp(buffer[i].address, data, 32) == 0) {
             return 1;
         }
         /* Try 20-byte comparison (RMD160) */
-        if (memcmp(buffer[0].address, data, 20) == 0) {
+        if (memcmp(buffer[i].address, data, 20) == 0) {
             return 1;
         }
     }
