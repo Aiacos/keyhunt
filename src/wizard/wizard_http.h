@@ -43,6 +43,31 @@ int wizard_http_get(const char *url, char **response, size_t *response_len);
 int wizard_http_post(const char *url, const char *body, size_t body_len,
                      const char *content_type, char **response, size_t *response_len);
 
+/**
+ * Perform HTTP POST request with JSON payload
+ *
+ * Convenience wrapper that automatically sets Content-Type: application/json
+ *
+ * @param url          Target URL
+ * @param json_body    JSON string to send (null-terminated)
+ * @param response     Output buffer (caller must free)
+ * @param response_len Output response length
+ * @return 0 on success, -1 on error
+ */
+int wizard_http_post_json(const char *url, const char *json_body,
+                          char **response, size_t *response_len);
+
+/**
+ * Escape a string for safe inclusion in JSON
+ *
+ * Escapes quotes, backslashes, and control characters.
+ * Caller must free the returned string.
+ *
+ * @param str Input string
+ * @return Escaped string (caller must free) or NULL on error
+ */
+char* wizard_http_json_escape(const char *str);
+
 #ifdef __cplusplus
 }
 #endif

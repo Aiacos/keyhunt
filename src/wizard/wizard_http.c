@@ -188,3 +188,83 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
 
     return 0;
 }
+
+/* ============================================================================
+ * JSON Utilities
+ * ============================================================================ */
+
+char* wizard_http_json_escape(const char *str) {
+    if (!str) return NULL;
+
+    /* Calculate required buffer size (worst case: every char needs escaping) */
+    size_t len = strlen(str);
+    size_t max_len = len * 6 + 1;  /* Worst case: \uXXXX for each char */
+    char *escaped = malloc(max_len);
+    if (!escaped) {
+        fprintf(stderr, "[-] wizard_http_json_escape: Memory allocation failed\n");
+        return NULL;
+    }
+
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)str[i];
+
+        switch (c) {
+            case '"':
+                escaped[j++] = '\\';
+                escaped[j++] = '"';
+                break;
+            case '\\':
+                escaped[j++] = '\\';
+                escaped[j++] = '\\';
+                break;
+            case '\b':
+                escaped[j++] = '\\';
+                escaped[j++] = 'b';
+                break;
+            case '\f':
+                escaped[j++] = '\\';
+                escaped[j++] = 'f';
+                break;
+            case '\n':
+                escaped[j++] = '\\';
+                escaped[j++] = 'n';
+                break;
+            case '\r':
+                escaped[j++] = '\\';
+                escaped[j++] = 'r';
+                break;
+            case '\t':
+                escaped[j++] = '\\';
+                escaped[j++] = 't';
+                break;
+            default:
+                if (c < 32) {
+                    /* Control characters: use \uXXXX */
+                    j += snprintf(escaped + j, max_len - j, "\\u%04x", c);
+                } else {
+                    escaped[j++] = c;
+                }
+                break;
+        }
+    }
+
+    escaped[j] = '\0';
+    return escaped;
+}
+
+/* ============================================================================
+ * JSON POST Request
+ * ============================================================================ */
+
+int wizard_http_post_json(const char *url, const char *json_body,
+                          char **response, size_t *response_len) {
+    if (!url || !json_body || !response || !response_len) {
+        fprintf(stderr, "[-] wizard_http_post_json: Invalid parameters\n");
+        return -1;
+    }
+
+    /* Call wizard_http_post with Content-Type: application/json */
+    return wizard_http_post(url, json_body, strlen(json_body),
+                           "application/json", response, response_len);
+}
