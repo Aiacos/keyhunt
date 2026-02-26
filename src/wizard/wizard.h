@@ -93,6 +93,10 @@ typedef struct {
     char progress_file[256];
     char exclusion_file[256];
 
+    /* Webhook notifications */
+    char webhook_discord_url[512];   /* Discord webhook URL for notifications */
+    char webhook_telegram_url[512];  /* Telegram bot token or webhook URL */
+
     /* Runtime state (not saved to JSON) */
     bool is_server;
     bool server_also_worker;
