@@ -1,9 +1,9 @@
 // src/output.cpp
 #include "output.h"
+#include "platform/platform.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 
 static output_level_t g_output_level = OUTPUT_NORMAL;
 
@@ -28,14 +28,6 @@ static output_level_t g_output_level = OUTPUT_NORMAL;
 
 // Max ETA seconds (1 year)
 #define MAX_ETA_SECONDS (365*24*3600)
-
-static int get_terminal_width(void) {
-    struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
-        return w.ws_col;
-    }
-    return 80;  /* Default */
-}
 
 void output_init(output_level_t level) {
     g_output_level = level;
@@ -65,7 +57,7 @@ void output_banner(const char *version, const char *mode, int threads,
         printf("\n\n");
     } else {
         // Full banner with responsive width
-        int width = get_terminal_width();
+        int width = platform_terminal_width();
         if (width > 80) width = 80;  /* Cap at reasonable width */
         if (width < 50) width = 50;  /* Minimum for readability */
 
@@ -199,7 +191,7 @@ void output_key_found(const char *private_key, const char *address,
                       const char *public_key) {
     if (!private_key || !address) return;
 
-    int width = get_terminal_width();
+    int width = platform_terminal_width();
     if (width > 80) width = 80;  /* Cap at reasonable width */
     if (width < 50) width = 50;  /* Minimum for readability */
 
@@ -247,7 +239,7 @@ void output_final_stats(uint64_t total_keys, double total_time_sec,
                         double avg_speed, int keys_found) {
     if (g_output_level == OUTPUT_SILENT) return;
 
-    int width = get_terminal_width();
+    int width = platform_terminal_width();
     if (width > 80) width = 80;  /* Cap at reasonable width */
     if (width < 50) width = 50;  /* Minimum for readability */
 

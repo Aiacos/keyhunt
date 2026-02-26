@@ -1,5 +1,6 @@
 // src/benchmark.cpp
 #include "benchmark.h"
+#include "platform/platform.h"
 #include "core/sysinfo.h"
 #include <stdio.h>
 #include <string.h>
@@ -7,7 +8,6 @@
 #include <math.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 
 // ANSI color codes
 #define CLR_RESET   "\033[0m"
@@ -25,21 +25,11 @@
 #define BENCHMARK_SAMPLE_MS     1000
 
 // Forward declarations
-static int get_terminal_width(void);
 static void print_border_line(int width, char ch);
 static void print_progress_bar(double percent, int width);
 static void format_time_estimate(double seconds, char *buffer, size_t size);
 static double estimate_cpu_speed(const system_info_t *info);
 static double estimate_gpu_speed(const system_info_t *info);
-
-// Get terminal width
-static int get_terminal_width(void) {
-    struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
-        return w.ws_col;
-    }
-    return 80;  /* Default */
-}
 
 // Print a line of repeated characters (for borders)
 static void print_border_line(int width, char ch) {
@@ -66,7 +56,7 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
         result->gpu_name[sizeof(result->gpu_name) - 1] = '\0';
     }
 
-    int term_width = get_terminal_width();
+    int term_width = platform_terminal_width();
     int max_width = term_width > 80 ? 80 : term_width;
 
     printf("\n");
@@ -197,7 +187,7 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
 void benchmark_print_results(const benchmark_result_t *result, int bits) {
     if (!result || bits < 1) return;
 
-    int term_width = get_terminal_width();
+    int term_width = platform_terminal_width();
     int table_width = term_width > 70 ? 70 : (term_width > 50 ? term_width - 5 : 45);
     int pad_len = 0;  // For dynamic padding
     int time_str_len = 0;
