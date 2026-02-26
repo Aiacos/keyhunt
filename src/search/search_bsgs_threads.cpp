@@ -23,6 +23,7 @@
 #include "../secp256k1/IntGroup.h"
 #include "../platform/platform.h"
 #include "../output.h"
+#include "../bsgs/bsgs_ops.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -114,10 +115,20 @@ void *thread_process_bsgs(void *vargp)	{
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 	grp->Set(dx);
 
+	// Batch context for optimized operations
+	bsgs_batch_ctx_t batch_ctx;
+
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	// Initialize batch context
+	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
+		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -283,6 +294,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	bsgs_batch_free(&batch_ctx);
 	delete grp;
 	return NULL;
 }
@@ -322,11 +334,20 @@ void *thread_process_bsgs_random(void *vargp)	{
 	Point pn;
 	grp->Set(dx);
 
+	// Batch context for optimized operations
+	bsgs_batch_ctx_t batch_ctx;
 
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	// Initialize batch context
+	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
+		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -505,6 +526,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	bsgs_batch_free(&batch_ctx);
 	delete grp;
 	return NULL;
 }
@@ -833,11 +855,21 @@ void *thread_process_bsgs_dance(void *vargp)	{
 
 	grp->Set(dx);
 
+	// Batch context for optimized operations
+	bsgs_batch_ctx_t batch_ctx;
+
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
+
+	// Initialize batch context
+	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
+		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -1052,6 +1084,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	bsgs_batch_free(&batch_ctx);
 	delete grp;
 	return NULL;
 }
@@ -1090,10 +1123,20 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	Point pn;
 	grp->Set(dx);
 
+	// Batch context for optimized operations
+	bsgs_batch_ctx_t batch_ctx;
+
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	// Initialize batch context
+	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
+		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -1277,6 +1320,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	bsgs_batch_free(&batch_ctx);
 	delete grp;
 	return NULL;
 }
@@ -1316,12 +1360,21 @@ void *thread_process_bsgs_both(void *vargp)	{
 	struct thread_rand_state rand_state;
 	grp->Set(dx);
 
+	// Batch context for optimized operations
+	bsgs_batch_ctx_t batch_ctx;
 
 	tt = (struct tothread *)vargp;
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
+
+	// Initialize batch context
+	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
+		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	cycles = bsgs_aux / 1024;
 	if(bsgs_aux % 1024 != 0)	{
@@ -1532,6 +1585,7 @@ platform_mutex_unlock(&write_keys);
 			steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	bsgs_batch_free(&batch_ctx);
 	delete grp;
 	return NULL;
 }
