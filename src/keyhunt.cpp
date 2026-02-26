@@ -2346,6 +2346,7 @@ int main(int argc, char **argv)	{
 		}
 	}
 	if(FLAGMODE != MODE_BSGS && FLAGMODE != MODE_MINIKEYS)	{
+		if(DEBUGCOUNT == 0) DEBUGCOUNT = 1024;
 		BSGS_N.SetInt32(DEBUGCOUNT);
 		if(FLAGRANGE == 0 && FLAGBITRANGE == 0)	{
 			n_range_start.SetInt32(1);
