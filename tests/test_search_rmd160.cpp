@@ -43,20 +43,14 @@ static int writekey_called = 0;
 static Int last_found_key;
 static bool last_found_compressed = false;
 
-void mock_writekey(bool compressed, Int *key) {
+static void mock_writekey(bool compressed, Int *key) {
     writekey_called++;
     last_found_key = *key;
     last_found_compressed = compressed;
 }
 
-/* Mock binary search function (returns 1 if found, 0 otherwise) */
-extern "C" int searchbinary(struct address_value *buffer, char *data, int64_t array_length) {
-    /* Simple mock: compare first 20 bytes (RIPEMD160 size) of first target */
-    if (array_length > 0 && memcmp(buffer[0].address, data, 20) == 0) {
-        return 1;
-    }
-    return 0;
-}
+/* Mock binary search function is provided by test_search_mocks.cpp */
+extern int searchbinary(struct address_value *buffer, char *data, int64_t array_length);
 
 /* Setup function to initialize test bloom filter */
 static void setup_test_bloom(void) {
