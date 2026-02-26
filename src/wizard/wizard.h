@@ -35,6 +35,11 @@ extern "C" {
 #define PRIVATEKEYS_CACHE_FILE "privatekeys_progress.json"
 #define PRIVATEKEYS_REFRESH_INTERVAL (24 * 60 * 60)  /* 24 hours */
 
+/* Keys.lol puzzle progress integration */
+#define KEYSLOL_URL "https://keys.lol/api/puzzle"
+#define KEYSLOL_CACHE_FILE "keyslol_progress.json"
+#define KEYSLOL_REFRESH_INTERVAL (24 * 60 * 60)  /* 24 hours */
+
 /* Puzzle definition (can be loaded from file or web) */
 typedef struct {
     int number;
@@ -118,6 +123,14 @@ typedef struct {
     uint64_t keys_scanned;       /* Absolute count if available */
     time_t fetch_time;           /* When data was fetched */
 } privatekeys_progress_t;
+
+/* Keys.lol progress data */
+typedef struct {
+    int puzzle_number;
+    double percent_scanned;      /* e.g., 0.022477 */
+    uint64_t keys_scanned;       /* Absolute count if available */
+    time_t fetch_time;           /* When data was fetched */
+} keyslol_progress_t;
 
 /* ============================================================================
  * Wizard Entry Point
@@ -260,6 +273,26 @@ void wizard_calculate_search_offset(const puzzle_def_t *puzzle,
 bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
                                  const char *range_start,
                                  double percent_scanned);
+
+/* ============================================================================
+ * Keys.lol Puzzle Progress Integration
+ * ============================================================================ */
+
+/**
+ * Fetch progress from Keys.lol (scrapes HTML/API)
+ * @param puzzle_number Puzzle to check
+ * @param progress Output progress data
+ * @return 0 on success, -1 on error
+ */
+int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progress);
+
+/**
+ * Get progress with 24h caching
+ * @param puzzle_number Puzzle to check
+ * @param progress Output progress data
+ * @return 0 on success (fresh or cached), -1 on error (no data available)
+ */
+int wizard_keyslol_get_progress(int puzzle_number, keyslol_progress_t *progress);
 
 /**
  * Save locally completed range to progress file

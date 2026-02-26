@@ -856,6 +856,230 @@ bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
 }
 
 /* ============================================================================
+ * Keys.lol Puzzle Progress Integration
+ * ============================================================================ */
+
+/* Get cache file path for Keys.lol */
+static void get_keyslol_cache_filepath(char *path, size_t size) {
+    char dir[512];
+    if (get_cache_dir(dir, sizeof(dir)) != 0) {
+        snprintf(path, size, ".keyhunt_keyslol_cache.json");
+        return;
+    }
+    snprintf(path, size, "%s/keyslol_progress.json", dir);
+}
+
+/* Save Keys.lol progress to cache file */
+static int save_keyslol_cache(const keyslol_progress_t *progress) {
+    char filepath[512];
+    get_keyslol_cache_filepath(filepath, sizeof(filepath));
+
+    FILE *f = fopen(filepath, "w");
+    if (!f) return -1;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"puzzle_number\": %d,\n", progress->puzzle_number);
+    fprintf(f, "  \"percent_scanned\": %.8f,\n", progress->percent_scanned);
+    fprintf(f, "  \"keys_scanned\": %llu,\n", (unsigned long long)progress->keys_scanned);
+    fprintf(f, "  \"fetch_time\": %lld\n", (long long)progress->fetch_time);
+    fprintf(f, "}\n");
+
+    fclose(f);
+    return 0;
+}
+
+/* Load Keys.lol progress from cache file */
+static int load_keyslol_cache(keyslol_progress_t *progress) {
+    char filepath[512];
+    get_keyslol_cache_filepath(filepath, sizeof(filepath));
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) return -1;
+
+    char buf[1024];
+    size_t len = fread(buf, 1, sizeof(buf) - 1, f);
+    buf[len] = '\0';
+    fclose(f);
+
+    /* Simple JSON parsing */
+    memset(progress, 0, sizeof(*progress));
+
+    char *ptr;
+
+    ptr = strstr(buf, "\"puzzle_number\":");
+    if (ptr) progress->puzzle_number = atoi(ptr + 16);
+
+    ptr = strstr(buf, "\"percent_scanned\":");
+    if (ptr) progress->percent_scanned = atof(ptr + 18);
+
+    ptr = strstr(buf, "\"keys_scanned\":");
+    if (ptr) progress->keys_scanned = strtoull(ptr + 15, NULL, 10);
+
+    ptr = strstr(buf, "\"fetch_time\":");
+    if (ptr) progress->fetch_time = (time_t)strtoll(ptr + 13, NULL, 10);
+
+    /* Validate */
+    if (progress->fetch_time == 0) return -1;
+
+    return 0;
+}
+
+int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progress) {
+    if (!progress) return -1;
+
+    memset(progress, 0, sizeof(*progress));
+    progress->puzzle_number = puzzle_number;
+
+    printf("[+] Fetching Keys.lol puzzle progress...\n");
+
+    /* Construct API URL for specific puzzle */
+    char url[256];
+    snprintf(url, sizeof(url), "%s/%d", KEYSLOL_URL, puzzle_number);
+
+    char *response = NULL;
+    size_t response_len = 0;
+
+    if (fetch_url(url, &response, &response_len) != 0) {
+        printf("[-] Failed to fetch Keys.lol API\n");
+        return -1;
+    }
+
+    if (response_len < 50) {
+        printf("[-] Invalid response from Keys.lol\n");
+        free(response);
+        return -1;
+    }
+
+    double percent = 0.0;
+    uint64_t keys_scanned = 0;
+
+    /* Parse JSON response - Keys.lol uses JSON API format
+     * Expected fields: "progress", "percentage", "scanned", "keys_scanned" */
+
+    /* Method 1: Look for "progress" or "percentage" field */
+    char *pct_ptr = strstr(response, "\"progress\":");
+    if (!pct_ptr) pct_ptr = strstr(response, "\"percentage\":");
+
+    if (pct_ptr) {
+        /* Skip to value */
+        char *val_start = strchr(pct_ptr, ':');
+        if (val_start) {
+            val_start++;
+            /* Skip whitespace */
+            while (*val_start == ' ' || *val_start == '\t') val_start++;
+
+            double val = 0.0;
+            if (sscanf(val_start, "%lf", &val) == 1 && val >= 0.0 && val <= 100.0) {
+                percent = val;
+            }
+        }
+    }
+
+    /* Method 2: Look for "scanned" or "keys_scanned" field */
+    char *keys_ptr = strstr(response, "\"keys_scanned\":");
+    if (!keys_ptr) keys_ptr = strstr(response, "\"scanned\":");
+
+    if (keys_ptr) {
+        /* Skip to value */
+        char *val_start = strchr(keys_ptr, ':');
+        if (val_start) {
+            val_start++;
+            /* Skip whitespace and quotes */
+            while (*val_start == ' ' || *val_start == '\t' || *val_start == '"') val_start++;
+
+            uint64_t val = 0;
+            if (sscanf(val_start, "%llu", &val) == 1 && val > 0) {
+                keys_scanned = val;
+            }
+        }
+    }
+
+    /* Method 3: Alternative parsing for percentage with % sign */
+    if (percent <= 0.0) {
+        char *scan = response;
+        while ((scan = strchr(scan, '%')) != NULL) {
+            /* Look backwards for number */
+            char *num_start = scan - 1;
+            while (num_start > response &&
+                   (*num_start == '.' || (*num_start >= '0' && *num_start <= '9'))) {
+                num_start--;
+            }
+            num_start++;
+
+            double val = 0.0;
+            if (sscanf(num_start, "%lf", &val) == 1 && val >= 0.0 && val <= 100.0) {
+                percent = val;
+                break;
+            }
+            scan++;
+        }
+    }
+
+    free(response);
+
+    if (percent <= 0.0 && keys_scanned == 0) {
+        printf("[-] Could not parse progress data from Keys.lol\n");
+        return -1;
+    }
+
+    progress->percent_scanned = percent;
+    progress->keys_scanned = keys_scanned;
+    progress->fetch_time = time(NULL);
+
+    printf("[+] Keys.lol: %.4f%% scanned", percent);
+    if (keys_scanned > 0) {
+        printf(" (%llu keys)", (unsigned long long)keys_scanned);
+    }
+    printf("\n");
+
+    return 0;
+}
+
+/* Keys.lol Caching Logic (24-hour refresh) */
+int wizard_keyslol_get_progress(int puzzle_number, keyslol_progress_t *progress) {
+    if (!progress) return -1;
+
+    /* Try to load from cache first */
+    int cache_result = load_keyslol_cache(progress);
+    bool have_cache = (cache_result == 0 && progress->puzzle_number == puzzle_number);
+
+    /* Check if cache is still fresh (< 24 hours) */
+    time_t now = time(NULL);
+    bool needs_refresh = !have_cache ||
+                         (now - progress->fetch_time >= KEYSLOL_REFRESH_INTERVAL);
+
+    if (!needs_refresh) {
+        /* Cache is fresh, use it */
+        double age_hours = (now - progress->fetch_time) / 3600.0;
+        printf("[+] Using cached Keys.lol data (%.1f hours old)\n", age_hours);
+        return 0;
+    }
+
+    /* Need to fetch fresh data */
+    printf("[+] Refreshing Keys.lol progress (daily update)...\n");
+
+    keyslol_progress_t fresh;
+    if (wizard_keyslol_fetch_progress(puzzle_number, &fresh) == 0) {
+        /* Save to cache */
+        save_keyslol_cache(&fresh);
+        *progress = fresh;
+        return 0;
+    }
+
+    /* Fetch failed - try to use stale cache */
+    if (have_cache) {
+        double age_hours = (now - progress->fetch_time) / 3600.0;
+        printf("[!] Fetch failed, using stale cache (%.1f hours old)\n", age_hours);
+        return 0;
+    }
+
+    /* No cache available */
+    printf("[!] No Keys.lol progress data available\n");
+    memset(progress, 0, sizeof(*progress));
+    return -1;
+}
+
+/* ============================================================================
  * Local Progress Tracking (Resume Capability)
  * ============================================================================ */
 
