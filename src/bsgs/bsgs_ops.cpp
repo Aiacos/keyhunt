@@ -1,18 +1,26 @@
 /*
  * Optimized BSGS Operations Module
  * High-performance batch operations for Baby Step Giant Step algorithm
- * C interface only - avoids conflicts with immintrin.h and Int.h macros
+ * C interface with C++ implementation for elliptic curve operations
  */
 
 #include <immintrin.h>
 #include "bsgs_ops.h"
 #include "../bloom/bloom.h"
+#include "../secp256k1/Int.h"
+#include "../secp256k1/Point.h"
+#include "../secp256k1/IntGroup.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 #ifdef __linux__
 #include <cpuid.h>
+#endif
+
+// CPU_GRP_SIZE must match the value in search_context.h
+#ifndef CPU_GRP_SIZE
+#define CPU_GRP_SIZE 1024
 #endif
 
 // Check AVX2 availability
@@ -71,6 +79,21 @@ int bsgs_batch_init(bsgs_batch_ctx_t *ctx, int batch_size) {
     ctx->batch_size = batch_size;
     ctx->half_batch = batch_size / 2;
 
+    // Allocate point array (CPU_GRP_SIZE points, cache-aligned)
+    ctx->pts = (Point*)aligned_alloc_helper(CACHE_LINE_SIZE, CPU_GRP_SIZE * sizeof(Point));
+    if (!ctx->pts) goto fail;
+
+    // Allocate dx array for batch modular inversion (CPU_GRP_SIZE/2 + 1)
+    ctx->dx = (Int*)aligned_alloc_helper(CACHE_LINE_SIZE, (CPU_GRP_SIZE / 2 + 1) * sizeof(Int));
+    if (!ctx->dx) goto fail;
+
+    // Create IntGroup for batch modular inversion
+    ctx->grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
+    if (!ctx->grp) goto fail;
+
+    // Set the dx array in the IntGroup
+    ((IntGroup*)ctx->grp)->Set(ctx->dx);
+
     // Allocate bloom results
     ctx->bloom_results = (uint8_t*)aligned_alloc_helper(CACHE_LINE_SIZE, batch_size);
     if (!ctx->bloom_results) goto fail;
@@ -90,6 +113,9 @@ fail:
 void bsgs_batch_free(bsgs_batch_ctx_t *ctx) {
     if (!ctx) return;
 
+    if (ctx->pts) aligned_free_helper(ctx->pts);
+    if (ctx->dx) aligned_free_helper(ctx->dx);
+    if (ctx->grp) delete (IntGroup*)ctx->grp;
     if (ctx->bloom_results) aligned_free_helper(ctx->bloom_results);
     if (ctx->xpoint_raw) aligned_free_helper(ctx->xpoint_raw);
 
@@ -134,6 +160,10 @@ int bsgs_batch_bloom_check(bsgs_batch_ctx_t *ctx, void *bloom_array, int num_poi
 }
 
 // Batch compute points with optimized memory access
+// This implements the core BSGS point computation algorithm:
+// - Computes dx values (x-coordinate differences)
+// - Performs batch modular inversion using Montgomery's trick
+// - Calculates points in both positive and negative directions
 void bsgs_batch_compute_points(
     bsgs_batch_ctx_t *ctx,
     Point *startP,
@@ -141,19 +171,137 @@ void bsgs_batch_compute_points(
     Point *_2GSn,
     int hLength)
 {
-    // Stub implementation - validates parameters
+    // Validate parameters
     if (!ctx || !ctx->initialized) {
         return;
     }
     if (!startP || !GSn || !_2GSn) {
         return;
     }
-    if (hLength < 0) {
+    if (hLength < 0 || hLength >= CPU_GRP_SIZE / 2) {
         return;
     }
 
-    // TODO: Implement actual batch point computation
-    // This is a placeholder for the actual BSGS point computation logic
+    Int *dx = ctx->dx;
+    Point *pts = ctx->pts;
+    IntGroup *grp = (IntGroup*)ctx->grp;
+
+    // Temporary variables for point arithmetic
+    Int dy, dyn, _s, _p;
+    Point pp, pn;
+
+    // Step 1: Compute dx values (differences in x-coordinates)
+    // This computes: dx[i] = GSn[i].x - startP.x (mod p)
+    // Loop unrolling with prefetching for better performance
+    int i = 0;
+
+    // Unroll by 4 for better instruction-level parallelism
+    for (; i + 3 < hLength; i += 4) {
+        // Prefetch future GSn points
+        if (i + 7 < hLength) {
+            __builtin_prefetch(&GSn[i + 7], 0, 3);
+        }
+        dx[i].ModSub(&GSn[i].x, &startP->x);
+        dx[i + 1].ModSub(&GSn[i + 1].x, &startP->x);
+        dx[i + 2].ModSub(&GSn[i + 2].x, &startP->x);
+        dx[i + 3].ModSub(&GSn[i + 3].x, &startP->x);
+    }
+
+    // Handle remaining elements
+    for (; i < hLength; i++) {
+        dx[i].ModSub(&GSn[i].x, &startP->x);
+    }
+
+    // Compute dx for the center point
+    dx[hLength].ModSub(&GSn[hLength].x, &startP->x);
+
+    // Compute dx for the next center point (2*GSn)
+    dx[hLength + 1].ModSub(&_2GSn->x, &startP->x);
+
+    // Step 2: Batch modular inversion using Montgomery's trick
+    // This is the expensive operation that benefits from batching
+    // Complexity: O(n) modular multiplications + 1 modular inversion
+    // instead of n modular inversions
+    grp->ModInvOptimized();
+
+    // Step 3: Compute points using the batch-inverted dx values
+    // We compute points symmetrically: P ± i*G for i = 1..hLength
+    // This exploits the fact that P+iG and P-iG share the same dx inverse
+
+    // Set center point
+    pts[CPU_GRP_SIZE / 2] = *startP;
+
+    // Compute positive and negative points with loop unrolling
+    for (i = 0; i < hLength; i++) {
+        // Prefetch upcoming GSn points
+        if (i + PREFETCH_DISTANCE < hLength) {
+            __builtin_prefetch(&GSn[i + PREFETCH_DISTANCE], 0, 3);
+        }
+
+        pp = *startP;
+        pn = *startP;
+
+        // Compute P = startP + i*G (positive direction)
+        dy.ModSub(&GSn[i].y, &pp.y);
+
+        // s = (p2.y - p1.y) * inverse(p2.x - p1.x)
+        _s.ModMulK1(&dy, &dx[i]);
+
+        // _p = s^2
+        _p.ModSquareK1(&_s);
+
+        // rx = s^2 - p1.x - p2.x
+        pp.x.ModNeg();
+        pp.x.ModAdd(&_p);
+        pp.x.ModSub(&GSn[i].x);
+
+        // ry = -p2.y - s*(rx - p2.x)
+        pp.y.Sub(&GSn[i].x, &pp.x);
+        pp.y.ModMulK1(&_s);
+        pp.y.ModSub(&GSn[i].y);
+
+        // Compute P = startP - i*G (negative direction)
+        dyn.Set(&GSn[i].y);
+        dyn.ModNeg();
+        dyn.ModSub(&pn.y);
+
+        // s = (p2.y - p1.y) * inverse(p2.x - p1.x)
+        _s.ModMulK1(&dyn, &dx[i]);
+
+        // _p = s^2
+        _p.ModSquareK1(&_s);
+
+        // rx = s^2 - p1.x - p2.x
+        pn.x.ModNeg();
+        pn.x.ModAdd(&_p);
+        pn.x.ModSub(&GSn[i].x);
+
+        // ry = -p2.y - s*(rx - p2.x)
+        pn.y.Sub(&GSn[i].x, &pn.x);
+        pn.y.ModMulK1(&_s);
+        pn.y.ModSub(&dyn);
+
+        // Store points symmetrically around center
+        pts[CPU_GRP_SIZE / 2 + (i + 1)] = pp;
+        pts[CPU_GRP_SIZE / 2 - (i + 1)] = pn;
+    }
+
+    // Compute the next center point using the last dx
+    // This advances to the next batch: startP + (CPU_GRP_SIZE/2)*G
+    dy.ModSub(&_2GSn->y, &startP->y);
+    _s.ModMulK1(&dy, &dx[hLength + 1]);
+    _p.ModSquareK1(&_s);
+
+    pp.x.Set(&startP->x);
+    pp.x.ModNeg();
+    pp.x.ModAdd(&_p);
+    pp.x.ModSub(&_2GSn->x);
+
+    pp.y.Sub(&_2GSn->x, &pp.x);
+    pp.y.ModMulK1(&_s);
+    pp.y.ModSub(&_2GSn->y);
+
+    pts[0] = pp;
 }
 
 // Check if SIMD is available
