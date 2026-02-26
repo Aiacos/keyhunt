@@ -230,7 +230,8 @@ int wizard_community_fetch(int puzzle_number, community_range_t **ranges, int *c
     size_t html_len = 0;
 
     if (fetch_url(url, &html, &html_len) != 0) {
-        printf("[-] Failed to fetch community data\n");
+        printf("[-] Failed to fetch community data (network error or source unavailable)\n");
+        printf("[i] Fallback: Continuing without community range exclusions\n");
         *ranges = NULL;
         *count = 0;
         return -1;
@@ -785,15 +786,21 @@ int wizard_privatekeys_get_progress(int puzzle_number, privatekeys_progress_t *p
         return 0;
     }
 
-    /* Fetch failed - try to use stale cache */
+    /* Fetch failed - try to use stale cache as fallback */
     if (have_cache) {
         double age_hours = (now - progress->fetch_time) / 3600.0;
-        printf("[!] Fetch failed, using stale cache (%.1f hours old)\n", age_hours);
+        double age_days = age_hours / 24.0;
+        if (age_days > 7.0) {
+            printf("[!] Network error - using stale cache as fallback (%.1f days old, may be outdated)\n", age_days);
+        } else {
+            printf("[!] Network error - using stale cache as fallback (%.1f hours old)\n", age_hours);
+        }
         return 0;
     }
 
-    /* No cache available */
-    printf("[!] No community progress data available\n");
+    /* No cache available - fallback to no progress data */
+    printf("[!] No community progress data available (source unavailable and no cache)\n");
+    printf("[i] Fallback: Will start search from beginning of range\n");
     memset(progress, 0, sizeof(*progress));
     return -1;
 }
@@ -1066,15 +1073,21 @@ int wizard_keyslol_get_progress(int puzzle_number, keyslol_progress_t *progress)
         return 0;
     }
 
-    /* Fetch failed - try to use stale cache */
+    /* Fetch failed - try to use stale cache as fallback */
     if (have_cache) {
         double age_hours = (now - progress->fetch_time) / 3600.0;
-        printf("[!] Fetch failed, using stale cache (%.1f hours old)\n", age_hours);
+        double age_days = age_hours / 24.0;
+        if (age_days > 7.0) {
+            printf("[!] Network error - using stale cache as fallback (%.1f days old, may be outdated)\n", age_days);
+        } else {
+            printf("[!] Network error - using stale cache as fallback (%.1f hours old)\n", age_hours);
+        }
         return 0;
     }
 
-    /* No cache available */
-    printf("[!] No Keys.lol progress data available\n");
+    /* No cache available - fallback to no progress data */
+    printf("[!] No Keys.lol progress data available (source unavailable and no cache)\n");
+    printf("[i] Fallback: Will start search from beginning of range\n");
     memset(progress, 0, sizeof(*progress));
     return -1;
 }
@@ -1197,6 +1210,9 @@ int wizard_community_fetch_all_sources(int puzzle_number,
     /* Summary */
     if (success_count == 0) {
         printf("[-] No community progress data available from any source\n");
+        printf("[i] All sources unavailable - using fallback mode (no progress optimization)\n");
+        printf("[i] Fallback strategy: Search will start from beginning of puzzle range\n");
+        printf("[i] Tip: Check network connection or try again later for optimized search\n");
         return -1;
     }
 
