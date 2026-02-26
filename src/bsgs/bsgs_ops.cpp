@@ -164,6 +164,14 @@ int bsgs_batch_bloom_check(bsgs_batch_ctx_t *ctx, void *bloom_array, int num_poi
 // - Computes dx values (x-coordinate differences)
 // - Performs batch modular inversion using Montgomery's trick
 // - Calculates points in both positive and negative directions
+//
+// Cache optimization strategy:
+// - Aggressive prefetching with _mm_prefetch intrinsics
+// - PREFETCH_DISTANCE (8) chosen for ~100 cycle latency hiding
+// - _MM_HINT_T0: High temporal locality (L1 cache) for frequently accessed data
+// - _MM_HINT_T1: Moderate temporal locality (L2 cache) for write-back buffers
+// - Loop unrolling by 4 for instruction-level parallelism
+// - Cache-aligned allocations (CACHE_LINE_SIZE = 64 bytes)
 void bsgs_batch_compute_points(
     bsgs_batch_ctx_t *ctx,
     Point *startP,
@@ -192,15 +200,20 @@ void bsgs_batch_compute_points(
 
     // Step 1: Compute dx values (differences in x-coordinates)
     // This computes: dx[i] = GSn[i].x - startP.x (mod p)
-    // Loop unrolling with prefetching for better performance
+    // Loop unrolling with aggressive prefetching for better performance
     int i = 0;
 
     // Unroll by 4 for better instruction-level parallelism
     for (; i + 3 < hLength; i += 4) {
-        // Prefetch future GSn points
-        if (i + 7 < hLength) {
-            __builtin_prefetch(&GSn[i + 7], 0, 3);
+        // Prefetch future GSn points (read, high temporal locality)
+        if (i + PREFETCH_DISTANCE < hLength) {
+            _mm_prefetch((const char*)&GSn[i + PREFETCH_DISTANCE], _MM_HINT_T0);
         }
+        // Prefetch dx write locations (write, moderate temporal locality)
+        if (i + PREFETCH_DISTANCE < hLength) {
+            _mm_prefetch((const char*)&dx[i + PREFETCH_DISTANCE], _MM_HINT_T1);
+        }
+
         dx[i].ModSub(&GSn[i].x, &startP->x);
         dx[i + 1].ModSub(&GSn[i + 1].x, &startP->x);
         dx[i + 2].ModSub(&GSn[i + 2].x, &startP->x);
@@ -233,9 +246,20 @@ void bsgs_batch_compute_points(
 
     // Compute positive and negative points with loop unrolling
     for (i = 0; i < hLength; i++) {
-        // Prefetch upcoming GSn points
+        // Prefetch upcoming GSn points for read (high temporal locality)
         if (i + PREFETCH_DISTANCE < hLength) {
-            __builtin_prefetch(&GSn[i + PREFETCH_DISTANCE], 0, 3);
+            _mm_prefetch((const char*)&GSn[i + PREFETCH_DISTANCE], _MM_HINT_T0);
+        }
+        // Prefetch upcoming dx values (already computed, high temporal locality)
+        if (i + PREFETCH_DISTANCE < hLength) {
+            _mm_prefetch((const char*)&dx[i + PREFETCH_DISTANCE], _MM_HINT_T0);
+        }
+        // Prefetch pts write locations (moderate temporal locality)
+        int pts_idx_p = CPU_GRP_SIZE / 2 + (i + PREFETCH_DISTANCE + 1);
+        int pts_idx_n = CPU_GRP_SIZE / 2 - (i + PREFETCH_DISTANCE + 1);
+        if (i + PREFETCH_DISTANCE < hLength) {
+            _mm_prefetch((const char*)&pts[pts_idx_p], _MM_HINT_T1);
+            _mm_prefetch((const char*)&pts[pts_idx_n], _MM_HINT_T1);
         }
 
         pp = *startP;
