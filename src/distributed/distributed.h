@@ -85,6 +85,14 @@ typedef enum {
     WORK_STATUS_FAILED
 } work_status_t;
 
+/* Worker status (lifecycle states) */
+typedef enum {
+    WORKER_STATUS_JOINING = 0,       /* Worker is connecting/registering */
+    WORKER_STATUS_ACTIVE,            /* Worker is active and can accept work */
+    WORKER_STATUS_LEAVING,           /* Worker requested graceful departure */
+    WORKER_STATUS_DISCONNECTED       /* Worker disconnected or timed out */
+} worker_status_t;
+
 /* Worker information */
 typedef struct {
     int id;
@@ -119,6 +127,10 @@ typedef struct {
 
     /* Timeout configuration */
     int heartbeat_timeout_sec;  /* Timeout before marking worker as dead (0 = use coordinator default) */
+
+    /* Worker status and lifecycle */
+    worker_status_t status;     /* Current lifecycle status */
+    bool leave_requested;       /* Worker requested graceful departure */
 } dist_worker_t;
 
 /* Work unit */

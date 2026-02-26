@@ -1111,6 +1111,7 @@ static void *worker_handler_thread(void *arg) {
     /* Mark worker as disconnected */
     pthread_mutex_lock(&coord->worker_mutex);
     worker->connected = false;
+    worker->status = WORKER_STATUS_DISCONNECTED;
     worker->handler_running = false;
 
     /* Reassign any pending work from this worker */
@@ -1326,6 +1327,12 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         char reason[256] = {0};
         json_get_string(msg, "reason", reason, sizeof(reason));
 
+        /* Update worker status to leaving */
+        pthread_mutex_lock(&coord->worker_mutex);
+        worker->status = WORKER_STATUS_LEAVING;
+        worker->leave_requested = true;
+        pthread_mutex_unlock(&coord->worker_mutex);
+
         printf(LOG_SERVER LOG_INFO "Worker " CLR_YELLOW "#%d" CLR_RESET " (%s) requesting graceful leave%s%s\n",
                worker->id, worker->hostname[0] ? worker->hostname : "localhost",
                reason[0] ? ": " : "", reason[0] ? reason : "");
@@ -1362,6 +1369,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         /* Mark worker as disconnected and trigger handler thread exit */
         pthread_mutex_lock(&coord->worker_mutex);
         worker->connected = false;
+        worker->status = WORKER_STATUS_DISCONNECTED;
         worker->handler_running = false;
         pthread_mutex_unlock(&coord->worker_mutex);
 
@@ -1495,6 +1503,8 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         worker->last_heartbeat = time_ms();
                         worker->current_work_id = -1;
                         worker->handler_running = false;
+                        worker->status = WORKER_STATUS_JOINING;  /* Initial status during registration */
+                        worker->leave_requested = false;
                         worker->perf_score = json_get_double(msg, "perf_score");
                         json_get_string(msg, "hostname", worker->hostname, sizeof(worker->hostname));
 
@@ -1524,6 +1534,9 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                                  coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30,
                                  coord->tls_enabled ? "true" : "false");
                         send_msg_ex(worker->socket_fd, worker->ssl, welcome);
+
+                        /* Worker successfully registered - transition to active status */
+                        worker->status = WORKER_STATUS_ACTIVE;
 
                         /* Enhanced audit logging: worker join with key hardware details */
                         printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " (%s) joined [CPU: %d cores, GPU: %s, Perf: %.1f Mkeys/s]\n",
@@ -1651,6 +1664,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     /* Stop the handler thread - it will clean up the socket */
                     worker->handler_running = false;
                     worker->connected = false;
+                    worker->status = WORKER_STATUS_DISCONNECTED;
                     worker->throughput = 0.0;
 
                     /* Reassign any work this worker had */
