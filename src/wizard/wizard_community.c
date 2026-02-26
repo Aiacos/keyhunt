@@ -3,6 +3,7 @@
  */
 
 #include "wizard.h"
+#include "wizard_http.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1240,5 +1241,111 @@ int wizard_community_fetch_all_sources(int puzzle_number,
         printf("[+] Additional %d specific ranges to exclude from BTCPuzzle.info\n", *btc_count);
     }
 
+    return 0;
+}
+
+/* ============================================================================
+ * Progress Reporting (Opt-in)
+ * ============================================================================ */
+
+/**
+ * Report progress to community endpoint
+ *
+ * Sends current search progress to a community API endpoint if enabled.
+ * This is opt-in and requires report_progress_enabled = true.
+ *
+ * @param cfg Wizard configuration with progress data
+ * @return 0 on success, -1 on error, 1 if reporting disabled
+ */
+int wizard_community_report_progress(const wizard_config_t *cfg) {
+    if (!cfg) {
+        fprintf(stderr, "[-] wizard_community_report_progress: Invalid parameters\n");
+        return -1;
+    }
+
+    /* Check if progress reporting is enabled */
+    if (!cfg->report_progress_enabled) {
+        return 1;  /* Not an error, just disabled */
+    }
+
+    /* Check if URL is configured */
+    if (cfg->report_progress_url[0] == '\0') {
+        fprintf(stderr, "[-] Progress reporting enabled but no URL configured\n");
+        return -1;
+    }
+
+    /* Generate worker ID from hostname */
+    char worker_id[128] = {0};
+    if (gethostname(worker_id, sizeof(worker_id) - 1) != 0) {
+        snprintf(worker_id, sizeof(worker_id), "unknown-worker");
+    }
+
+    /* Escape worker_id for JSON */
+    char *worker_id_escaped = wizard_http_json_escape(worker_id);
+    if (!worker_id_escaped) {
+        fprintf(stderr, "[-] Failed to escape worker_id for JSON\n");
+        return -1;
+    }
+
+    /* Escape range strings for JSON */
+    char *range_start_escaped = wizard_http_json_escape(cfg->range_start);
+    char *range_end_escaped = wizard_http_json_escape(cfg->range_end);
+
+    if (!range_start_escaped || !range_end_escaped) {
+        free(worker_id_escaped);
+        if (range_start_escaped) free(range_start_escaped);
+        if (range_end_escaped) free(range_end_escaped);
+        fprintf(stderr, "[-] Failed to escape range strings for JSON\n");
+        return -1;
+    }
+
+    /* Build JSON payload */
+    char json_body[2048];
+    int json_len = snprintf(json_body, sizeof(json_body),
+                            "{\n"
+                            "  \"puzzle\": %d,\n"
+                            "  \"range_start\": \"%s\",\n"
+                            "  \"range_end\": \"%s\",\n"
+                            "  \"keys_checked\": %llu,\n"
+                            "  \"worker_id\": \"%s\",\n"
+                            "  \"timestamp\": %lld\n"
+                            "}",
+                            cfg->puzzle_number,
+                            range_start_escaped,
+                            range_end_escaped,
+                            (unsigned long long)cfg->local_completed,
+                            worker_id_escaped,
+                            (long long)time(NULL));
+
+    /* Free escaped strings */
+    free(worker_id_escaped);
+    free(range_start_escaped);
+    free(range_end_escaped);
+
+    if (json_len >= (int)sizeof(json_body)) {
+        fprintf(stderr, "[-] JSON payload too large\n");
+        return -1;
+    }
+
+    /* Send POST request */
+    char *response = NULL;
+    size_t response_len = 0;
+
+    int result = wizard_http_post_json(cfg->report_progress_url, json_body,
+                                       &response, &response_len);
+
+    if (result != 0) {
+        fprintf(stderr, "[-] Failed to report progress to %s\n", cfg->report_progress_url);
+        if (response) free(response);
+        return -1;
+    }
+
+    /* Success */
+    printf("[+] Progress reported successfully\n");
+    if (response && response_len > 0 && response_len < 500) {
+        printf("    Server response: %s\n", response);
+    }
+
+    if (response) free(response);
     return 0;
 }

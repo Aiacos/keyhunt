@@ -252,6 +252,17 @@ int wizard_community_fetch_all_sources(int puzzle_number,
                                         privatekeys_progress_t *privatekeys_progress,
                                         keyslol_progress_t *keyslol_progress);
 
+/**
+ * Report progress to community endpoint (opt-in)
+ *
+ * Sends current search progress to a community API endpoint if enabled.
+ * Requires report_progress_enabled = true in configuration.
+ *
+ * @param cfg Wizard configuration with progress data
+ * @return 0 on success, -1 on error, 1 if reporting disabled
+ */
+int wizard_community_report_progress(const wizard_config_t *cfg);
+
 /* ============================================================================
  * Privatekeys.pw Cloud Search Integration
  * ============================================================================ */
