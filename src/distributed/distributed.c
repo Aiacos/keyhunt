@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/socket.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -1309,25 +1309,19 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
     if (!coord->running) return -1;
 
-    fd_set readfds;
-    FD_ZERO(&readfds);
+    struct pollfd pfd;
+    pfd.fd = coord->listen_socket;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
 
-    /* Only monitor listen socket - worker messages handled by their threads */
-    int maxfd = coord->listen_socket;
-    FD_SET(coord->listen_socket, &readfds);
-
-    struct timeval tv;
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
-
-    int ready = select(maxfd + 1, &readfds, NULL, NULL, &tv);
+    int ready = poll(&pfd, 1, timeout_ms);
     if (ready < 0) {
         if (errno == EINTR) return 0;
         return -1;
     }
 
     /* Check for new connections - this is the only blocking part now */
-    if (FD_ISSET(coord->listen_socket, &readfds)) {
+    if (ready > 0 && (pfd.revents & POLLIN)) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         int client_fd = accept(coord->listen_socket, (struct sockaddr*)&client_addr, &client_len);
