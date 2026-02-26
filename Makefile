@@ -144,6 +144,8 @@ TEST_BSGS_OPS_OBJ := $(TEST_OBJDIR)/test_bsgs_ops.o
 TEST_POINT_OBJ := $(TEST_OBJDIR)/test_point.o
 TEST_INTGROUP_OBJ := $(TEST_OBJDIR)/test_intgroup.o
 TEST_SHA512_SIMD_OBJ := $(TEST_OBJDIR)/test_sha512_simd.o
+TEST_SEARCH_XPOINT_OBJ := $(TEST_OBJDIR)/test_search_xpoint.o
+TEST_SEARCH_RMD160_OBJ := $(TEST_OBJDIR)/test_search_rmd160.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
@@ -190,6 +192,12 @@ $(TEST_INTGROUP_OBJ): tests/test_intgroup.cpp tests/test_framework.h | directori
 $(TEST_SHA512_SIMD_OBJ): tests/test_sha512_simd.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_SEARCH_XPOINT_OBJ): tests/test_search_xpoint.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_SEARCH_RMD160_OBJ): tests/test_search_rmd160.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -197,7 +205,7 @@ $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
              $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
-             $(TEST_SHA512_SIMD_OBJ)
+             $(TEST_SHA512_SIMD_OBJ) $(TEST_SEARCH_XPOINT_OBJ) $(TEST_SEARCH_RMD160_OBJ)
 
 # Build test runner
 run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
