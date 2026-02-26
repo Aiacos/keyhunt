@@ -23,7 +23,7 @@ void adaptive_init(float initial_cpu_ratio, uint64_t range_start, uint64_t range
     adaptive_scheduler_t *s = &g_adaptive_scheduler;
 
     pthread_mutex_init(&s->lock, NULL);
-    s->update_in_progress = 0;  /* Initialize atomic flag */
+    __atomic_store_n(&s->update_in_progress, 0, __ATOMIC_RELEASE);  /* Initialize atomic flag */
 
     memset(s->stats, 0, sizeof(s->stats));
 
@@ -136,7 +136,8 @@ void adaptive_report_work(worker_type_t worker_type, uint64_t keys_checked, uint
      * should_update=true before any of them starts adaptive_update_ratios(). */
     if (s->enabled && (now - s->last_update_time_ms) >= ADAPTIVE_UPDATE_INTERVAL_MS) {
         /* Try to claim the update slot atomically */
-        if (__sync_bool_compare_and_swap(&s->update_in_progress, 0, 1)) {
+        int expected_zero = 0;
+        if (__atomic_compare_exchange_n(&s->update_in_progress, &expected_zero, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
             s->last_update_time_ms = now;
             should_update = true;
         }
@@ -147,8 +148,7 @@ void adaptive_report_work(worker_type_t worker_type, uint64_t keys_checked, uint
     if (should_update) {
         adaptive_update_ratios();
         /* Release the update flag after completion */
-        __sync_synchronize();
-        s->update_in_progress = 0;
+        __atomic_store_n(&s->update_in_progress, 0, __ATOMIC_RELEASE);
     }
 }
 
