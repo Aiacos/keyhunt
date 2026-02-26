@@ -11,6 +11,7 @@
  */
 
 #include "wizard.h"
+#include "wizard_webhooks.h"
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
 #include "../gpu/gpu_backend.h"
@@ -74,6 +75,56 @@ static volatile int g_heartbeat_failures = 0;
 #define HEARTBEAT_FAILURE_THRESHOLD 3
 #define RECONNECT_BACKOFF_INITIAL_SEC 1
 #define RECONNECT_BACKOFF_MAX_SEC 32
+
+/* ============================================================================
+ * Webhook Helper Functions
+ * ============================================================================ */
+
+/**
+ * Parse Telegram webhook URL format: "token:chat_id" or "token"
+ * @param telegram_url Input URL string
+ * @param token Output buffer for bot token (can be NULL to skip)
+ * @param token_size Size of token buffer
+ * @param chat_id Output buffer for chat ID (can be NULL to skip)
+ * @param chat_id_size Size of chat_id buffer
+ * @return 0 if parsed successfully, -1 if format invalid
+ */
+static int parse_telegram_url(const char *telegram_url,
+                               char *token, size_t token_size,
+                               char *chat_id, size_t chat_id_size) {
+    if (!telegram_url || telegram_url[0] == '\0') {
+        return -1;
+    }
+
+    /* Find colon separator */
+    const char *colon = strchr(telegram_url, ':');
+    if (!colon) {
+        /* No chat_id, just token */
+        if (token) {
+            strncpy(token, telegram_url, token_size - 1);
+            token[token_size - 1] = '\0';
+        }
+        if (chat_id) {
+            chat_id[0] = '\0';
+        }
+        return 0;
+    }
+
+    /* Split token and chat_id */
+    size_t token_len = colon - telegram_url;
+    if (token && token_len > 0) {
+        size_t copy_len = (token_len < token_size - 1) ? token_len : token_size - 1;
+        strncpy(token, telegram_url, copy_len);
+        token[copy_len] = '\0';
+    }
+
+    if (chat_id && chat_id_size > 0) {
+        strncpy(chat_id, colon + 1, chat_id_size - 1);
+        chat_id[chat_id_size - 1] = '\0';
+    }
+
+    return 0;
+}
 
 /* ============================================================================
  * Executable Path Resolution
@@ -1292,6 +1343,27 @@ int wizard_client_run(wizard_config_t *cfg) {
             }
 
             printf("\n[+] Key saved to FOUND_KEY.txt\n");
+
+            /* Send webhook notifications if configured */
+            char tg_token[256] = {0}, tg_chat_id[128] = {0};
+            if (cfg->webhook_telegram_url[0] != '\0') {
+                parse_telegram_url(cfg->webhook_telegram_url, tg_token, sizeof(tg_token),
+                                   tg_chat_id, sizeof(tg_chat_id));
+            }
+
+            int notified = wizard_webhook_notify_found(
+                cfg->webhook_discord_url[0] != '\0' ? cfg->webhook_discord_url : NULL,
+                tg_token[0] != '\0' ? tg_token : NULL,
+                tg_chat_id[0] != '\0' ? tg_chat_id : NULL,
+                found_key,
+                found_addr,
+                cfg->puzzle_number
+            );
+
+            if (notified > 0) {
+                printf("[+] Sent %d webhook notification(s)\n", notified);
+            }
+
             printf("[+] Continuing search in case of multiple targets...\n\n");
         }
 
