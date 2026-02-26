@@ -788,6 +788,11 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->bind_address[0] = '\0';  /* Bind to all interfaces by default */
     coord->next_pending_hint = 0;   /* Start searching from beginning */
 
+    /* Set default timeout values (can be overridden via setter functions before start) */
+    coord->worker_timeout_sec = 60;      /* Default: 60 seconds before marking worker dead */
+    coord->work_timeout_sec = 60;        /* Default: 60 seconds before reassigning stalled work */
+    coord->connection_timeout_sec = 30;  /* Default: 30 seconds for TCP connection accept */
+
     /* Initialize fine-grained mutexes for thread-safe operations */
     if (pthread_mutex_init(&coord->work_mutex, NULL) != 0) {
         return -1;
