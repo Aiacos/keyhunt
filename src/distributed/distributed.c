@@ -1564,7 +1564,8 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
     if (now_ms - last_health_check_ms > 5000) {
         last_health_check_ms = now_ms;
 
-        uint64_t stale_timeout_ms = 5 * 60 * 1000;  /* 5 minutes */
+        /* Use configurable work timeout for reassigning stalled work */
+        uint64_t stale_timeout_ms = (uint64_t)coord->work_timeout_sec * 1000;
 
         /* Check for stale work units (assigned but worker unresponsive) */
         pthread_mutex_lock(&coord->work_mutex);
@@ -1611,15 +1612,16 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         pthread_mutex_unlock(&coord->work_mutex);
 
         /* Check for stuck workers (connected but no progress for too long) */
-        uint64_t stuck_timeout_ms = 3 * 60 * 1000;  /* 3 minutes no progress */
+        /* Use configurable worker timeout for disconnecting stuck workers */
+        uint64_t stuck_timeout_ms = (uint64_t)coord->worker_timeout_sec * 1000;
 
         pthread_mutex_lock(&coord->worker_mutex);
         for (int i = 0; i < coord->worker_count; i++) {
             dist_worker_t *worker = &coord->workers[i];
             if (worker->connected && worker->socket_fd >= 0) {
-                /* Worker is stuck if no heartbeat for 3 minutes */
+                /* Worker is stuck if no heartbeat within configured timeout */
                 if (now_ms - worker->last_heartbeat > stuck_timeout_ms) {
-                    printf(LOG_SERVER LOG_WARN "Worker #%d (%s) stuck for 3+ min, forcing disconnect\n",
+                    printf(LOG_SERVER LOG_WARN "Worker #%d (%s) stuck (no heartbeat), forcing disconnect\n",
                            worker->id, worker->hostname[0] ? worker->hostname : "localhost");
 
                     /* Stop the handler thread - it will clean up the socket */
