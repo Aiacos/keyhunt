@@ -271,3 +271,83 @@ void wizard_print_puzzle_table(const puzzle_def_t *puzzles, int count, int highl
     }
     printf("\n");
 }
+
+/* Print privacy warning for progress reporting */
+void wizard_print_privacy_warning(void) {
+    int width = get_terminal_width();
+    if (width > 70) width = 70;
+
+    printf("\n");
+    printf(YELLOW BOX_TL);
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf(BOX_TR "\n" RESET);
+
+    printf(YELLOW BOX_V " " BOLD "PRIVACY NOTICE: Progress Reporting" RESET);
+    int padding = width - 38;  /* 38 = length of title + spaces + box chars */
+    for (int i = 0; i < padding; i++) printf(" ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET " %-*s" YELLOW BOX_V "\n" RESET, width - 3, "");
+
+    printf(YELLOW BOX_V RESET " Progress reporting allows you to share your search progress ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET " with the community, helping coordinate distributed efforts.   ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET " %-*s" YELLOW BOX_V "\n" RESET, width - 3, "");
+
+    printf(YELLOW BOX_V " " CYAN "Data Shared (if enabled):" RESET);
+    padding = width - 28;
+    for (int i = 0; i < padding; i++) printf(" ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET "   • Puzzle number (e.g., #66, #125)                          ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   • Search range (e.g., 0x20000000000000000 - 0x3ffff...)     ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   • Keys checked count (progress indicator)                   ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   • Worker ID (your hostname)                                 ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   • Timestamp of last update                                  ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET " %-*s" YELLOW BOX_V "\n" RESET, width - 3, "");
+
+    printf(YELLOW BOX_V " " RED "NOT Shared:" RESET);
+    padding = width - 16;
+    for (int i = 0; i < padding; i++) printf(" ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET "   • Found private keys (NEVER transmitted!)                   ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   • IP address or personal information                        ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   • System hardware details                                   ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET " %-*s" YELLOW BOX_V "\n" RESET, width - 3, "");
+
+    printf(YELLOW BOX_V " " GREEN "Benefits:" RESET);
+    padding = width - 13;
+    for (int i = 0; i < padding; i++) printf(" ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET "   ✓ Community coordination (avoid duplicate work)             ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   ✓ Progress visibility for pool operators                    ");
+    printf(YELLOW BOX_V "\n" RESET);
+    printf(YELLOW BOX_V RESET "   ✓ Better resource allocation across workers                 ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_V RESET " %-*s" YELLOW BOX_V "\n" RESET, width - 3, "");
+
+    printf(YELLOW BOX_V " " DIM "Progress reporting is " BOLD "OPTIONAL" RESET DIM " and disabled by default." RESET);
+    padding = width - 59;
+    for (int i = 0; i < padding; i++) printf(" ");
+    printf(YELLOW BOX_V "\n" RESET);
+
+    printf(YELLOW BOX_BL);
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf(BOX_BR "\n" RESET);
+}

@@ -211,6 +211,7 @@ int wizard_ask_int(const char *prompt, int min_val, int max_val, int default_val
 bool wizard_ask_yesno(const char *prompt, bool default_val);
 void wizard_print_config_summary(const wizard_config_t *cfg);
 void wizard_print_progress(int current, int total, double speed, const char *status);
+void wizard_print_privacy_warning(void);
 
 /* ============================================================================
  * Community Sync Functions

@@ -455,6 +455,40 @@ static int wizard_configure_community(wizard_config_t *cfg) {
         printf("  ✓ Local progress: %d ranges previously completed\n", local_count);
     }
 
+    /* === Progress Reporting Opt-in === */
+    printf("\n");
+    wizard_print_separator();
+    printf("\n\033[1mOptional: Progress Reporting\033[0m\n");
+
+    /* Display privacy warning */
+    wizard_print_privacy_warning();
+
+    /* Ask for opt-in */
+    printf("\n");
+    cfg->report_progress_enabled = wizard_ask_yesno(
+        "Enable progress reporting to community API?", false);
+
+    if (cfg->report_progress_enabled) {
+        printf("\n\033[1;32m[+] Progress reporting enabled\033[0m\n");
+
+        /* Ask for reporting URL */
+        const char *default_url = "https://btcpuzzle.info/api/report";
+        wizard_ask_string(
+            "Progress reporting API endpoint",
+            cfg->report_progress_url,
+            sizeof(cfg->report_progress_url),
+            default_url);
+
+        printf("  ✓ Reports will be sent to: %s\n", cfg->report_progress_url);
+        printf("  ✓ Data includes: puzzle number, range, keys checked, worker ID\n");
+        printf("  ✓ Frequency: Every checkpoint (%d seconds)\n",
+               cfg->checkpoint_interval_sec);
+    } else {
+        printf("\n\033[1;33m[i] Progress reporting disabled\033[0m\n");
+        printf("    You can enable it later by editing %s\n", CONFIG_FILE);
+        cfg->report_progress_url[0] = '\0';  /* Clear URL */
+    }
+
     return 0;
 }
 
