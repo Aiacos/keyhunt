@@ -1312,6 +1312,50 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
     } else if (strcmp(type, "heartbeat") == 0) {
         worker->last_heartbeat = time_ms();
         send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
+
+    } else if (strcmp(type, "leave") == 0) {
+        /* Graceful worker departure */
+        char reason[256] = {0};
+        json_get_string(msg, "reason", reason, sizeof(reason));
+
+        printf(LOG_SERVER LOG_INFO "Worker " CLR_YELLOW "#%d" CLR_RESET " (%s) requesting graceful leave%s%s\n",
+               worker->id, worker->hostname[0] ? worker->hostname : "localhost",
+               reason[0] ? ": " : "", reason[0] ? reason : "");
+
+        /* Reassign any current work unit back to pending */
+        pthread_mutex_lock(&coord->worker_mutex);
+        if (worker->current_work_id >= 0 && worker->current_work_id < coord->work_unit_count) {
+            pthread_mutex_lock(&coord->work_mutex);
+            dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
+            if (unit->status == WORK_STATUS_ASSIGNED && unit->assigned_worker == worker->id) {
+                unit->status = WORK_STATUS_PENDING;
+                unit->assigned_worker = -1;
+                coord->work_units_pending++;
+                /* Reset hint to search from this reclaimed unit */
+                if (worker->current_work_id < coord->next_pending_hint) {
+                    coord->next_pending_hint = worker->current_work_id;
+                }
+            }
+            pthread_mutex_unlock(&coord->work_mutex);
+            worker->current_work_id = -1;
+        }
+        pthread_mutex_unlock(&coord->worker_mutex);
+
+        /* Send acknowledgment */
+        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
+
+        /* Log graceful departure */
+        printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " (%s) left gracefully\n",
+               worker->id, worker->hostname[0] ? worker->hostname : "localhost");
+
+        /* Mark worker as disconnected and trigger handler thread exit */
+        pthread_mutex_lock(&coord->worker_mutex);
+        worker->connected = false;
+        worker->handler_running = false;
+        pthread_mutex_unlock(&coord->worker_mutex);
+
+        /* Return -1 to exit handler loop */
+        return -1;
     }
 
     return 0;
