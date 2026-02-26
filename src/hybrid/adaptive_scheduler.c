@@ -22,6 +22,12 @@ uint64_t adaptive_time_ms(void) {
 void adaptive_init(float initial_cpu_ratio, uint64_t range_start, uint64_t range_end) {
     adaptive_scheduler_t *s = &g_adaptive_scheduler;
 
+    /* Safely handle re-initialization (destroy previous mutex if any) */
+    if (s->initialized) {
+        pthread_mutex_destroy(&s->lock);
+        s->initialized = false;
+    }
+
     pthread_mutex_init(&s->lock, NULL);
     __atomic_store_n(&s->update_in_progress, 0, __ATOMIC_RELEASE);  /* Initialize atomic flag */
 
@@ -196,7 +202,10 @@ void adaptive_update_ratios(void) {
         }
 
         if (gpu_throughput > 0.0) {
-            double gpu_factor = 1.0 + (gpu_throughput / 100.0);
+            /* GPU needs much larger chunks than CPU to amortize kernel
+               launch and PCIe overhead.  Use /10 (not /100) so the chunk
+               grows proportionally faster with GPU throughput. */
+            double gpu_factor = 1.0 + (gpu_throughput / 10.0);
             s->stats[WORKER_GPU].chunk_size = (uint64_t)(ADAPTIVE_BASE_CHUNK_SIZE * 4 * gpu_factor);
             if (s->stats[WORKER_GPU].chunk_size > 0x100000000ULL) {
                 s->stats[WORKER_GPU].chunk_size = 0x100000000ULL;  /* Max 4G */

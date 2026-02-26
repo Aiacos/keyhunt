@@ -8,6 +8,11 @@
 
 #include "gpu_backend.h"
 #include "cuda_check.h"
+
+#ifndef HAVE_CUDA_BACKEND
+#error "gpu_backend_cuda.cu must be compiled with -DHAVE_CUDA_BACKEND=1"
+#endif
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>

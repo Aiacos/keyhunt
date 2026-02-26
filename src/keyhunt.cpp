@@ -4414,6 +4414,7 @@ int main(int argc, char **argv)	{
 
 		// Wait for GPU thread if hybrid mode was started
 		if (FLAGGPU_HYBRID && gpu_hybrid_started) {
+			g_gpu_should_stop.store(1, std::memory_order_release);
 			printf("\n[+] Waiting for GPU thread to complete...\n");
 			platform_thread_join(gpu_thread_id, NULL);
 
@@ -4763,9 +4764,10 @@ static void *gpu_hybrid_thread(void *arg) {
 		uint64_t start_time = adaptive_time_ms();
 		int found = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
 		if (found > 0) total_found = found;
-		uint64_t elapsed = adaptive_time_ms() - start_time;
-		uint64_t keys = g_gpu_keys_checked.load(std::memory_order_acquire);
-		adaptive_report_work(WORKER_GPU, keys, elapsed);
+		(void)(adaptive_time_ms() - start_time);
+		// GPU throughput is reported incrementally by the main output
+		// loop (guarded by !g_work_pool.enabled).  Do NOT report here
+		// to avoid double-counting the same keys.
 		args->result.store(total_found, std::memory_order_release);
 		args->completed.store(1, std::memory_order_release);
 		printf("[GPU] Static-range thread completed: %d keys found\n", total_found);
