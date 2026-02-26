@@ -31,6 +31,7 @@
  * Search Mode Constants
  * ============================================================================ */
 
+#ifndef MODE_XPOINT
 #define MODE_XPOINT 0
 #define MODE_ADDRESS 1
 #define MODE_BSGS 2
@@ -38,6 +39,7 @@
 #define MODE_PUB2RMD 4
 #define MODE_MINIKEYS 5
 #define MODE_VANITY 6
+#endif
 
 #define SEARCH_UNCOMPRESS 0
 #define SEARCH_COMPRESS 1

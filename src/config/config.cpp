@@ -166,9 +166,9 @@ void kh_gpu_config_init(gpu_config_t *cfg) {
     cfg->threads_per_block = 256;
     cfg->keys_per_thread = 256;
 
-    cfg->keys_checked.store(0, std::memory_order_relaxed);
-    cfg->keys_checked_cur.store(0, std::memory_order_relaxed);
-    cfg->should_stop.store(0, std::memory_order_relaxed);
+    cfg->keys_checked = 0;
+    cfg->keys_checked_cur = 0;
+    cfg->should_stop = 0;
 
     cfg->bloom_uploaded = false;
 }

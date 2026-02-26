@@ -11,7 +11,7 @@
 
 // Mode name strings
 static const char *mode_names[] = {
-    "address", "bsgs", "xpoint", "rmd160", "vanity", "pub2rmd", "minikeys"
+    "xpoint", "address", "bsgs", "rmd160", "pub2rmd", "minikeys", "vanity"
 };
 
 static const char *keytype_names[] = {
@@ -27,7 +27,7 @@ static const char *gpu_mode_names[] = {
 };
 
 const char *cli_mode_name(search_mode_t mode) {
-    if (mode >= MODE_ADDRESS && mode <= MODE_MINIKEYS) {
+    if (mode >= MODE_XPOINT && mode <= MODE_VANITY) {
         return mode_names[mode];
     }
     return "unknown";
@@ -78,7 +78,7 @@ static void cli_set_defaults(cli_args_t *args) {
 
 static int parse_mode(const char *str) {
     if (str == NULL) return -1;
-    for (int i = 0; i <= MODE_MINIKEYS; i++) {
+    for (int i = 0; i <= MODE_VANITY; i++) {
         if (strcasecmp(str, mode_names[i]) == 0) {
             return i;
         }

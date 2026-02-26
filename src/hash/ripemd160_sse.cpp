@@ -42,24 +42,13 @@ namespace ripemd160sse {
 
 #define ROL(x,n) _mm_or_si128( _mm_slli_epi32(x, n) , _mm_srli_epi32(x, 32 - n) )
 
-#ifdef WIN64
-
-#define not(x) _mm_andnot_si128(x, _mm_cmpeq_epi32(_mm_setzero_si128(), _mm_setzero_si128()))
+#define ALLONES_128 _mm_cmpeq_epi32(_mm_setzero_si128(), _mm_setzero_si128())
+#define not128(x)   _mm_andnot_si128(x, ALLONES_128)
 #define f1(x,y,z) _mm_xor_si128(x, _mm_xor_si128(y, z))
 #define f2(x,y,z) _mm_or_si128(_mm_and_si128(x,y),_mm_andnot_si128(x,z))
-#define f3(x,y,z) _mm_xor_si128(_mm_or_si128(x,not(y)),z)
+#define f3(x,y,z) _mm_xor_si128(_mm_or_si128(x, not128(y)), z)
 #define f4(x,y,z) _mm_or_si128(_mm_and_si128(x,z),_mm_andnot_si128(z,y))
-#define f5(x,y,z) _mm_xor_si128(x,_mm_or_si128(y,not(z)))
-
-#else
-
-#define f1(x,y,z) _mm_xor_si128(x, _mm_xor_si128(y, z))
-#define f2(x,y,z) _mm_or_si128(_mm_and_si128(x,y),_mm_andnot_si128(x,z))
-#define f3(x,y,z) _mm_xor_si128(_mm_or_si128(x,~(y)),z)
-#define f4(x,y,z) _mm_or_si128(_mm_and_si128(x,z),_mm_andnot_si128(z,y))
-#define f5(x,y,z) _mm_xor_si128(x,_mm_or_si128(y,~(z)))
-
-#endif
+#define f5(x,y,z) _mm_xor_si128(x, _mm_or_si128(y, not128(z)))
 
 
 #define add3(x0, x1, x2 ) _mm_add_epi32(_mm_add_epi32(x0, x1), x2)

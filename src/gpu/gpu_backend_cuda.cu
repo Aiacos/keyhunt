@@ -2094,9 +2094,12 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
 
     // Upload to all GPUs
     int success = 0;
+    int failed = 0;
+    int total = 0;
     for (int g = 0; g < g_gpu_count; g++) {
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
+        total++;
 
         CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
@@ -2106,6 +2109,9 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
         if (err != cudaSuccess) {
             fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc G table: %s (%d)\n",
                     ctx->device_id, cudaGetErrorString(err), (int)err);
+            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            ctx->active = 0;
+            failed++;
             continue;
         }
 
@@ -2115,10 +2121,17 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
                     ctx->device_id, cudaGetErrorString(err), (int)err);
             CUDA_CHECK_WARN(cudaFree(ctx->d_GTable));
             ctx->d_GTable = NULL;
+            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            ctx->active = 0;
+            failed++;
             continue;
         }
 
         success++;
+    }
+
+    if (failed > 0) {
+        fprintf(stderr, "[GPU] Warning: %d/%d GPUs active (%d failed)\n", success, total, failed);
     }
 
     g_GTable_count = point_count;
@@ -2138,9 +2151,12 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
 
     // Upload to all GPUs
     int success = 0;
+    int failed = 0;
+    int total = 0;
     for (int g = 0; g < g_gpu_count; g++) {
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
+        total++;
 
         CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
@@ -2150,6 +2166,9 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
         if (err != cudaSuccess) {
             fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc targets: %s (%d)\n",
                     ctx->device_id, cudaGetErrorString(err), (int)err);
+            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            ctx->active = 0;
+            failed++;
             continue;
         }
 
@@ -2159,6 +2178,9 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
                     ctx->device_id, cudaGetErrorString(err), (int)err);
             CUDA_CHECK_WARN(cudaFree(ctx->d_targets));
             ctx->d_targets = NULL;
+            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            ctx->active = 0;
+            failed++;
             continue;
         }
 
@@ -2173,6 +2195,10 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
         }
 
         success++;
+    }
+
+    if (failed > 0) {
+        fprintf(stderr, "[GPU] Warning: %d/%d GPUs active (%d failed)\n", success, total, failed);
     }
 
     g_target_count = count;
@@ -2190,9 +2216,12 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
 
     // Upload to all GPUs
     int success = 0;
+    int failed = 0;
+    int total = 0;
     for (int g = 0; g < g_gpu_count; g++) {
         gpu_context_t *ctx = &g_gpus[g];
         if (!ctx->active) continue;
+        total++;
 
         CUDA_CHECK_WARN(cudaSetDevice(ctx->device_id));
 
@@ -2202,6 +2231,9 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
         if (err != cudaSuccess) {
             fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc bloom: %s (%d)\n",
                     ctx->device_id, cudaGetErrorString(err), (int)err);
+            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            ctx->active = 0;
+            failed++;
             continue;
         }
 
@@ -2211,10 +2243,17 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
                     ctx->device_id, cudaGetErrorString(err), (int)err);
             CUDA_CHECK_WARN(cudaFree(ctx->d_bloom));
             ctx->d_bloom = NULL;
+            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            ctx->active = 0;
+            failed++;
             continue;
         }
 
         success++;
+    }
+
+    if (failed > 0) {
+        fprintf(stderr, "[GPU] Warning: %d/%d GPUs active (%d failed)\n", success, total, failed);
     }
 
     g_bloom_size = bloom_size;

@@ -124,7 +124,7 @@ int bsgs_batch_bloom_check(bsgs_batch_ctx_t *ctx, void *bloom_array, int num_poi
         // Prefetch bloom filter
         _mm_prefetch((const char*)blooms[bloom_idx].bf, _MM_HINT_T0);
 
-        if (bloom_check(&blooms[bloom_idx], (char*)xpoint, 32)) {
+        if (bloom_check(&blooms[bloom_idx], (char*)xpoint, 32) == 1) {
             ctx->bloom_results[i] = 1;
             hits++;
         }

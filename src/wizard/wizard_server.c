@@ -70,9 +70,11 @@ static int get_executable_path(char *buf, size_t bufsz) {
     ssize_t len = readlink("/proc/self/exe", buf, bufsz - 1);
     if (len < 0) {
         /* Fallback to ./keyhunt if readlink fails */
+        fprintf(stderr, "[WIZARD] Warning: Could not determine executable path (%s), using fallback\n",
+                strerror(errno));
         strncpy(buf, "./keyhunt", bufsz - 1);
         buf[bufsz - 1] = '\0';
-        return 0;
+        return -1;
     }
     buf[len] = '\0';
     return 0;
@@ -91,9 +93,10 @@ static pid_t spawn_local_client(int port, const char *auth_token) {
 
     /* Get the executable path dynamically */
     char exe_path[PATH_MAX];
-    if (get_executable_path(exe_path, sizeof(exe_path)) != 0) {
-        fprintf(stderr, "[-] Failed to get executable path\n");
-        return -1;
+    int path_result = get_executable_path(exe_path, sizeof(exe_path));
+    if (path_result < 0) {
+        /* Fallback path returned - log but continue (may still work) */
+        fprintf(stderr, "[WIZARD] Using fallback executable path: %s\n", exe_path);
     }
 
     pid_t pid = fork();

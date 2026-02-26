@@ -8,19 +8,24 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Shared buffer size constants */
+#define KH_PATH_BUF_SIZE    512
+#define KH_RANGE_BUF_SIZE   128
+#define KH_NAME_BUF_SIZE    68
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Search modes
+// Search modes (aligned with search_common.h legacy defines)
 typedef enum {
-    MODE_ADDRESS = 0,
+    MODE_XPOINT = 0,
+    MODE_ADDRESS,
     MODE_BSGS,
-    MODE_XPOINT,
     MODE_RMD160,
-    MODE_VANITY,
     MODE_PUB2RMD,
-    MODE_MINIKEYS
+    MODE_MINIKEYS,
+    MODE_VANITY
 } search_mode_t;
 
 // Key types

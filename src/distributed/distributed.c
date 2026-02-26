@@ -252,34 +252,106 @@ static int tls_recv_all(SSL *ssl, void *buf, size_t len) {
 #define LOG_FOUND   CLR_MAGENTA CLR_BOLD "  ★ " CLR_RESET
 
 /* Simple JSON helpers (minimal, no external deps) with safe buffer handling */
-static void json_add_string(char *buf, size_t sz, const char *key, const char *val) {
-    size_t current_len = strlen(buf);
-    if (current_len >= sz - 1) return;  /* Buffer already full */
-    size_t remaining = sz - current_len;
-    int written = snprintf(buf + current_len, remaining, "\"%s\":\"%s\",", key, val);
-    if (written < 0 || (size_t)written >= remaining) {
-        buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+
+/**
+ * Escape a string for safe embedding in JSON values.
+ * Handles quotes, backslashes, control characters per RFC 8259.
+ * @return 0 on success, -1 on error or buffer overflow
+ */
+static int json_escape(const char *src, char *dst, size_t dstsz) {
+    if (!src || !dst || dstsz == 0) return -1;
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0'; si++) {
+        char c = src[si];
+        const char *esc = NULL;
+        switch (c) {
+            case '"':  esc = "\\\""; break;
+            case '\\': esc = "\\\\"; break;
+            case '\n': esc = "\\n";  break;
+            case '\r': esc = "\\r";  break;
+            case '\t': esc = "\\t";  break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    if (di + 6 >= dstsz) return -1;
+                    di += snprintf(dst + di, dstsz - di, "\\u%04x", (unsigned char)c);
+                    continue;
+                }
+                break;
+        }
+        if (esc) {
+            size_t elen = strlen(esc);
+            if (di + elen >= dstsz) return -1;
+            memcpy(dst + di, esc, elen);
+            di += elen;
+        } else {
+            if (di + 1 >= dstsz) return -1;
+            dst[di++] = c;
+        }
     }
+    dst[di] = '\0';
+    return 0;
 }
 
-static void json_add_int(char *buf, size_t sz, const char *key, int64_t val) {
+/**
+ * Add a JSON string key-value pair. The value is escaped for safety.
+ * @return 0 on success, -1 on truncation or error
+ */
+static int json_add_string(char *buf, size_t sz, const char *key, const char *val) {
     size_t current_len = strlen(buf);
-    if (current_len >= sz - 1) return;  /* Buffer already full */
+    if (current_len >= sz - 1) return -1;  /* Buffer already full */
+
+    /* Escape the value */
+    char escaped[DIST_MAX_MSG_SIZE];
+    if (json_escape(val ? val : "", escaped, sizeof(escaped)) != 0) {
+        /* Fallback: use raw value if escaping fails (should not happen with valid input) */
+        size_t remaining = sz - current_len;
+        int written = snprintf(buf + current_len, remaining, "\"%s\":\"%s\",", key, val ? val : "");
+        if (written < 0 || (size_t)written >= remaining) {
+            buf[sz - 1] = '\0';
+            return -1;
+        }
+        return 0;
+    }
+
+    size_t remaining = sz - current_len;
+    int written = snprintf(buf + current_len, remaining, "\"%s\":\"%s\",", key, escaped);
+    if (written < 0 || (size_t)written >= remaining) {
+        buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * Add a JSON integer key-value pair.
+ * @return 0 on success, -1 on truncation
+ */
+static int json_add_int(char *buf, size_t sz, const char *key, int64_t val) {
+    size_t current_len = strlen(buf);
+    if (current_len >= sz - 1) return -1;  /* Buffer already full */
     size_t remaining = sz - current_len;
     int written = snprintf(buf + current_len, remaining, "\"%s\":%lld,", key, (long long)val);
     if (written < 0 || (size_t)written >= remaining) {
         buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+        return -1;
     }
+    return 0;
 }
 
-static void json_add_double(char *buf, size_t sz, const char *key, double val) {
+/**
+ * Add a JSON double key-value pair.
+ * @return 0 on success, -1 on truncation
+ */
+static int json_add_double(char *buf, size_t sz, const char *key, double val) {
     size_t current_len = strlen(buf);
-    if (current_len >= sz - 1) return;  /* Buffer already full */
+    if (current_len >= sz - 1) return -1;  /* Buffer already full */
     size_t remaining = sz - current_len;
     int written = snprintf(buf + current_len, remaining, "\"%s\":%.3f,", key, val);
     if (written < 0 || (size_t)written >= remaining) {
         buf[sz - 1] = '\0';  /* Ensure null termination on overflow */
+        return -1;
     }
+    return 0;
 }
 
 static int json_get_string(const char *json, const char *key, char *out, size_t outsz) {
@@ -315,8 +387,15 @@ static int json_get_string(const char *json, const char *key, char *out, size_t 
     return 0;
 }
 
-static int64_t json_get_int(const char *json, const char *key) {
-    if (!json || !key) return 0;
+/**
+ * Parse a JSON integer value into an out-parameter.
+ * @param json Input JSON string
+ * @param key Key to search for
+ * @param out Output: parsed integer value (unchanged on failure)
+ * @return 0 on success, -1 if key not found or parse error
+ */
+static int json_get_int(const char *json, const char *key, int64_t *out) {
+    if (!json || !key || !out) return -1;
 
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
@@ -327,15 +406,27 @@ static int64_t json_get_int(const char *json, const char *key) {
             || start[-1] == '\n' || start[-1] == '\r') break;
         start = strstr(start + 1, pattern);
     }
-    if (!start) return 0;
+    if (!start) return -1;
     start += strlen(pattern);
     /* Skip whitespace */
     while (*start == ' ' || *start == '\t') start++;
-    return strtoll(start, NULL, 10);
+    errno = 0;
+    char *endptr = NULL;
+    int64_t val = strtoll(start, &endptr, 10);
+    if (endptr == start || errno == ERANGE) return -1;
+    *out = val;
+    return 0;
 }
 
-static double json_get_double(const char *json, const char *key) {
-    if (!json || !key) return 0.0;
+/**
+ * Parse a JSON double value into an out-parameter.
+ * @param json Input JSON string
+ * @param key Key to search for
+ * @param out Output: parsed double value (unchanged on failure)
+ * @return 0 on success, -1 if key not found or parse error
+ */
+static int json_get_double(const char *json, const char *key, double *out) {
+    if (!json || !key || !out) return -1;
 
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
@@ -346,11 +437,16 @@ static double json_get_double(const char *json, const char *key) {
             || start[-1] == '\n' || start[-1] == '\r') break;
         start = strstr(start + 1, pattern);
     }
-    if (!start) return 0.0;
+    if (!start) return -1;
     start += strlen(pattern);
     /* Skip whitespace */
     while (*start == ' ' || *start == '\t') start++;
-    return strtod(start, NULL);
+    errno = 0;
+    char *endptr = NULL;
+    double val = strtod(start, &endptr);
+    if (endptr == start || errno == ERANGE) return -1;
+    *out = val;
+    return 0;
 }
 
 /**
@@ -630,6 +726,7 @@ static int rate_limiter_check_connection(rate_limiter_t *rl, uint32_t ip_addr) {
             entry = &rl->entries[free_slot];
         } else {
             /* Table full, allow connection (fail-open for availability) */
+            printf(LOG_SERVER LOG_WARN "Rate limiter table full, allowing connection (fail-open)\n");
             pthread_mutex_unlock(&rl->mutex);
             return 1;
         }
@@ -734,6 +831,32 @@ static int sanitize_json_string(char *str, size_t maxlen) {
 }
 
 /* ============================================================================
+ * Constant-Time Comparison (for authentication tokens)
+ * ============================================================================ */
+
+/**
+ * Compare two strings in constant time to prevent timing side-channel attacks.
+ * @param a First string
+ * @param b Second string
+ * @param max_len Maximum length to compare (use DIST_AUTH_TOKEN_MAX)
+ * @return 1 if strings are equal, 0 if not
+ */
+static int constant_time_compare(const char *a, const char *b, size_t max_len) {
+    size_t len_a = strnlen(a, max_len);
+    size_t len_b = strnlen(b, max_len);
+    volatile unsigned char diff = (len_a != len_b) ? 1 : 0;
+    size_t cmp_len = (len_a < len_b) ? len_a : len_b;
+    for (size_t i = 0; i < cmp_len; i++) {
+        diff |= (unsigned char)a[i] ^ (unsigned char)b[i];
+    }
+    size_t max = (len_a > len_b) ? len_a : len_b;
+    for (size_t i = cmp_len; i < max; i++) {
+        diff |= 0xff;
+    }
+    return diff == 0 ? 1 : 0;
+}
+
+/* ============================================================================
  * Coordinator Implementation
  * ============================================================================ */
 
@@ -801,9 +924,16 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
         pthread_mutex_destroy(&coord->work_mutex);
         return -1;
     }
+    if (pthread_mutex_init(&coord->result_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&coord->worker_mutex);
+        pthread_mutex_destroy(&coord->stats_mutex);
+        pthread_mutex_destroy(&coord->work_mutex);
+        return -1;
+    }
 
     /* Initialize rate limiter */
     if (rate_limiter_init(&coord->rate_limiter) != 0) {
+        pthread_mutex_destroy(&coord->result_mutex);
         pthread_mutex_destroy(&coord->worker_mutex);
         pthread_mutex_destroy(&coord->stats_mutex);
         pthread_mutex_destroy(&coord->work_mutex);
@@ -815,6 +945,7 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->results = calloc(coord->result_capacity, sizeof(dist_result_t));
     if (!coord->results) {
         rate_limiter_destroy(&coord->rate_limiter);
+        pthread_mutex_destroy(&coord->result_mutex);
         pthread_mutex_destroy(&coord->worker_mutex);
         pthread_mutex_destroy(&coord->stats_mutex);
         pthread_mutex_destroy(&coord->work_mutex);
@@ -1003,7 +1134,10 @@ int dist_coordinator_start(dist_coordinator_t *coord) {
         return -1;
     }
 
-    set_nonblocking(coord->listen_socket);
+    if (set_nonblocking(coord->listen_socket) != 0) {
+        printf(LOG_SERVER LOG_WARN "Failed to set listen socket non-blocking: %s\n", strerror(errno));
+        /* Continue anyway - blocking accept will still work but with higher latency */
+    }
     coord->running = true;
 
     if (coord->bind_address[0] != '\0') {
@@ -1228,9 +1362,12 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         }
 
     } else if (strcmp(type, "work_done") == 0) {
-        int work_id = (int)json_get_int(msg, "work_id");
-        uint64_t keys = (uint64_t)json_get_int(msg, "keys_processed");
-        uint64_t elapsed = (uint64_t)json_get_int(msg, "elapsed_ms");
+        int64_t work_id_val = 0; json_get_int(msg, "work_id", &work_id_val);
+        int work_id = (int)work_id_val;
+        int64_t keys_val = 0; json_get_int(msg, "keys_processed", &keys_val);
+        uint64_t keys = (uint64_t)keys_val;
+        int64_t elapsed_val = 0; json_get_int(msg, "elapsed_ms", &elapsed_val);
+        uint64_t elapsed = (uint64_t)elapsed_val;
 
         /* Update heartbeat atomically */
         worker->last_heartbeat = time_ms();
@@ -1257,8 +1394,8 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             /* Check if worker sent separate CPU/GPU speeds (hybrid mode).
              * If both are present and non-zero, use them directly.
              * Otherwise fall back to the old heuristic. */
-            double msg_cpu_speed = json_get_double(msg, "cpu_speed_mkeys");
-            double msg_gpu_speed = json_get_double(msg, "gpu_speed_mkeys");
+            double msg_cpu_speed = 0.0; json_get_double(msg, "cpu_speed_mkeys", &msg_cpu_speed);
+            double msg_gpu_speed = 0.0; json_get_double(msg, "gpu_speed_mkeys", &msg_gpu_speed);
 
             /* Update speed stats atomically with stats_mutex to ensure
              * dashboard reads consistent values */
@@ -1283,13 +1420,16 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         }
 
         /* Send ack */
-        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
+        if (send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}") != 0) {
+            printf(LOG_SERVER LOG_WARN "Failed to send work_done ack to worker #%d\n", worker->id);
+        }
 
     } else if (strcmp(type, "found") == 0) {
         char privkey[65] = {0}, address[36] = {0};
         json_get_string(msg, "private_key", privkey, sizeof(privkey));
         json_get_string(msg, "address", address, sizeof(address));
 
+        pthread_mutex_lock(&coord->result_mutex);
         if (coord->result_count < coord->result_capacity) {
             dist_result_t *result = &coord->results[coord->result_count++];
             strncpy(result->private_key, privkey, sizeof(result->private_key)-1);
@@ -1301,12 +1441,29 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             printf(LOG_INFO "Private Key: " CLR_BOLD "%s" CLR_RESET "\n", privkey);
             printf(LOG_INFO "Address:     " CLR_BOLD "%s" CLR_RESET "\n\n", address);
         }
+        pthread_mutex_unlock(&coord->result_mutex);
 
-        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
+        /* Backup found key to KEYFOUNDKEYFOUND.txt for redundancy */
+        {
+            FILE *backup = fopen("KEYFOUNDKEYFOUND.txt", "a");
+            if (backup) {
+                fprintf(backup, "Private Key: %s\nAddress: %s\nWorker: %d\nTime: %llu\n\n",
+                        privkey, address, worker->id, (unsigned long long)time_ms());
+                fclose(backup);
+            } else {
+                printf(LOG_SERVER LOG_WARN "Failed to write backup key file KEYFOUNDKEYFOUND.txt\n");
+            }
+        }
+
+        if (send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}") != 0) {
+            printf(LOG_SERVER LOG_WARN "Failed to send ack for found key to worker #%d\n", worker->id);
+        }
 
     } else if (strcmp(type, "heartbeat") == 0) {
         worker->last_heartbeat = time_ms();
-        send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}");
+        if (send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}") != 0) {
+            printf(LOG_SERVER LOG_WARN "Failed to send heartbeat ack to worker #%d\n", worker->id);
+        }
     }
 
     return 0;
@@ -1355,7 +1512,14 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             /* Rate limiting check */
             uint32_t client_ip = ntohl(client_addr.sin_addr.s_addr);
             if (!rate_limiter_check_connection(&coord->rate_limiter, client_ip)) {
-                /* Rate limited - reject connection silently */
+                /* Rate limited - reject connection */
+                {
+                    char ip_str[INET_ADDRSTRLEN];
+                    struct in_addr addr_struct;
+                    addr_struct.s_addr = htonl(client_ip);
+                    inet_ntop(AF_INET, &addr_struct, ip_str, sizeof(ip_str));
+                    printf(LOG_SERVER LOG_INFO "Rate-limited connection rejected from %s\n", ip_str);
+                }
                 close(client_fd);
                 return 0;
             }
@@ -1399,26 +1563,21 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         char provided_token[DIST_AUTH_TOKEN_MAX] = {0};
                         json_get_string(msg, "auth_token", provided_token, sizeof(provided_token));
 
-                        /* Constant-time comparison to prevent timing attacks */
-                        size_t expected_len = strlen(coord->auth_token);
-                        size_t provided_len = strlen(provided_token);
-
-                        if (expected_len != provided_len) {
-                            auth_passed = false;
-                        } else {
-                            volatile int diff = 0;
-                            for (size_t i = 0; i < expected_len; i++) {
-                                diff |= coord->auth_token[i] ^ provided_token[i];
-                            }
-                            auth_passed = (diff == 0);
-                        }
+                        /* Constant-time comparison to prevent timing attacks.
+                         * No early return on length mismatch - always compare
+                         * full token to avoid leaking length information. */
+                        auth_passed = constant_time_compare(coord->auth_token,
+                                                            provided_token,
+                                                            DIST_AUTH_TOKEN_MAX) ? true : false;
 
                         if (!auth_passed) {
                             char hostname[64] = {0};
                             json_get_string(msg, "hostname", hostname, sizeof(hostname));
                             printf(LOG_SERVER LOG_ERR "Authentication failed from %s - invalid token\n",
                                    hostname[0] ? hostname : "unknown");
-                            send_msg_ex(client_fd, client_ssl, "{\"type\":\"auth_failed\",\"message\":\"Invalid authentication token\"}");
+                            if (send_msg_ex(client_fd, client_ssl, "{\"type\":\"auth_failed\",\"message\":\"Invalid authentication token\"}") != 0) {
+                                printf(LOG_SERVER LOG_WARN "Failed to send auth_failed response\n");
+                            }
 #ifdef HAVE_OPENSSL
                             if (client_ssl) SSL_free((SSL *)client_ssl);
 #endif
@@ -1435,17 +1594,17 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         worker->last_heartbeat = time_ms();
                         worker->current_work_id = -1;
                         worker->handler_running = false;
-                        worker->perf_score = json_get_double(msg, "perf_score");
+                        { double ps = 0.0; json_get_double(msg, "perf_score", &ps); worker->perf_score = ps; }
                         json_get_string(msg, "hostname", worker->hostname, sizeof(worker->hostname));
 
                         /* Parse detailed hardware info */
-                        worker->cpu_cores = (int)json_get_int(msg, "cpu_cores");
-                        worker->cpu_threads = (int)json_get_int(msg, "cpu_threads");
+                        { int64_t v = 0; json_get_int(msg, "cpu_cores", &v); worker->cpu_cores = (int)v; }
+                        { int64_t v = 0; json_get_int(msg, "cpu_threads", &v); worker->cpu_threads = (int)v; }
                         json_get_string(msg, "cpu_name", worker->cpu_name, sizeof(worker->cpu_name));
                         json_get_string(msg, "gpu_name", worker->gpu_name, sizeof(worker->gpu_name));
-                        worker->gpu_memory_mb = (int)json_get_int(msg, "gpu_memory_mb");
-                        worker->cpu_speed_mkeys = json_get_double(msg, "cpu_speed_mkeys");
-                        worker->gpu_speed_mkeys = json_get_double(msg, "gpu_speed_mkeys");
+                        { int64_t v = 0; json_get_int(msg, "gpu_memory_mb", &v); worker->gpu_memory_mb = (int)v; }
+                        { double v = 0.0; json_get_double(msg, "cpu_speed_mkeys", &v); worker->cpu_speed_mkeys = v; }
+                        { double v = 0.0; json_get_double(msg, "gpu_speed_mkeys", &v); worker->gpu_speed_mkeys = v; }
 
                         coord->worker_count++;
 
@@ -1463,7 +1622,9 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                                  coord->job_bits,
                                  coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30,
                                  coord->tls_enabled ? "true" : "false");
-                        send_msg_ex(worker->socket_fd, worker->ssl, welcome);
+                        if (send_msg_ex(worker->socket_fd, worker->ssl, welcome) != 0) {
+                            printf(LOG_SERVER LOG_WARN "Failed to send welcome to worker #%d\n", worker->id);
+                        }
 
                         /* Print connection info with hardware details and speeds */
                         printf(LOG_SERVER LOG_OK "Worker " CLR_GREEN "#%d" CLR_RESET " connected from " CLR_BOLD "%s" CLR_RESET "\n",
@@ -1509,11 +1670,10 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
      * ========================================================================== */
 
     uint64_t now_ms = time_ms();
-    static uint64_t last_health_check_ms = 0;
 
     /* Only do health checks every 5 seconds to avoid overhead */
-    if (now_ms - last_health_check_ms > 5000) {
-        last_health_check_ms = now_ms;
+    if (now_ms - coord->last_health_check_ms > 5000) {
+        coord->last_health_check_ms = now_ms;
 
         uint64_t stale_timeout_ms = 5 * 60 * 1000;  /* 5 minutes */
 
@@ -1601,12 +1761,14 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         pthread_mutex_unlock(&coord->worker_mutex);
 
         /* Update total throughput - only during health check to avoid overhead */
+        pthread_mutex_lock(&coord->stats_mutex);
         coord->total_throughput = 0.0;
         for (int i = 0; i < coord->worker_count; i++) {
             if (coord->workers[i].connected) {
                 coord->total_throughput += coord->workers[i].throughput;
             }
         }
+        pthread_mutex_unlock(&coord->stats_mutex);
     }  /* end health check block */
 
     /* Check if all done */
@@ -1706,7 +1868,9 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     /* Close worker connections */
     for (int i = 0; i < coord->worker_count; i++) {
         if (coord->workers[i].socket_fd >= 0) {
-            send_msg_ex(coord->workers[i].socket_fd, coord->workers[i].ssl, "{\"type\":\"shutdown\"}");
+            if (send_msg_ex(coord->workers[i].socket_fd, coord->workers[i].ssl, "{\"type\":\"shutdown\"}") != 0) {
+                printf(LOG_SERVER LOG_WARN "Failed to send shutdown to worker #%d\n", i);
+            }
 #ifdef HAVE_OPENSSL
             if (coord->workers[i].ssl) {
                 SSL_shutdown((SSL *)coord->workers[i].ssl);
@@ -1738,6 +1902,7 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     pthread_mutex_destroy(&coord->work_mutex);
     pthread_mutex_destroy(&coord->stats_mutex);
     pthread_mutex_destroy(&coord->worker_mutex);
+    pthread_mutex_destroy(&coord->result_mutex);
 
     /* Destroy rate limiter */
     rate_limiter_destroy(&coord->rate_limiter);
@@ -1916,9 +2081,9 @@ int dist_worker_connect(dist_worker_client_t *client) {
         json_get_string(config_source, "mode", client->received_mode, sizeof(client->received_mode));
         json_get_string(config_source, "key_type", client->received_key_type, sizeof(client->received_key_type));
         /* Nested format uses "puzzle" instead of "puzzle_number" */
-        client->received_puzzle_number = (int)json_get_int(config_source, "puzzle");
+        { int64_t v = 0; json_get_int(config_source, "puzzle", &v); client->received_puzzle_number = (int)v; }
         /* Try "bits" first, fall back to calculating from puzzle number if not present */
-        client->received_bits = (int)json_get_int(config_source, "bits");
+        { int64_t v = 0; json_get_int(config_source, "bits", &v); client->received_bits = (int)v; }
         if (client->received_bits == 0 && client->received_puzzle_number > 0) {
             client->received_bits = client->received_puzzle_number;  /* For puzzles, bits == puzzle number */
         }
@@ -1928,12 +2093,12 @@ int dist_worker_connect(dist_worker_client_t *client) {
                         sizeof(client->received_target_address));
         json_get_string(config_source, "mode", client->received_mode, sizeof(client->received_mode));
         json_get_string(config_source, "key_type", client->received_key_type, sizeof(client->received_key_type));
-        client->received_puzzle_number = (int)json_get_int(config_source, "puzzle_number");
-        client->received_bits = (int)json_get_int(config_source, "bits");
+        { int64_t v = 0; json_get_int(config_source, "puzzle_number", &v); client->received_puzzle_number = (int)v; }
+        { int64_t v = 0; json_get_int(config_source, "bits", &v); client->received_bits = (int)v; }
     }
 
     /* Heartbeat interval is always at the top level */
-    client->heartbeat_interval_sec = (int)json_get_int(response, "heartbeat_interval");
+    { int64_t v = 0; json_get_int(response, "heartbeat_interval", &v); client->heartbeat_interval_sec = (int)v; }
     if (client->heartbeat_interval_sec <= 0) client->heartbeat_interval_sec = 30;
 
     client->connected = true;
@@ -1974,7 +2139,7 @@ int dist_worker_request_work(dist_worker_client_t *client,
 
     /* Accept both "work_assignment" (canonical) and "work" (alternative) */
     if (strcmp(type, "work_assignment") == 0 || strcmp(type, "work") == 0) {
-        client->current_work_id = (int)json_get_int(response, "work_id");
+        { int64_t v = 0; json_get_int(response, "work_id", &v); client->current_work_id = (int)v; }
         json_get_string(response, "range_start", range_start, 65);
         json_get_string(response, "range_end", range_end, 65);
         strncpy(client->current_range_start, range_start, sizeof(client->current_range_start)-1);
@@ -2365,7 +2530,8 @@ int dist_coordinator_load_state(dist_coordinator_t *coordinator,
     json[read_bytes] = '\0';
 
     /* Validate version */
-    int version = (int)json_get_int(json, "version");
+    int64_t version_val = 0; json_get_int(json, "version", &version_val);
+    int version = (int)version_val;
     if (version != STATE_VERSION) {
         printf(LOG_SERVER LOG_WARN "State file version mismatch (got %d, expected %d)\n",
                version, STATE_VERSION);
@@ -2378,7 +2544,7 @@ int dist_coordinator_load_state(dist_coordinator_t *coordinator,
     char saved_mode[32] = {0};
     json_get_string(json, "job_target_address", saved_target, sizeof(saved_target));
     json_get_string(json, "job_mode", saved_mode, sizeof(saved_mode));
-    (void)json_get_int(json, "job_puzzle_number");  /* Read for validation, value unused */
+    { int64_t v = 0; json_get_int(json, "job_puzzle_number", &v); (void)v; }  /* Read for validation, value unused */
 
     /* Validate job matches current configuration */
     if (coordinator->job_target_address[0] && saved_target[0]) {
@@ -2401,7 +2567,7 @@ int dist_coordinator_load_state(dist_coordinator_t *coordinator,
     }
 
     /* Load progress statistics */
-    coordinator->keys_processed = (uint64_t)json_get_int(json, "keys_processed");
+    { int64_t v = 0; json_get_int(json, "keys_processed", &v); coordinator->keys_processed = (uint64_t)v; }
     /* Note: work_units_completed is recalculated from work_units array */
 
     /* Parse completed work units to mark them as done */
@@ -2429,8 +2595,10 @@ int dist_coordinator_load_state(dist_coordinator_t *coordinator,
                 memcpy(unit_json, unit_ptr, unit_len);
                 unit_json[unit_len] = '\0';
 
-                int unit_id = (int)json_get_int(unit_json, "id");
-                int unit_status = (int)json_get_int(unit_json, "status");
+                int64_t uid_val = 0; json_get_int(unit_json, "id", &uid_val);
+                int unit_id = (int)uid_val;
+                int64_t us_val = 0; json_get_int(unit_json, "status", &us_val);
+                int unit_status = (int)us_val;
 
                 /* Mark this unit as completed in current work units */
                 if (unit_id >= 0 && unit_id < coordinator->work_unit_count) {
@@ -2485,8 +2653,8 @@ int dist_coordinator_load_state(dist_coordinator_t *coordinator,
                     dist_result_t *r = &coordinator->results[coordinator->result_count];
                     json_get_string(result_json, "private_key", r->private_key, sizeof(r->private_key));
                     json_get_string(result_json, "address", r->address, sizeof(r->address));
-                    r->worker_id = (int)json_get_int(result_json, "worker_id");
-                    r->found_time = (uint64_t)json_get_int(result_json, "found_time");
+                    { int64_t v = 0; json_get_int(result_json, "worker_id", &v); r->worker_id = (int)v; }
+                    { int64_t v = 0; json_get_int(result_json, "found_time", &v); r->found_time = (uint64_t)v; }
 
                     if (r->private_key[0]) {
                         coordinator->result_count++;

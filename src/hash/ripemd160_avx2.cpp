@@ -65,20 +65,13 @@ namespace ripemd160avx2 {
 // AVX2 macros for RIPEMD-160
 #define ROL(x,n) _mm256_or_si256(_mm256_slli_epi32(x, n), _mm256_srli_epi32(x, 32 - n))
 
-#ifdef WIN64
-#define not(x) _mm256_andnot_si256(x, _mm256_cmpeq_epi32(_mm256_setzero_si256(), _mm256_setzero_si256()))
+#define ALLONES_256 _mm256_cmpeq_epi32(_mm256_setzero_si256(), _mm256_setzero_si256())
+#define not256(x)   _mm256_andnot_si256(x, ALLONES_256)
 #define f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
 #define f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))
-#define f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x,not(y)),z)
+#define f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x, not256(y)), z)
 #define f4(x,y,z) _mm256_or_si256(_mm256_and_si256(x,z),_mm256_andnot_si256(z,y))
-#define f5(x,y,z) _mm256_xor_si256(x,_mm256_or_si256(y,not(z)))
-#else
-#define f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
-#define f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))
-#define f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x,~(y)),z)
-#define f4(x,y,z) _mm256_or_si256(_mm256_and_si256(x,z),_mm256_andnot_si256(z,y))
-#define f5(x,y,z) _mm256_xor_si256(x,_mm256_or_si256(y,~(z)))
-#endif
+#define f5(x,y,z) _mm256_xor_si256(x, _mm256_or_si256(y, not256(z)))
 
 #define add3(x0, x1, x2) _mm256_add_epi32(_mm256_add_epi32(x0, x1), x2)
 #define add4(x0, x1, x2, x3) _mm256_add_epi32(_mm256_add_epi32(x0, x1), _mm256_add_epi32(x2, x3))

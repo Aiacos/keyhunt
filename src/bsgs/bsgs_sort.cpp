@@ -22,7 +22,7 @@ void bsgs_swap(struct bsgs_xvalue *a, struct bsgs_xvalue *b) {
 
 /* Main entry point - Introsort with optimal depth limit */
 void bsgs_sort(struct bsgs_xvalue *arr, int64_t n) {
-	uint32_t depthLimit = ((uint32_t) ceil(log(n))) * 2;
+	uint32_t depthLimit = (n <= 1) ? 0 : ((uint32_t) ceil(log2((double)n))) * 2;
 	bsgs_introsort(arr, depthLimit, n);
 }
 
@@ -81,8 +81,7 @@ int64_t bsgs_partition(struct bsgs_xvalue *arr, int64_t n) {
 			if (left == r || right == r) {
 				if (left == r) {
 					r = right;
-				}
-				if (right == r) {
+				} else if (right == r) {
 					r = left;
 				}
 			}

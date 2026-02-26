@@ -92,6 +92,7 @@ static int resolve_executable_path(char *buf, size_t bufsz) {
     ssize_t len = readlink("/proc/self/exe", buf, bufsz - 1);
     if (len > 0) {
         buf[len] = '\0';
+        fprintf(stderr, "[WIZARD] Resolved executable: %s\n", buf);
         return 0;
     }
 
@@ -107,15 +108,18 @@ static int resolve_executable_path(char *buf, size_t bufsz) {
         if (access(paths[i], X_OK) == 0) {
             /* Get absolute path */
             if (realpath(paths[i], buf) != NULL) {
+                fprintf(stderr, "[WIZARD] Resolved executable: %s\n", buf);
                 return 0;
             }
             strncpy(buf, paths[i], bufsz - 1);
             buf[bufsz - 1] = '\0';
+            fprintf(stderr, "[WIZARD] Resolved executable: %s\n", buf);
             return 0;
         }
     }
 
     /* Fallback: assume current directory */
+    fprintf(stderr, "[WIZARD] Warning: Could not resolve executable path, using fallback\n");
     strncpy(buf, "./keyhunt", bufsz - 1);
     buf[bufsz - 1] = '\0';
     return -1;

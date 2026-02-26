@@ -19,10 +19,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#ifdef __cplusplus
-#include <atomic>
-#endif
-
 /* Import shared type definitions from cli.h to avoid ODR violations */
 #include "../cli.h"
 
@@ -68,16 +64,16 @@ typedef struct {
     crypto_type_t crypto_type;    /* BTC/ETH/ALL */
 
     /* Range specification */
-    char range_start[128];        /* Start of search range (hex string) */
-    char range_end[128];          /* End of search range (hex string) */
+    char range_start[KH_RANGE_BUF_SIZE];  /* Start of search range (hex string) */
+    char range_end[KH_RANGE_BUF_SIZE];    /* End of search range (hex string) */
     int  bit_range;               /* Bit range for puzzles (0 = not set) */
 
     /* Stride for sequential search */
-    char stride[128];             /* Custom stride value (hex string) */
+    char stride[KH_RANGE_BUF_SIZE];       /* Custom stride value (hex string) */
     bool stride_enabled;          /* Use custom stride */
 
     /* Target file */
-    char target_file[512];        /* Path to target addresses/hashes file */
+    char target_file[KH_PATH_BUF_SIZE];   /* Path to target addresses/hashes file */
 
     /* Flags */
     bool random_mode;             /* Random key generation */
@@ -110,7 +106,7 @@ typedef struct {
     /* Caching */
     bool save_progress;           /* Save bloom/bP tables to disk */
     bool load_precalc;            /* Load precalculated files */
-    char precalc_file[512];       /* Path to precalculated file */
+    char precalc_file[KH_PATH_BUF_SIZE]; /* Path to precalculated file */
 
     /* Derived values (computed at runtime) */
     uint64_t m2_value;            /* M / 32 */
@@ -143,17 +139,10 @@ typedef struct {
     int  threads_per_block;       /* Threads per CUDA block */
     int  keys_per_thread;         /* Keys processed per GPU thread */
 
-#ifdef __cplusplus
-    /* Runtime stats (atomic, thread-safe GPU counters) */
-    std::atomic<uint64_t> keys_checked{0};      /* Total GPU keys checked */
-    std::atomic<uint64_t> keys_checked_cur{0};  /* Current block keys */
-    std::atomic<int>      should_stop{0};       /* Signal GPU to stop */
-#else
-    /* Runtime stats (volatile fallback for C) */
+    /* Runtime stats (volatile for cross-thread visibility) */
     volatile uint64_t keys_checked;      /* Total GPU keys checked */
     volatile uint64_t keys_checked_cur;  /* Current block keys */
     volatile int      should_stop;       /* Signal GPU to stop */
-#endif
 
     /* Bloom filter state */
     bool bloom_uploaded;          /* GPU-side bloom filter ready */
@@ -208,7 +197,7 @@ typedef struct {
 
     /* Found keys */
     int      keys_found;          /* Total keys found this session */
-    char     output_file[512];    /* Path to output file */
+    char     output_file[KH_PATH_BUF_SIZE]; /* Path to output file */
 } runtime_state_t;
 
 /* ============================================================================
@@ -253,7 +242,7 @@ typedef struct {
     runtime_state_t   runtime;    /* Execution state */
 
     /* Legacy INI config path */
-    char ini_config_path[512];    /* Path to keyhunt.conf if loaded */
+    char ini_config_path[KH_PATH_BUF_SIZE]; /* Path to keyhunt.conf if loaded */
     bool ini_loaded;              /* INI file was loaded */
 
     /* Flags indicating what was explicitly set */

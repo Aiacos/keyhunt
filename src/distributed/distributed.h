@@ -24,6 +24,9 @@
 #include <stdbool.h>
 #include <pthread.h>
 
+/* TODO: Migrate from pthread to platform abstraction layer (src/platform/)
+ * for Windows compatibility. See platform_thread.h for the unified API. */
+
 /* ============================================================================
  * TLS Support (Optional - requires OpenSSL)
  * ============================================================================
@@ -232,6 +235,7 @@ typedef struct {
     pthread_mutex_t work_mutex;     /* Protects work unit assignment - hold briefly! */
     pthread_mutex_t stats_mutex;    /* Protects statistics counters - separate from work */
     pthread_mutex_t worker_mutex;   /* Protects worker array modifications */
+    pthread_mutex_t result_mutex;   /* Protects results array and result_count */
 
     /* Work distribution optimization */
     int next_pending_hint;          /* Hint for next pending work unit (optimization) */
@@ -265,6 +269,9 @@ typedef struct {
     int job_puzzle_number;          /* Puzzle number (informational) */
     int job_bits;                   /* Bit range (informational) */
     int heartbeat_interval_sec;     /* How often workers should heartbeat */
+
+    /* Health check timing */
+    uint64_t last_health_check_ms;  /* Last health check timestamp (moved from static) */
 } dist_coordinator_t;
 
 /* Worker client state */

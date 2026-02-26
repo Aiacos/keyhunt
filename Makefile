@@ -6,7 +6,7 @@ OBJDIR := obj
 SRCDIR := src
 
 COMMON_FLAGS := -m64 -march=native -mtune=native -mssse3
-OPT_FLAGS := -O3 -ftree-vectorize -funroll-loops -pipe -DNDEBUG
+OPT_FLAGS := -O2 -ftree-vectorize -funroll-loops -pipe
 WARN_FLAGS := -Wall -Wextra
 
 CXXFLAGS ?=
