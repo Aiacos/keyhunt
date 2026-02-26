@@ -222,6 +222,25 @@ void wizard_print_config_summary(const wizard_config_t *cfg) {
         printf("  │ " CYAN "Progress:" RESET " %.4f%% (privatekeys.pw)                 │\n",
                cfg->privatekeys_percent);
     }
+
+    /* Webhook notifications */
+    bool has_discord = (cfg->webhook_discord_url[0] != '\0');
+    bool has_telegram = (cfg->webhook_telegram_url[0] != '\0');
+    if (has_discord || has_telegram) {
+        printf("  │ " CYAN "Webhooks:" RESET " ");
+        if (has_discord) printf(GREEN "Discord" RESET);
+        if (has_discord && has_telegram) printf(", ");
+        if (has_telegram) printf(GREEN "Telegram" RESET);
+        int pad = 42 - (has_discord ? 7 : 0) - (has_telegram ? 8 : 0) - (has_discord && has_telegram ? 2 : 0);
+        for (int i = 0; i < pad; i++) printf(" ");
+        printf("│\n");
+    }
+
+    /* Progress reporting */
+    if (cfg->report_progress_enabled && cfg->report_progress_url[0] != '\0') {
+        printf("  │ " CYAN "Reporting:" RESET " " GREEN "Enabled" RESET " (to community API)              │\n");
+    }
+
     printf("  └─────────────────────────────────────────────────────────┘\n");
 }
 
