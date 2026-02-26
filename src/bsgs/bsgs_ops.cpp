@@ -235,6 +235,7 @@ void bsgs_batch_compute_points(
     // This is the expensive operation that benefits from batching
     // Complexity: O(n) modular multiplications + 1 modular inversion
     // instead of n modular inversions
+    grp->Set(dx);
     grp->ModInvOptimized();
 
     // Step 3: Compute points using the batch-inverted dx values

@@ -222,7 +222,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[hLength + 1]);
+					_s.ModMulK1(&dy,&batch_ctx.dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -389,7 +389,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[hLength + 1]);
+					_s.ModMulK1(&dy,&batch_ctx.dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -886,7 +886,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[hLength + 1]);
+					_s.ModMulK1(&dy,&batch_ctx.dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -1061,7 +1061,7 @@ platform_mutex_unlock(&write_keys);
 					pp = startP;
 					dy.ModSub(&_2GSn.y,&pp.y);
 
-					_s.ModMulK1(&dy,&dx[hLength + 1]);
+					_s.ModMulK1(&dy,&batch_ctx.dx[hLength + 1]);
 					_p.ModSquareK1(&_s);
 
 					pp.x.ModNeg();
@@ -1263,7 +1263,7 @@ platform_mutex_unlock(&write_keys);
 						pp = startP;
 						dy.ModSub(&_2GSn.y,&pp.y);
 
-						_s.ModMulK1(&dy,&dx[hLength + 1]);
+						_s.ModMulK1(&dy,&batch_ctx.dx[hLength + 1]);
 						_p.ModSquareK1(&_s);
 
 						pp.x.ModNeg();
