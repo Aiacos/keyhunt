@@ -751,14 +751,9 @@ uint64_t bsgs_aux = 0;
 uint32_t bsgs_point_number = 0;
 
 static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
-	const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
-	if (env && *env) {
-		int v = atoi(env);
-		if (v >= 1 && v <= 99) return v;
-	}
-	// TODO: Accept config parameter instead of using extern g_gpu_range_percent
-	extern int g_gpu_range_percent;
-	if (cpu_threads <= 0) return g_gpu_range_percent;
+	// Note: KEYHUNT_HYBRID_GPU_PERCENT env var is checked by the caller
+	// before this function is invoked.  Do not duplicate the check here.
+	if (cpu_threads <= 0) return 80;  // Safe default
 
 	// Heuristic split based on SM count vs CPU threads.
 	// Goal: avoid the CPU tail becoming the bottleneck in static split.
@@ -772,7 +767,7 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 		if (v > 99) v = 99;
 		return v;
 	}
-	return g_gpu_range_percent;
+	return 80;  // No GPU info available, default to 80%
 }
 
 /*
@@ -3945,12 +3940,32 @@ int main(int argc, char **argv)	{
 					output_warning("GPU not available for hybrid mode, falling back to CPU-only\n");
 					FLAGGPU_HYBRID.store(0, std::memory_order_release);
 					} else {
+						// Auto-tune GPU/CPU split BEFORE adaptive_init so the
+						// scheduler starts with the correct ratio.
+						{
+							const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
+							if (env && *env) {
+								int v = atoi(env);
+								if (v >= 1 && v <= 99) g_gpu_range_percent = v;
+							}
+							if (g_gpu_range_percent <= 0) {
+								g_gpu_range_percent = hybrid_get_gpu_range_percent_default(NTHREADS);
+							}
+							if (g_gpu_range_percent <= 0) {
+								g_gpu_range_percent = 80;  // Safe default
+							}
+							output_info("HYBRID: split GPU %d%% / CPU %d%% (override: KEYHUNT_HYBRID_GPU_PERCENT)\n",
+							       g_gpu_range_percent, 100 - g_gpu_range_percent);
+						}
+
 						// Initialize adaptive scheduler for throughput tracking
-						// Use sysinfo hybrid ratio for initial CPU/GPU split
 						float initial_cpu_ratio = 1.0f - (g_gpu_range_percent / 100.0f);
-						adaptive_init(initial_cpu_ratio, 0, 0);  // Range tracking done separately
-						output_info("Adaptive scheduler initialized (CPU=%.0f%%, GPU=%.0f%%)\n",
-						       initial_cpu_ratio * 100.0f, (1.0f - initial_cpu_ratio) * 100.0f);
+						// Pass uint64_t range for progress tracking.
+						// For ranges > 64 bits the low bits still give useful
+						// proportional progress (wraps, but monotonically increases).
+						adaptive_init(initial_cpu_ratio,
+						              n_range_start.GetInt64(),
+						              n_range_end.GetInt64());
 
 						const char *ws = getenv("KEYHUNT_HYBRID_WORK_STEAL");
 						const bool want_work_steal = (ws && *ws && atoi(ws) != 0);
@@ -4002,19 +4017,6 @@ int main(int argc, char **argv)	{
 						} else {
 							output_success("Running GPU+CPU hybrid mode (static split)...\n");
 
-					// Auto-tune the split unless user overrides with KEYHUNT_HYBRID_GPU_PERCENT.
-					{
-						const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
-						if (!(env && *env)) {
-							int tuned = hybrid_get_gpu_range_percent_default(NTHREADS);
-							if (tuned != g_gpu_range_percent) {
-								g_gpu_range_percent = tuned;
-								output_info("HYBRID: auto split GPU %d%% / CPU %d%% (override: KEYHUNT_HYBRID_GPU_PERCENT)\n",
-								       g_gpu_range_percent, 100 - g_gpu_range_percent);
-							}
-						}
-					}
-	
 					// Calculate range split: GPU gets g_gpu_range_percent% of range.
 					// Ranges are treated as [start, end) (end is exclusive) throughout keyhunt.
 					Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
@@ -4210,7 +4212,13 @@ int main(int argc, char **argv)	{
 							if (cpu_delta_u64 > 0) {
 								adaptive_report_work(WORKER_CPU, cpu_delta_u64, period_ms);
 							}
-							// Note: GPU reporting is handled in gpu_hybrid_thread
+							// Report GPU throughput from atomic counter so the
+							// adaptive scheduler tracks GPU speed in real time.
+							// Only in static-split mode — in work-stealing mode the
+							// gpu_hybrid_thread reports its own work periodically.
+							if (gpu_delta_u64 > 0 && !g_work_pool.enabled) {
+								adaptive_report_work(WORKER_GPU, gpu_delta_u64, period_ms);
+							}
 						}
 
 						Int cpu_rate;
