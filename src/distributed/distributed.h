@@ -604,6 +604,14 @@ int dist_worker_report_found(dist_worker_client_t *client,
 int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last);
 
 /**
+ * Gracefully leave coordinator (notify before disconnect)
+ * @param client Client state
+ * @param reason Optional reason for leaving (can be NULL)
+ * @return 0 on success, -1 on error
+ */
+int dist_worker_leave(dist_worker_client_t *client, const char *reason);
+
+/**
  * Disconnect from coordinator
  * @param client Client state
  */

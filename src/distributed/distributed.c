@@ -2139,6 +2139,29 @@ int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last
     return (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) > 0) ? 0 : -1;
 }
 
+int dist_worker_leave(dist_worker_client_t *client, const char *reason) {
+    if (!client->connected) return -1;
+
+    char msg[512];
+    snprintf(msg, sizeof(msg), "{");
+    json_add_string(msg, sizeof(msg), "type", "leave");
+    if (reason && reason[0]) {
+        json_add_string(msg, sizeof(msg), "reason", reason);
+    }
+    size_t len = strlen(msg);
+    if (len > 0 && msg[len-1] == ',') msg[len-1] = '\0';
+    len = strlen(msg);
+    if (len + 2 <= sizeof(msg)) {
+        msg[len] = '}';
+        msg[len + 1] = '\0';
+    }
+
+    if (send_msg_ex(client->socket_fd, client->ssl, msg) != 0) return -1;
+
+    char response[DIST_MAX_MSG_SIZE];
+    return (recv_msg_ex(client->socket_fd, client->ssl, response, sizeof(response)) > 0) ? 0 : -1;
+}
+
 void dist_worker_disconnect(dist_worker_client_t *client) {
 #ifdef HAVE_OPENSSL
     /* Shutdown and free SSL connection */
