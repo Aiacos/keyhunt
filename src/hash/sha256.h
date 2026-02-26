@@ -24,6 +24,17 @@
 #include <inttypes.h>
 
 void sha256(uint8_t *input,size_t length, uint8_t *digest);
+
+/*
+ * sha256_33 / sha256_65 — Optimised single-block / two-block SHA-256.
+ *
+ * WARNING: These functions write padding DIRECTLY into `input`:
+ *   sha256_33: writes bytes [33..63]  → input must be >= 64 bytes
+ *   sha256_65: writes bytes [65..127] → input must be >= 128 bytes
+ *
+ * The caller is responsible for providing an oversized buffer.
+ * Using an exact-length buffer (33 or 65 bytes) causes stack corruption.
+ */
 void sha256_33(uint8_t *input, uint8_t *digest);
 void sha256_65(uint8_t *input, uint8_t *digest);
 void sha256_checksum(uint8_t *input, int length, uint8_t *checksum);

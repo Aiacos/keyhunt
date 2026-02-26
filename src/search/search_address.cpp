@@ -28,6 +28,7 @@
 #define BSGS_SORT_H
 #endif
 #include "search_context.h"
+#include "search_utils.h"
 #include "search_xpoint.h"
 #include "search_rmd160.h"
 #include "../output.h"
@@ -43,10 +44,6 @@
 #include <cinttypes>
 #include <atomic>
 #include <time.h>
-
-#ifndef CPU_GRP_SIZE
-#define CPU_GRP_SIZE 1024
-#endif
 
 /* ============================================================================
  * External Dependencies (defined in keyhunt.cpp)
@@ -123,23 +120,7 @@ struct kh_profile_scope_t {
 /* profile_set_thread: sets tls_prof for the current thread. Defined in keyhunt.cpp. */
 extern void profile_set_thread(int idx);
 
-/* sub_u64_if_fits: compute (a - b) and store in *out if result fits in uint64_t */
-static inline bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
-	if (!out) return false;
-	uint64_t d0 = a.bits64[0] - b.bits64[0];
-	uint64_t borrow = (a.bits64[0] < b.bits64[0]) ? 1ULL : 0ULL;
-	for (int i = 1; i < NB64BLOCK; i++) {
-		const uint64_t ai = a.bits64[i];
-		const uint64_t bi = b.bits64[i];
-		const uint64_t bi_borrow = bi + borrow;
-		const uint64_t di = ai - bi_borrow;
-		if (di != 0) return false;
-		borrow = (ai < bi_borrow) ? 1ULL : 0ULL;
-	}
-	if (borrow) return false;
-	*out = d0;
-	return true;
-}
+/* int_sub_to_u64: defined in search_utils.h (requires BIGINTH) */
 
 /* ============================================================================
  * cpu_use_y_parity_for_compressed_btc
@@ -586,7 +567,7 @@ void *thread_process(void *vargp)	{
 	extern Int n_range_end;
 	extern struct address_value *addressTable;
 	extern Int beta, beta2, lambda, lambda2;
-	extern int THREADOUTPUT;
+	extern volatile int THREADOUTPUT;
 
 	/* Extract thread_number and config (if available) */
 	tt = (struct tothread *)vargp;
@@ -631,7 +612,7 @@ void *thread_process(void *vargp)	{
 							range_end_local.Set(&n_range_end);
 						}
 						uint64_t rem_u64 = 0;
-						if (sub_u64_if_fits(range_end_local, key_mpz, &rem_u64) && rem_u64 < block_limit) {
+						if (int_sub_to_u64(range_end_local, key_mpz, &rem_u64) && rem_u64 < block_limit) {
 							block_limit = rem_u64;
 						}
 				}
@@ -1147,5 +1128,6 @@ void *thread_process(void *vargp)	{
 			}
 		} while(continue_flag);
 		ends[thread_number].value = 1;
+		delete grp;
 		return NULL;
 	}

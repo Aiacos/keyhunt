@@ -2061,6 +2061,7 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
     int threads = 256;
     int blocks = (count + threads - 1) / threads;
     kernel_hash160_fromX<<<blocks, threads, 0, g_stream>>>(d_x32, count, d_out02, d_out03);
+    CUDA_CHECK(cudaGetLastError());
 
     // Copy results to pinned memory, then to output
     CUDA_CHECK(cudaMemcpyAsync(h_out02_pinned, d_out02, count * 20, cudaMemcpyDeviceToHost, g_stream));
@@ -2475,6 +2476,15 @@ int gpu_full_search(const gpu_search_config_t *config) {
                     config->use_bloom,
                     ctx->d_should_stop[worker->stream_idx]
                 );
+            }
+
+            // Check kernel launch succeeded before counting work as done
+            cudaError_t launch_err = cudaGetLastError();
+            if (launch_err != cudaSuccess) {
+                fprintf(stderr, "[GPU %d] Kernel launch failed: %s\n",
+                        worker->gpu_id, cudaGetErrorString(launch_err));
+                worker->active = 0;
+                break;
             }
 
             // Advance cursor

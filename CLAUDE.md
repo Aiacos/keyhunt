@@ -622,3 +622,4 @@ make clean && make CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++
 - **BSGS_MEMORY_CHECK.md**: Memory validation system
 - **PERFORMANCE_ANALYSIS.md**: Benchmark results and optimization phases
 - **CHANGELOG.md**: Version history and changes
+- **docs/ENV_VARIABLES.md**: All KEYHUNT_* environment variable overrides

@@ -89,6 +89,30 @@ inline bool sub_u64_if_fits(uint64_t *val, uint64_t sub) {
 	return false;
 }
 
+/**
+ * Compute (a - b) and store in *out if the result fits in a single uint64_t
+ * (i.e., upper 192 bits of the difference are zero). Returns true on success.
+ * Requires secp256k1/Int.h.
+ */
+#ifdef BIGINTH  /* Only available when secp256k1/Int.h has been included */
+inline bool int_sub_to_u64(const Int &a, const Int &b, uint64_t *out) {
+	if (!out) return false;
+	uint64_t d0 = a.bits64[0] - b.bits64[0];
+	uint64_t borrow = (a.bits64[0] < b.bits64[0]) ? 1ULL : 0ULL;
+	for (int i = 1; i < NB64BLOCK; i++) {
+		const uint64_t ai = a.bits64[i];
+		const uint64_t bi = b.bits64[i];
+		const uint64_t bi_borrow = bi + borrow;
+		const uint64_t di = ai - bi_borrow;
+		if (di != 0) return false;
+		borrow = (ai < bi_borrow) ? 1ULL : 0ULL;
+	}
+	if (borrow) return false;
+	*out = d0;
+	return true;
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  Per-thread PRNG  (xoshiro256**)                                    */
 /* ------------------------------------------------------------------ */
@@ -151,10 +175,15 @@ inline bool env_truthy_kh(const char *name) {
 
 /* ------------------------------------------------------------------ */
 /*  Profiling helpers                                                  */
+/*  NOTE: keyhunt.cpp defines its own profiling system with a          */
+/*  different profile_counters_t layout.  This section is opt-in       */
+/*  (#define SEARCH_UTILS_PROFILING before including) to avoid         */
+/*  name collisions.                                                   */
 /* ------------------------------------------------------------------ */
 
-/** Per-thread profiling counters. */
-struct profile_counters_t {
+#ifdef SEARCH_UTILS_PROFILING
+
+struct su_profile_counters_t {
 	uint64_t hash_ops;
 	uint64_t bloom_checks;
 	uint64_t ec_ops;
@@ -165,15 +194,11 @@ struct profile_counters_t {
 #define SEARCH_UTILS_MAX_THREADS 256
 #endif
 
-/* Thread-local storage for the current thread's profile counters index. */
-inline thread_local int _profile_thread_idx = -1;
+inline thread_local int _su_profile_thread_idx = -1;
+inline su_profile_counters_t _su_profile_counters[SEARCH_UTILS_MAX_THREADS] = {};
+inline int _su_profile_num_threads = 0;
 
-/* Global array of per-thread profiling counters. */
-inline profile_counters_t _profile_counters[SEARCH_UTILS_MAX_THREADS] = {};
-inline int _profile_num_threads = 0;
-
-/** Return current time in nanoseconds (monotonic where possible). */
-inline uint64_t profile_now_ns(void) {
+inline uint64_t su_profile_now_ns(void) {
 #if defined(_WIN64) && !defined(__CYGWIN__)
 	LARGE_INTEGER freq, cnt;
 	QueryPerformanceFrequency(&freq);
@@ -186,30 +211,26 @@ inline uint64_t profile_now_ns(void) {
 #endif
 }
 
-/** Initialise profiling for `n` threads. */
-inline void profile_init_threads(int n) {
+inline void su_profile_init_threads(int n) {
 	if (n > SEARCH_UTILS_MAX_THREADS) n = SEARCH_UTILS_MAX_THREADS;
-	_profile_num_threads = n;
-	memset(_profile_counters, 0, sizeof(profile_counters_t) * n);
+	_su_profile_num_threads = n;
+	memset(_su_profile_counters, 0, sizeof(su_profile_counters_t) * n);
 }
 
-/** Assign the calling thread an index for profiling. */
-inline void profile_set_thread(int idx) {
-	_profile_thread_idx = idx;
+inline void su_profile_set_thread(int idx) {
+	_su_profile_thread_idx = idx;
 }
 
-/**
- * Aggregate profiling counters across all threads into `out`.
- * Caller should zero `out` before calling if a fresh aggregate is desired.
- */
-inline void profile_aggregate(profile_counters_t *out) {
+inline void su_profile_aggregate(su_profile_counters_t *out) {
 	memset(out, 0, sizeof(*out));
-	for (int i = 0; i < _profile_num_threads; i++) {
-		out->hash_ops     += _profile_counters[i].hash_ops;
-		out->bloom_checks += _profile_counters[i].bloom_checks;
-		out->ec_ops       += _profile_counters[i].ec_ops;
-		out->elapsed_ns   += _profile_counters[i].elapsed_ns;
+	for (int i = 0; i < _su_profile_num_threads; i++) {
+		out->hash_ops     += _su_profile_counters[i].hash_ops;
+		out->bloom_checks += _su_profile_counters[i].bloom_checks;
+		out->ec_ops       += _su_profile_counters[i].ec_ops;
+		out->elapsed_ns   += _su_profile_counters[i].elapsed_ns;
 	}
 }
+
+#endif /* SEARCH_UTILS_PROFILING */
 
 #endif /* SEARCH_UTILS_H */

@@ -683,8 +683,9 @@ TEST(sha256_basic) {
 }
 
 TEST(sha256_33byte_input) {
-    /* Test the optimized 33-byte input version (compressed public key) */
-    unsigned char input[33];
+    /* Test the optimized 33-byte input version (compressed public key).
+       sha256_33() pads in-place, so the buffer must be at least 64 bytes. */
+    unsigned char input[64] = {0};
     input[0] = 0x02;  /* Compressed pubkey prefix */
     for (int i = 1; i < 33; i++) {
         input[i] = i;
@@ -705,8 +706,9 @@ TEST(sha256_33byte_input) {
 }
 
 TEST(sha256_65byte_input) {
-    /* Test the optimized 65-byte input version (uncompressed public key) */
-    unsigned char input[65];
+    /* Test the optimized 65-byte input version (uncompressed public key).
+       sha256_65() pads in-place, so the buffer must be at least 128 bytes. */
+    unsigned char input[128] = {0};
     input[0] = 0x04;  /* Uncompressed pubkey prefix */
     for (int i = 1; i < 65; i++) {
         input[i] = i;

@@ -89,16 +89,12 @@ namespace ripemd160avx512 {
 #define f3(x,y,z) _mm512_ternarylogic_epi32(x, y, z, 0x59)
 
 // f4(x,y,z) = (x AND z) OR (y AND NOT z) = (z ? x : y)
-// Truth table: 11100010 = 0xE2
-#define f4(x,y,z) _mm512_ternarylogic_epi32(x, y, z, 0xE2)
+// Derivation: a=0xF0 b=0xCC c=0xAA → (a&c)|(b&~c) = 0xA0|0x44 = 0xE4
+#define f4(x,y,z) _mm512_ternarylogic_epi32(x, y, z, 0xE4)
 
 // f5(x,y,z) = x XOR (y OR NOT z)
-// Truth table: 10010110 rotated... = 0x36
-// Actually: x XOR (y OR ~z) - need to recalculate
-// y OR ~z: row by row... ~z=1100, y OR ~z = 1111 1100 = FC
-// x XOR (y OR ~z): 0011 XOR FC = 0011 XOR 1111 1100 = computed per bit
-// Let's verify: f5 truth table is 00110110 = 0x36
-#define f5(x,y,z) _mm512_ternarylogic_epi32(x, y, z, 0x36)
+// Derivation: a=0xF0 b=0xCC c=0xAA → ~c=0x55, b|~c=0xDD, a^0xDD = 0x2D
+#define f5(x,y,z) _mm512_ternarylogic_epi32(x, y, z, 0x2D)
 
 #define add3(x0, x1, x2) _mm512_add_epi32(_mm512_add_epi32(x0, x1), x2)
 #define add4(x0, x1, x2, x3) _mm512_add_epi32(_mm512_add_epi32(x0, x1), _mm512_add_epi32(x2, x3))

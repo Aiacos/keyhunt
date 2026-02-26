@@ -583,3 +583,51 @@ void kh_runtime_state_cleanup(runtime_state_t *state) {
     state->bsgs_mutex = NULL;
     state->work_pool = NULL;
 }
+
+/* ============================================================================
+ * Environment Variable Overrides
+ * ============================================================================ */
+
+/* Internal: parse a boolean env var (truthy = anything except 0/false/no/empty). */
+static bool env_bool(const char *name) {
+    const char *v = getenv(name);
+    if (!v || !*v) return false;
+    if (v[0] == '0' && v[1] == '\0') return false;
+    if ((v[0] == 'f' || v[0] == 'F') && (v[1] == 'a' || v[1] == 'A')) return false;
+    if ((v[0] == 'n' || v[0] == 'N') && (v[1] == 'o' || v[1] == 'O')) return false;
+    return true;
+}
+
+/* Internal: parse an int env var, return fallback if unset or invalid. */
+static int64_t env_int(const char *name, int64_t fallback) {
+    const char *v = getenv(name);
+    if (!v || !*v) return fallback;
+    char *end = NULL;
+    long long val = strtoll(v, &end, 0);  /* auto-detect hex with 0x prefix */
+    if (end == v) return fallback;
+    return (int64_t)val;
+}
+
+void kh_env_overrides_init(env_overrides_t *env) {
+    if (!env) return;
+    memset(env, 0, sizeof(*env));
+
+    /* Profiling and debugging */
+    env->profile_enabled     = env_bool("KEYHUNT_PROFILE");
+    env->skip_sysinfo        = env_bool("KEYHUNT_SKIP_SYSINFO");
+    env->debug_distributed   = env_bool("KEYHUNT_DEBUG");
+    env->debug_subprocess    = env_bool("KEYHUNT_DEBUG_SUBPROCESS");
+
+    /* GPU tuning */
+    env->gpu_selftest        = env_bool("KEYHUNT_GPU_SELFTEST");
+    env->hybrid_gpu_percent  = (int)env_int("KEYHUNT_HYBRID_GPU_PERCENT", 0);
+    env->hybrid_work_steal   = env_bool("KEYHUNT_HYBRID_WORK_STEAL");
+    env->hybrid_block_size   = (uint64_t)env_int("KEYHUNT_HYBRID_BLOCK_SIZE",
+                                                   0x100000000LL);
+
+    /* CPU tuning */
+    env->cpu_use_y              = (int)env_int("KEYHUNT_CPU_USE_Y", 1);
+    env->hybrid_cpu_use_y       = (int)env_int("KEYHUNT_HYBRID_CPU_USE_Y", 1);
+    env->cpu_n_override         = env_int("KEYHUNT_CPU_N", 0);
+    env->hybrid_cpu_n_override  = env_int("KEYHUNT_HYBRID_CPU_N", 0);
+}

@@ -4682,7 +4682,7 @@ void *thread_bPload(void *vargp)	{
 			bloom_bP_index = (uint8_t)rawvalue[0];
 			if(i_counter < bsgs_m3)	{
 				if(!FLAGREADEDFILE3)	{
-					memcpy(bPtable[i_counter].value,rawvalue+16,BSGS_XVALUE_RAM);
+					memcpy(&bPtable[i_counter].value,rawvalue+16,BSGS_XVALUE_RAM);
 					bPtable[i_counter].index = i_counter;
 				}
 				if(!FLAGREADEDFILE4)	{
@@ -4844,7 +4844,7 @@ void *thread_bPload_2blooms(void *vargp)	{
 			bloom_bP_index = (uint8_t)rawvalue[0];
 			if(i_counter < bsgs_m3)	{
 				if(!FLAGREADEDFILE3)	{
-					memcpy(bPtable[i_counter].value,rawvalue+16,BSGS_XVALUE_RAM);
+					memcpy(&bPtable[i_counter].value,rawvalue+16,BSGS_XVALUE_RAM);
 					bPtable[i_counter].index = i_counter;
 				}
 				if(!FLAGREADEDFILE4)	{

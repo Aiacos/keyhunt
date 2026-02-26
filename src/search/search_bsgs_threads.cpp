@@ -49,7 +49,7 @@ extern Int n_range_end;
 
 extern int FLAGMATRIX;
 extern int FLAGQUIET;
-extern int THREADOUTPUT;
+extern volatile int THREADOUTPUT;
 
 extern int FLAGREADEDFILE1;
 extern int FLAGREADEDFILE2;
@@ -255,7 +255,7 @@ platform_mutex_unlock(&write_keys);
 								}
 								if(salir)	{
 									printf("All points were found\n");
-									exit(EXIT_FAILURE);
+									exit(EXIT_SUCCESS);
 								}
 							} //End if second check
 						}//End if first check
@@ -283,6 +283,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	delete grp;
 	return NULL;
 }
 
@@ -471,7 +472,7 @@ platform_mutex_unlock(&write_keys);
 								}
 								if(salir)	{
 									printf("All points were found\n");
-									exit(EXIT_FAILURE);
+									exit(EXIT_SUCCESS);
 								}
 							} //End if second check
 						}//End if first check
@@ -504,6 +505,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	delete grp;
 	return NULL;
 }
 
@@ -1019,7 +1021,7 @@ platform_mutex_unlock(&write_keys);
 								}
 								if(salir)	{
 									printf("All points were found\n");
-									exit(EXIT_FAILURE);
+									exit(EXIT_SUCCESS);
 								}
 							} //End if second check
 						}//End if first check
@@ -1050,6 +1052,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	delete grp;
 	return NULL;
 }
 
@@ -1244,7 +1247,7 @@ platform_mutex_unlock(&write_keys);
 								}
 								if(salir)	{
 									printf("All points were found\n");
-									exit(EXIT_FAILURE);
+									exit(EXIT_SUCCESS);
 								}
 							} //End if second check
 						}//End if first check
@@ -1274,6 +1277,7 @@ platform_mutex_unlock(&write_keys);
 		steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	delete grp;
 	return NULL;
 }
 
@@ -1497,7 +1501,7 @@ platform_mutex_unlock(&write_keys);
 									}
 									if(salir)	{
 										printf("All points were found\n");
-										exit(EXIT_FAILURE);
+										exit(EXIT_SUCCESS);
 									}
 								} //End if second check
 							}//End if first check
@@ -1528,5 +1532,6 @@ platform_mutex_unlock(&write_keys);
 			steps[thread_number].value+=2;
 	}while(1);
 	ends[thread_number].value = 1;
+	delete grp;
 	return NULL;
 }

@@ -289,6 +289,16 @@ static int json_get_string(const char *json, const char *key, char *out, size_t 
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *start = strstr(json, pattern);
+    /* Verify the match is a real key (preceded by {, comma, or whitespace)
+     * to avoid "type" matching inside "subtype" */
+    while (start) {
+        if (start == json || start[-1] == '{' || start[-1] == ','
+            || start[-1] == ' ' || start[-1] == '\t'
+            || start[-1] == '\n' || start[-1] == '\r') {
+            break;  /* Valid key match */
+        }
+        start = strstr(start + 1, pattern);  /* Try next occurrence */
+    }
     if (!start) return -1;
     start += strlen(pattern);
     /* Skip whitespace after the colon (handles both "key":"value" and "key": "value") */
@@ -311,6 +321,12 @@ static int64_t json_get_int(const char *json, const char *key) {
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *start = strstr(json, pattern);
+    while (start) {
+        if (start == json || start[-1] == '{' || start[-1] == ','
+            || start[-1] == ' ' || start[-1] == '\t'
+            || start[-1] == '\n' || start[-1] == '\r') break;
+        start = strstr(start + 1, pattern);
+    }
     if (!start) return 0;
     start += strlen(pattern);
     /* Skip whitespace */
@@ -324,6 +340,12 @@ static double json_get_double(const char *json, const char *key) {
     char pattern[128];
     snprintf(pattern, sizeof(pattern), "\"%s\":", key);
     const char *start = strstr(json, pattern);
+    while (start) {
+        if (start == json || start[-1] == '{' || start[-1] == ','
+            || start[-1] == ' ' || start[-1] == '\t'
+            || start[-1] == '\n' || start[-1] == '\r') break;
+        start = strstr(start + 1, pattern);
+    }
     if (!start) return 0.0;
     start += strlen(pattern);
     /* Skip whitespace */
@@ -1200,7 +1222,10 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         }
 
         /* Network I/O happens outside lock */
-        send_msg_ex(worker->socket_fd, worker->ssl, response);
+        if (send_msg_ex(worker->socket_fd, worker->ssl, response) != 0) {
+            printf(LOG_SERVER LOG_WARN "Failed to send response to worker %d\n",
+                   worker->id);
+        }
 
     } else if (strcmp(type, "work_done") == 0) {
         int work_id = (int)json_get_int(msg, "work_id");
@@ -1761,11 +1786,41 @@ int dist_worker_connect(dist_worker_client_t *client) {
         return -1;
     }
 
-    if (connect(client->socket_fd, res->ai_addr, res->ai_addrlen) < 0) {
-        close(client->socket_fd);
-        client->socket_fd = -1;
-        freeaddrinfo(res);
-        return -1;
+    /* Use non-blocking connect with 10-second timeout to avoid kernel
+     * default (75-150s) that freezes the client with no feedback. */
+    {
+        int flags = fcntl(client->socket_fd, F_GETFL, 0);
+        fcntl(client->socket_fd, F_SETFL, flags | O_NONBLOCK);
+
+        int rc = connect(client->socket_fd, res->ai_addr, res->ai_addrlen);
+        if (rc < 0 && errno != EINPROGRESS) {
+            close(client->socket_fd);
+            client->socket_fd = -1;
+            freeaddrinfo(res);
+            return -1;
+        }
+        if (rc < 0) {  /* EINPROGRESS: wait for completion */
+            struct pollfd pfd = { .fd = client->socket_fd, .events = POLLOUT };
+            int poll_rc = poll(&pfd, 1, 10000);  /* 10-second timeout */
+            if (poll_rc <= 0) {
+                close(client->socket_fd);
+                client->socket_fd = -1;
+                freeaddrinfo(res);
+                return -1;
+            }
+            /* Check if connect actually succeeded */
+            int so_error = 0;
+            socklen_t len = sizeof(so_error);
+            getsockopt(client->socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+            if (so_error != 0) {
+                close(client->socket_fd);
+                client->socket_fd = -1;
+                freeaddrinfo(res);
+                return -1;
+            }
+        }
+        /* Restore blocking mode */
+        fcntl(client->socket_fd, F_SETFL, flags);
     }
 
     freeaddrinfo(res);
@@ -2193,10 +2248,19 @@ int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
                                 const char *filepath) {
     if (!coordinator || !filepath) return -1;
 
-    FILE *f = fopen(filepath, "w");
-    if (!f) {
+    /* Open with restricted permissions (owner-only read/write) to protect
+     * auth tokens and sensitive coordinator state from other users. */
+    int fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
         printf(LOG_SERVER LOG_ERR "Failed to save state to %s: %s\n",
                filepath, strerror(errno));
+        return -1;
+    }
+    FILE *f = fdopen(fd, "w");
+    if (!f) {
+        printf(LOG_SERVER LOG_ERR "Failed to open state file stream: %s\n",
+               strerror(errno));
+        close(fd);
         return -1;
     }
 
@@ -2218,6 +2282,9 @@ int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
     fprintf(f, "  \"work_unit_count\": %d,\n", coordinator->work_unit_count);
     fprintf(f, "  \"work_units_completed\": %d,\n", coordinator->work_units_completed);
 
+    // TODO: [MEDIUM] Auth token is stored in plaintext. File permissions are now
+    //   restricted to 0600, but consider hashing (SHA-256) before persisting for
+    //   defense-in-depth if the hash module gains a C-linkage API.
     /* Authentication (if enabled) */
     if (coordinator->auth_enabled && coordinator->auth_token[0]) {
         fprintf(f, "  \"auth_token\": \"%s\",\n", coordinator->auth_token);

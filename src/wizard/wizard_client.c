@@ -620,6 +620,47 @@ static int search_range_subprocess(const char *start, const char *end,
         snprintf(gpu_arg, sizeof(gpu_arg), "-G hybrid ");
     }
 
+    /* Validate server-supplied parameters against whitelist to prevent
+     * shell injection. All values come from the coordinator over the network. */
+    static const char *valid_modes[] = {
+        "address", "bsgs", "xpoint", "rmd160", "pub2rmd", "minikeys", "vanity", NULL
+    };
+    static const char *valid_key_types[] = {
+        "compress", "uncompress", "both", NULL
+    };
+
+    int mode_ok = 0;
+    for (const char **m = valid_modes; *m; m++) {
+        if (strcmp(cfg->mode, *m) == 0) { mode_ok = 1; break; }
+    }
+    if (!mode_ok) {
+        fprintf(stderr, "[-] Rejected invalid mode from server: '%s'\n", cfg->mode);
+        return -1;
+    }
+
+    int keytype_ok = 0;
+    for (const char **k = valid_key_types; *k; k++) {
+        if (strcmp(cfg->key_type, *k) == 0) { keytype_ok = 1; break; }
+    }
+    if (!keytype_ok) {
+        fprintf(stderr, "[-] Rejected invalid key_type from server: '%s'\n", cfg->key_type);
+        return -1;
+    }
+
+    /* Validate start/end are pure hex strings (no shell metacharacters) */
+    for (const char *p = start; *p; p++) {
+        if (!isxdigit((unsigned char)*p)) {
+            fprintf(stderr, "[-] Rejected invalid hex in range start: '%s'\n", start);
+            return -1;
+        }
+    }
+    for (const char *p = end; *p; p++) {
+        if (!isxdigit((unsigned char)*p)) {
+            fprintf(stderr, "[-] Rejected invalid hex in range end: '%s'\n", end);
+            return -1;
+        }
+    }
+
     /* Build command with absolute path.
      * Use larger status interval (-s 5) to reduce output overhead.
      * The main bottleneck is often stdout parsing, so less output = faster. */

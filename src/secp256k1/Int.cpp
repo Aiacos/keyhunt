@@ -228,21 +228,21 @@ unsigned char Int::GetByte(int n) {
 void Int::Set32Bytes(unsigned char *bytes) {
 
   CLEAR();
-  uint64_t *ptr = (uint64_t *)bytes;
-  bits64[3] = _byteswap_uint64(ptr[0]);
-  bits64[2] = _byteswap_uint64(ptr[1]);
-  bits64[1] = _byteswap_uint64(ptr[2]);
-  bits64[0] = _byteswap_uint64(ptr[3]);
+  uint64_t tmp;
+  memcpy(&tmp, bytes,      8); bits64[3] = _byteswap_uint64(tmp);
+  memcpy(&tmp, bytes + 8,  8); bits64[2] = _byteswap_uint64(tmp);
+  memcpy(&tmp, bytes + 16, 8); bits64[1] = _byteswap_uint64(tmp);
+  memcpy(&tmp, bytes + 24, 8); bits64[0] = _byteswap_uint64(tmp);
 
 }
 
 void Int::Get32Bytes(unsigned char *buff) {
 
-  uint64_t *ptr = (uint64_t *)buff;
-  ptr[3] = _byteswap_uint64(bits64[0]);
-  ptr[2] = _byteswap_uint64(bits64[1]);
-  ptr[1] = _byteswap_uint64(bits64[2]);
-  ptr[0] = _byteswap_uint64(bits64[3]);
+  uint64_t tmp;
+  tmp = _byteswap_uint64(bits64[0]); memcpy(buff + 24, &tmp, 8);
+  tmp = _byteswap_uint64(bits64[1]); memcpy(buff + 16, &tmp, 8);
+  tmp = _byteswap_uint64(bits64[2]); memcpy(buff + 8,  &tmp, 8);
+  tmp = _byteswap_uint64(bits64[3]); memcpy(buff,      &tmp, 8);
 
 }
 

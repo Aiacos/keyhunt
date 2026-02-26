@@ -13,6 +13,7 @@
 #endif
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -299,6 +300,17 @@ struct bloom_legacy_header
 
 #ifdef __cplusplus
 }
+#endif
+
+/* Guard against layout drift on platforms where long double != 16 bytes */
+#ifdef __cplusplus
+static_assert(sizeof(bloom_legacy_header) == 176,
+    "bloom_legacy_header size mismatch: old cache files expect 176 bytes");
+static_assert(offsetof(bloom_legacy_header, error) == 32,
+    "bloom_legacy_header.error offset mismatch: expected 32");
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(struct bloom_legacy_header) == 176,
+    "bloom_legacy_header size mismatch: old cache files expect 176 bytes");
 #endif
 
 #endif

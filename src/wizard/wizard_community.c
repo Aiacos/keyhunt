@@ -816,9 +816,12 @@ void wizard_calculate_search_offset(const puzzle_def_t *puzzle,
     __uint128_t range_end = parse_hex_128(puzzle->range_end);
     __uint128_t range_size = range_end - range_start + 1;
 
-    /* Calculate offset: range_size * (percent / 100) */
-    double offset_d = (double)range_size * (percent_scanned / 100.0);
-    __uint128_t offset = (__uint128_t)offset_d;
+    /* Calculate offset using 128-bit integer arithmetic to avoid double
+     * precision loss (53-bit mantissa would lose ~4096 keys at puzzle 66). */
+    uint64_t pct_millionths = (uint64_t)(percent_scanned * 10000.0);
+    __uint128_t offset = (range_size / 1000000ULL) * pct_millionths;
+    /* Remainder term for ranges not evenly divisible by 1M */
+    offset += (range_size % 1000000ULL) * pct_millionths / 1000000ULL;
 
     /* Calculate adjusted start */
     __uint128_t adjusted = range_start + offset;

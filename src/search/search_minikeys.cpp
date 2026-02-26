@@ -105,8 +105,8 @@ extern int minikey_n_limit;
 /* From crypto/address_util.cpp */
 extern "C" void rmd160toaddress_dst(char *rmd, char *dst);
 
-/* Thread profiling - no-op outside keyhunt.cpp (static inline there) */
-static inline void profile_set_thread(int) { }
+/* profile_set_thread is defined in keyhunt.cpp */
+extern void profile_set_thread(int idx);
 
 /* ============================================================================
  * Minikey Utility Functions

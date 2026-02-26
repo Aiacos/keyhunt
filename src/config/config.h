@@ -419,10 +419,44 @@ void kh_config_apply_autotune(keyhunt_config_t *cfg);
 void kh_runtime_state_cleanup(runtime_state_t *state);
 
 /* ============================================================================
+ * Environment Variable Overrides
+ *
+ * These env vars provide runtime tuning that is applied before CLI args.
+ * See docs/ENV_VARIABLES.md for full documentation and examples.
+ * ============================================================================ */
+
+typedef struct {
+    /* Profiling and debugging */
+    bool profile_enabled;         /* KEYHUNT_PROFILE          (default: false) */
+    bool skip_sysinfo;            /* KEYHUNT_SKIP_SYSINFO     (default: false) */
+    bool debug_distributed;       /* KEYHUNT_DEBUG            (default: false) */
+    bool debug_subprocess;        /* KEYHUNT_DEBUG_SUBPROCESS  (default: false) */
+
+    /* GPU tuning */
+    bool gpu_selftest;            /* KEYHUNT_GPU_SELFTEST     (default: false) */
+    int  hybrid_gpu_percent;      /* KEYHUNT_HYBRID_GPU_PERCENT (0=auto, 1-99) */
+    bool hybrid_work_steal;       /* KEYHUNT_HYBRID_WORK_STEAL (default: false) */
+    uint64_t hybrid_block_size;   /* KEYHUNT_HYBRID_BLOCK_SIZE (default: 0x100000000) */
+
+    /* CPU tuning */
+    int  cpu_use_y;               /* KEYHUNT_CPU_USE_Y         (default: 1) */
+    int  hybrid_cpu_use_y;        /* KEYHUNT_HYBRID_CPU_USE_Y  (default: 1) */
+    int64_t cpu_n_override;       /* KEYHUNT_CPU_N             (0=auto) */
+    int64_t hybrid_cpu_n_override;/* KEYHUNT_HYBRID_CPU_N      (0=auto) */
+} env_overrides_t;
+
+/**
+ * Read all KEYHUNT_* environment variables into the overrides struct.
+ *
+ * @param env  Pointer to env_overrides_t to populate
+ */
+void kh_env_overrides_init(env_overrides_t *env);
+
+/* ============================================================================
  * Configuration Version
  * ============================================================================ */
 
-#define KH_CONFIG_VERSION 1
+#define KH_CONFIG_VERSION 2
 
 #ifdef __cplusplus
 }

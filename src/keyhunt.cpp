@@ -160,6 +160,29 @@ static WorkQueue<Int> g_workQueue;
 // Lightweight internal profiler (enabled via KEYHUNT_PROFILE=1)
 // ---------------------------------------------------------------------------
 
+/*
+ * Environment variable overrides — official registry.
+ *
+ * These env vars allow runtime tuning without recompilation.  They are
+ * intentionally separate from CLI flags (applied unconditionally before
+ * any keyhunt_config_t values).  See docs/ENV_VARIABLES.md for full docs.
+ *
+ *  Variable                     Type      Default  Where consumed
+ *  ─────────────────────────────────────────────────────────────────
+ *  KEYHUNT_PROFILE              bool      0        profiler enable
+ *  KEYHUNT_SKIP_SYSINFO         bool      0        bypass hw detection
+ *  KEYHUNT_CPU_USE_Y            0|1       1        compute Y in address mode
+ *  KEYHUNT_HYBRID_CPU_USE_Y     0|1       1        compute Y in hybrid+full
+ *  KEYHUNT_GPU_SELFTEST         bool      0        GPU hash160 self-test
+ *  KEYHUNT_HYBRID_GPU_PERCENT   int 1-99  auto     GPU/CPU range split %
+ *  KEYHUNT_HYBRID_WORK_STEAL    bool      0        work-stealing mode
+ *  KEYHUNT_HYBRID_BLOCK_SIZE    hex/int   0x100000000  work-steal block size
+ *  KEYHUNT_CPU_N                int       auto     CPU sequential max keys
+ *  KEYHUNT_HYBRID_CPU_N         int       auto     hybrid CPU sequential max
+ *  KEYHUNT_DEBUG                bool      0        distributed debug log
+ *  KEYHUNT_DEBUG_SUBPROCESS     bool      0        wizard subprocess debug
+ *  KEYHUNT_AUTH_TOKEN           string    –        internal wizard auth token
+ */
 static inline bool env_truthy_kh(const char *name) {
 	const char *v = getenv(name);
 	if (!v || !*v) return false;
@@ -554,7 +577,7 @@ void calcualteindex(int i,Int *key);
 void *thread_bPload(void *vargp);
 void *thread_bPload_2blooms(void *vargp);
 
-int THREADOUTPUT = 0;
+volatile int THREADOUTPUT = 0;
 char *bit_range_str_min;
 char *bit_range_str_max;
 
