@@ -219,6 +219,142 @@ TEST(xpoint_check_batch_simple_structure) {
     ASSERT_EQ(0, matches);
 }
 
+TEST(xpoint_check_batch_simple_with_match) {
+    setup_test_bloom();
+
+    /* Create batch of 4 points with one matching target */
+    Point pts[4];
+    Int key_mpz;
+    Int stride;
+
+    key_mpz.SetInt32(1000);
+    stride.SetInt32(1);
+
+    /* Create a target X-coordinate (matches the hex string below) */
+    unsigned char target_x[32] = {
+        0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+    };
+
+    /* Set up point 2 to match target (same bytes as target_x) */
+    pts[2].x.SetBase16((char *)"123456789ABCDEF0112233445566778899AABBCCDDEEFF000102030405060708");
+    pts[2].y.SetInt32(1);
+
+    /* Set up other points */
+    pts[0].x.SetInt32(1001);
+    pts[0].y.SetInt32(2001);
+    pts[1].x.SetInt32(1002);
+    pts[1].y.SetInt32(2002);
+    pts[3].x.SetInt32(1003);
+    pts[3].y.SetInt32(2003);
+
+    /* Set up target to match point 2 */
+    memcpy(test_targets[0].address, target_x, 32);
+    bloom_ext_add(&test_bloom, (const char *)target_x, 32);
+
+    writekey_called = 0;
+
+    /* Check batch - should find 1 match */
+    int matches = xpoint_check_batch_simple(
+        pts, 0, &key_mpz, &stride,
+        &test_bloom, test_targets, 1, 32,
+        mock_writekey
+    );
+
+    ASSERT_EQ(1, matches);
+    ASSERT_EQ(1, writekey_called);
+
+    /* Verify the correct key was found: base_key + (2 * stride) */
+    Int expected_key;
+    expected_key.SetInt32(1002);  /* 1000 + 2*1 */
+    ASSERT_TRUE(last_found_key.IsEqual(&expected_key));
+}
+
+TEST(xpoint_check_batch_simple_multiple_matches) {
+    setup_test_bloom();
+
+    /* Create batch with multiple matching points */
+    Point pts[4];
+    Int key_mpz;
+    Int stride;
+
+    key_mpz.SetInt32(2000);
+    stride.SetInt32(5);
+
+    /* Create target X-coordinates */
+    unsigned char target1[32], target2[32];
+    memset(target1, 0xAA, 32);
+    memset(target2, 0xBB, 32);
+
+    /* Set up points 0 and 3 to match targets */
+    pts[0].x.SetBase16((char *)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    pts[0].y.SetInt32(1);
+    pts[3].x.SetBase16((char *)"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+    pts[3].y.SetInt32(1);
+
+    /* Other points don't match */
+    pts[1].x.SetInt32(5001);
+    pts[1].y.SetInt32(6001);
+    pts[2].x.SetInt32(5002);
+    pts[2].y.SetInt32(6002);
+
+    /* Set up targets in bloom and array */
+    memcpy(test_targets[0].address, target1, 32);
+    memcpy(test_targets[1].address, target2, 32);
+    bloom_ext_add(&test_bloom, (const char *)target1, 32);
+    bloom_ext_add(&test_bloom, (const char *)target2, 32);
+
+    writekey_called = 0;
+
+    /* Check batch - should find 2 matches */
+    int matches = xpoint_check_batch_simple(
+        pts, 0, &key_mpz, &stride,
+        &test_bloom, test_targets, 2, 32,
+        mock_writekey
+    );
+
+    ASSERT_EQ(2, matches);
+    ASSERT_EQ(2, writekey_called);
+}
+
+TEST(xpoint_check_batch_simple_stride_calculation) {
+    /* Verify correct key calculation with different stride values */
+    setup_test_bloom();
+
+    Point pts[4];
+    Int key_mpz;
+    Int stride;
+
+    key_mpz.SetInt32(10000);
+    stride.SetInt32(100);  /* Large stride */
+
+    /* Create matching point at position 1 */
+    unsigned char target_x[32];
+    memset(target_x, 0xCC, 32);
+
+    pts[1].x.SetBase16((char *)"CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+    pts[1].y.SetInt32(1);
+
+    /* Setup target */
+    memcpy(test_targets[0].address, target_x, 32);
+    bloom_ext_add(&test_bloom, (const char *)target_x, 32);
+
+    writekey_called = 0;
+
+    xpoint_check_batch_simple(
+        pts, 0, &key_mpz, &stride,
+        &test_bloom, test_targets, 1, 32,
+        mock_writekey
+    );
+
+    /* Expected key: 10000 + (1 * 100) = 10100 */
+    Int expected;
+    expected.SetInt32(10100);
+    ASSERT_TRUE(last_found_key.IsEqual(&expected));
+}
+
 /* ============================================================================
  * Batch Processing Tests - Endomorphism Mode
  * ============================================================================ */
@@ -300,6 +436,243 @@ TEST(xpoint_check_batch_endomorphism_no_matches) {
     ASSERT_EQ(0, writekey_called);
 }
 
+TEST(xpoint_check_batch_endomorphism_original_match) {
+    /* Test match on original point (not beta variants) */
+    setup_test_bloom();
+
+    Point pts[4];
+    Point beta_pts[4];
+    Point beta2_pts[4];
+    Int key_mpz;
+    Int stride;
+    Int lambda;
+    Int lambda2;
+
+    key_mpz.SetInt32(3000);
+    stride.SetInt32(2);
+    lambda.SetInt32(1);
+    lambda2.SetInt32(1);
+
+    /* Create target that matches original point at position 2 */
+    unsigned char target_x[32];
+    memset(target_x, 0xDD, 32);
+
+    pts[2].x.SetBase16((char *)"DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
+    pts[2].y.SetInt32(1);
+
+    /* Other points don't match */
+    for (int i = 0; i < 4; i++) {
+        if (i != 2) {
+            pts[i].x.SetInt32(8000 + i);
+            pts[i].y.SetInt32(9000 + i);
+        }
+        beta_pts[i].x.SetInt32(10000 + i);
+        beta_pts[i].y.SetInt32(11000 + i);
+        beta2_pts[i].x.SetInt32(12000 + i);
+        beta2_pts[i].y.SetInt32(13000 + i);
+    }
+
+    memcpy(test_targets[0].address, target_x, 32);
+    bloom_ext_add(&test_bloom, (const char *)target_x, 32);
+
+    writekey_called = 0;
+
+    int matches = xpoint_check_batch_endomorphism(
+        pts, beta_pts, beta2_pts,
+        0, &key_mpz, &stride, &test_bloom,
+        test_targets, 1, 32,
+        &lambda, &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(1, matches);
+    ASSERT_EQ(1, writekey_called);
+
+    /* Expected key: 3000 + (2 * 2) = 3004 */
+    Int expected;
+    expected.SetInt32(3004);
+    ASSERT_TRUE(last_found_key.IsEqual(&expected));
+}
+
+TEST(xpoint_check_batch_endomorphism_beta_match) {
+    /* Test match on beta-transformed point */
+    setup_test_bloom();
+
+    Point pts[4];
+    Point beta_pts[4];
+    Point beta2_pts[4];
+    Int key_mpz;
+    Int stride;
+    Int lambda;
+    Int lambda2;
+
+    key_mpz.SetInt32(5000);
+    stride.SetInt32(3);
+    lambda.SetInt32(7);  /* Some lambda value */
+    lambda2.SetInt32(1);
+
+    /* Create target that matches beta point at position 1 */
+    unsigned char target_x[32];
+    memset(target_x, 0xEE, 32);
+
+    beta_pts[1].x.SetBase16((char *)"EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE");
+    beta_pts[1].y.SetInt32(1);
+
+    /* Other points don't match */
+    for (int i = 0; i < 4; i++) {
+        pts[i].x.SetInt32(14000 + i);
+        pts[i].y.SetInt32(15000 + i);
+        if (i != 1) {
+            beta_pts[i].x.SetInt32(16000 + i);
+            beta_pts[i].y.SetInt32(17000 + i);
+        }
+        beta2_pts[i].x.SetInt32(18000 + i);
+        beta2_pts[i].y.SetInt32(19000 + i);
+    }
+
+    memcpy(test_targets[0].address, target_x, 32);
+    bloom_ext_add(&test_bloom, (const char *)target_x, 32);
+
+    writekey_called = 0;
+
+    int matches = xpoint_check_batch_endomorphism(
+        pts, beta_pts, beta2_pts,
+        0, &key_mpz, &stride, &test_bloom,
+        test_targets, 1, 32,
+        &lambda, &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(1, matches);
+    ASSERT_EQ(1, writekey_called);
+}
+
+TEST(xpoint_check_batch_endomorphism_beta2_match) {
+    /* Test match on beta^2-transformed point */
+    setup_test_bloom();
+
+    Point pts[4];
+    Point beta_pts[4];
+    Point beta2_pts[4];
+    Int key_mpz;
+    Int stride;
+    Int lambda;
+    Int lambda2;
+
+    key_mpz.SetInt32(8000);
+    stride.SetInt32(1);
+    lambda.SetInt32(1);
+    lambda2.SetInt32(11);  /* Some lambda^2 value */
+
+    /* Create target that matches beta2 point at position 3 */
+    unsigned char target_x[32];
+    memset(target_x, 0xFF, 32);
+
+    beta2_pts[3].x.SetBase16((char *)"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+    beta2_pts[3].y.SetInt32(1);
+
+    /* Other points don't match */
+    for (int i = 0; i < 4; i++) {
+        pts[i].x.SetInt32(20000 + i);
+        pts[i].y.SetInt32(21000 + i);
+        beta_pts[i].x.SetInt32(22000 + i);
+        beta_pts[i].y.SetInt32(23000 + i);
+        if (i != 3) {
+            beta2_pts[i].x.SetInt32(24000 + i);
+            beta2_pts[i].y.SetInt32(25000 + i);
+        }
+    }
+
+    memcpy(test_targets[0].address, target_x, 32);
+    bloom_ext_add(&test_bloom, (const char *)target_x, 32);
+
+    writekey_called = 0;
+
+    int matches = xpoint_check_batch_endomorphism(
+        pts, beta_pts, beta2_pts,
+        0, &key_mpz, &stride, &test_bloom,
+        test_targets, 1, 32,
+        &lambda, &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(1, matches);
+    ASSERT_EQ(1, writekey_called);
+}
+
+TEST(xpoint_check_batch_endomorphism_multiple_matches) {
+    /* Test multiple matches across all three arrays */
+    setup_test_bloom();
+
+    Point pts[4];
+    Point beta_pts[4];
+    Point beta2_pts[4];
+    Int key_mpz;
+    Int stride;
+    Int lambda;
+    Int lambda2;
+
+    key_mpz.SetInt32(9000);
+    stride.SetInt32(1);
+    lambda.SetInt32(3);
+    lambda2.SetInt32(5);
+
+    /* Create targets that match at different positions */
+    unsigned char target1[32], target2[32], target3[32];
+    memset(target1, 0x11, 32);
+    memset(target2, 0x22, 32);
+    memset(target3, 0x33, 32);
+
+    /* Original point 0 matches */
+    pts[0].x.SetBase16((char *)"1111111111111111111111111111111111111111111111111111111111111111");
+    pts[0].y.SetInt32(1);
+
+    /* Beta point 2 matches */
+    beta_pts[2].x.SetBase16((char *)"2222222222222222222222222222222222222222222222222222222222222222");
+    beta_pts[2].y.SetInt32(1);
+
+    /* Beta2 point 3 matches */
+    beta2_pts[3].x.SetBase16((char *)"3333333333333333333333333333333333333333333333333333333333333333");
+    beta2_pts[3].y.SetInt32(1);
+
+    /* Fill in other points */
+    for (int i = 0; i < 4; i++) {
+        if (i != 0) {
+            pts[i].x.SetInt32(30000 + i);
+            pts[i].y.SetInt32(31000 + i);
+        }
+        if (i != 2) {
+            beta_pts[i].x.SetInt32(32000 + i);
+            beta_pts[i].y.SetInt32(33000 + i);
+        }
+        if (i != 3) {
+            beta2_pts[i].x.SetInt32(34000 + i);
+            beta2_pts[i].y.SetInt32(35000 + i);
+        }
+    }
+
+    /* Setup targets */
+    memcpy(test_targets[0].address, target1, 32);
+    memcpy(test_targets[1].address, target2, 32);
+    memcpy(test_targets[2].address, target3, 32);
+    bloom_ext_add(&test_bloom, (const char *)target1, 32);
+    bloom_ext_add(&test_bloom, (const char *)target2, 32);
+    bloom_ext_add(&test_bloom, (const char *)target3, 32);
+
+    writekey_called = 0;
+
+    int matches = xpoint_check_batch_endomorphism(
+        pts, beta_pts, beta2_pts,
+        0, &key_mpz, &stride, &test_bloom,
+        test_targets, 3, 32,
+        &lambda, &lambda2,
+        mock_writekey
+    );
+
+    ASSERT_EQ(3, matches);
+    ASSERT_EQ(3, writekey_called);
+}
+
 /* ============================================================================
  * Edge Cases and Error Conditions
  * ============================================================================ */
@@ -373,10 +746,17 @@ int run_search_xpoint_tests(void) {
     TEST_SECTION("Batch Processing - Simple Mode");
     RUN_TEST(xpoint_check_batch_simple_no_matches);
     RUN_TEST(xpoint_check_batch_simple_structure);
+    RUN_TEST(xpoint_check_batch_simple_with_match);
+    RUN_TEST(xpoint_check_batch_simple_multiple_matches);
+    RUN_TEST(xpoint_check_batch_simple_stride_calculation);
 
     TEST_SECTION("Batch Processing - Endomorphism Mode");
     RUN_TEST(xpoint_check_batch_endomorphism_structure);
     RUN_TEST(xpoint_check_batch_endomorphism_no_matches);
+    RUN_TEST(xpoint_check_batch_endomorphism_original_match);
+    RUN_TEST(xpoint_check_batch_endomorphism_beta_match);
+    RUN_TEST(xpoint_check_batch_endomorphism_beta2_match);
+    RUN_TEST(xpoint_check_batch_endomorphism_multiple_matches);
 
     TEST_SECTION("Edge Cases");
     RUN_TEST(xpoint_check_null_x_coord);
