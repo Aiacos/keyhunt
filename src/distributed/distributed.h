@@ -116,6 +116,9 @@ typedef struct {
     pthread_t handler_thread;   /* Dedicated thread for this worker */
     bool handler_running;       /* Is the handler thread running? */
     void *coordinator;          /* Back-reference to coordinator (cast to dist_coordinator_t*) */
+
+    /* Timeout configuration */
+    int heartbeat_timeout_sec;  /* Timeout before marking worker as dead (0 = use coordinator default) */
 } dist_worker_t;
 
 /* Work unit */
@@ -265,6 +268,11 @@ typedef struct {
     int job_puzzle_number;          /* Puzzle number (informational) */
     int job_bits;                   /* Bit range (informational) */
     int heartbeat_interval_sec;     /* How often workers should heartbeat */
+
+    /* Timeout configuration */
+    int worker_timeout_sec;         /* Timeout before marking worker as dead (default: 3x heartbeat) */
+    int work_timeout_sec;           /* Timeout before reassigning work from unresponsive worker (default: 5x heartbeat) */
+    int connection_timeout_sec;     /* TCP connection accept timeout (default: 30) */
 } dist_coordinator_t;
 
 /* Worker client state */
@@ -317,6 +325,11 @@ typedef struct {
     void *ssl_ctx;                              /* Placeholder when OpenSSL not available */
     void *ssl;                                  /* Placeholder when OpenSSL not available */
 #endif
+
+    /* Timeout configuration */
+    int connect_timeout_sec;                    /* Timeout for connecting to coordinator (default: 30) */
+    int response_timeout_sec;                   /* Timeout waiting for coordinator response (default: 60) */
+    int reconnect_delay_sec;                    /* Delay before reconnecting on connection loss (default: 5) */
 } dist_worker_client_t;
 
 /* ============================================================================
