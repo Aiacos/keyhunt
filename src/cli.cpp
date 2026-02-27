@@ -179,6 +179,17 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
                         return -1;
                     }
                     args->bits = (int)val;
+
+                    // Use Int::ShiftL() to calculate 2^b for bit range (supports full 256-bit range)
+                    Int n_calc;
+                    n_calc.SetInt32(1);
+                    n_calc.ShiftL((uint32_t)val);
+                    char *n_hex = n_calc.GetBase16();
+                    if (n_hex != NULL) {
+                        strncpy(args->n_value, n_hex, sizeof(args->n_value) - 1);
+                        args->n_value[sizeof(args->n_value) - 1] = '\0';
+                        free(n_hex);
+                    }
                 }
                 break;
 
