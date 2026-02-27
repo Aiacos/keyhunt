@@ -49,6 +49,14 @@ void output_final_stats(uint64_t total_keys, double total_time_sec,
 // Progress bar helper
 void output_progress_bar(double percent, int width);
 
+// Multi-GPU statistics display
+// Displays per-GPU statistics (device ID, name, throughput, keys processed)
+// device_names: optional array of device names (can be NULL for device IDs only)
+void output_gpu_stats(int device_count, const int *device_ids,
+                      const uint64_t *keys_processed,
+                      const double *throughput_mkeys,
+                      const char **device_names);
+
 #ifdef __cplusplus
 }
 #endif
