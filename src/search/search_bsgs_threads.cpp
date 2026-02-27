@@ -127,7 +127,7 @@ void *thread_process_bsgs(void *vargp)	{
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	cycles = bsgs_aux / 1024;
@@ -244,7 +244,7 @@ platform_mutex_unlock(&write_keys);
 	ends[thread_number].value = 1;
 	bsgs_batch_free(&batch_ctx);
 	delete grp;
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 /* ============================================================================
@@ -293,7 +293,7 @@ void *thread_process_bsgs_random(void *vargp)	{
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	cycles = bsgs_aux / 1024;
@@ -413,7 +413,7 @@ platform_mutex_unlock(&write_keys);
 	ends[thread_number].value = 1;
 	bsgs_batch_free(&batch_ctx);
 	delete grp;
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 /* ============================================================================
@@ -570,7 +570,7 @@ bloom_ext_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
 #ifndef _WIN64
 	pthread_exit(NULL);
 #endif
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 /* ============================================================================
@@ -712,7 +712,7 @@ bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 #ifndef _WIN64
 	pthread_exit(NULL);
 #endif
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 /* ============================================================================
@@ -753,7 +753,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	cycles = bsgs_aux / 1024;
@@ -908,7 +908,7 @@ platform_mutex_unlock(&write_keys);
 	ends[thread_number].value = 1;
 	bsgs_batch_free(&batch_ctx);
 	delete grp;
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 /* ============================================================================
@@ -956,7 +956,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	cycles = bsgs_aux / 1024;
@@ -1082,7 +1082,7 @@ platform_mutex_unlock(&write_keys);
 	ends[thread_number].value = 1;
 	bsgs_batch_free(&batch_ctx);
 	delete grp;
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 /* ============================================================================
@@ -1132,7 +1132,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	cycles = bsgs_aux / 1024;
@@ -1285,5 +1285,5 @@ platform_mutex_unlock(&write_keys);
 	ends[thread_number].value = 1;
 	bsgs_batch_free(&batch_ctx);
 	delete grp;
-	return NULL;
+	return (platform_thread_return_t)0;
 }

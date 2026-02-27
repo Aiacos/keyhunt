@@ -121,8 +121,10 @@ struct thread_rand_state {
 	uint64_t s[4];
 };
 
-/** Rotate left helper for xoshiro. */
-inline uint64_t _rotl64(uint64_t x, int k) {
+/** Rotate left helper for xoshiro.
+ *  Named rotl64_custom to avoid conflict with _rotl64 macro
+ *  defined in MinGW's <intrin.h> (maps to __rolq built-in). */
+inline uint64_t rotl64_custom(uint64_t x, int k) {
 	return (x << k) | (x >> (64 - k));
 }
 
@@ -141,7 +143,7 @@ inline void thread_rand_init(struct thread_rand_state *st, uint64_t seed) {
 
 /** Generate a random 64-bit value (xoshiro256**). */
 inline uint64_t thread_rand(struct thread_rand_state *st) {
-	const uint64_t result = _rotl64(st->s[1] * 5, 7) * 9;
+	const uint64_t result = rotl64_custom(st->s[1] * 5, 7) * 9;
 	const uint64_t t = st->s[1] << 17;
 
 	st->s[2] ^= st->s[0];
@@ -150,7 +152,7 @@ inline uint64_t thread_rand(struct thread_rand_state *st) {
 	st->s[0] ^= st->s[3];
 
 	st->s[2] ^= t;
-	st->s[3] = _rotl64(st->s[3], 45);
+	st->s[3] = rotl64_custom(st->s[3], 45);
 
 	return result;
 }

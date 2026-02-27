@@ -665,7 +665,7 @@ void *thread_process_vanity(void *vargp)	{
 			}
 		} while(continue_flag);
 		ends[thread_number].value = 1;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 /* ============================================================================

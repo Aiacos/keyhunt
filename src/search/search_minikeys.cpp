@@ -319,5 +319,5 @@ void *thread_process_minikeys(void *vargp) {
 			} while (count < N_SEQUENTIAL_MAX && continue_flag);
 		}
 	} while (continue_flag);
-	return NULL;
+	return (platform_thread_return_t)0;
 }
