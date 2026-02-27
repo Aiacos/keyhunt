@@ -1,5 +1,6 @@
 // src/benchmark.cpp
 #include "benchmark.h"
+#include "database/perfdb.h"
 #include "platform/platform.h"
 #include "core/sysinfo.h"
 #include "platform/platform.h"
@@ -8,6 +9,9 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+
+// Keyhunt version (used for database records)
+#define KEYHUNT_VERSION "0.2.230519"
 
 // ANSI color codes
 #define CLR_RESET   "\033[0m"
@@ -180,6 +184,43 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
     printf(CLR_CYAN);
     print_border_line(max_width, '=');
     printf(CLR_RESET "\n");
+
+    // Save benchmark results to database
+    perfdb_benchmark_t db_benchmark;
+    memset(&db_benchmark, 0, sizeof(perfdb_benchmark_t));
+
+    // Set search mode and configuration
+    strncpy(db_benchmark.mode, "benchmark", sizeof(db_benchmark.mode) - 1);
+    db_benchmark.bits = 0;  // Not applicable for generic benchmark
+    strncpy(db_benchmark.key_type, "both", sizeof(db_benchmark.key_type) - 1);
+
+    // Set performance metrics
+    db_benchmark.cpu_speed_mkeys = result->cpu_speed_mkeys;
+    db_benchmark.gpu_speed_mkeys = result->gpu_speed_mkeys;
+    db_benchmark.hybrid_speed_mkeys = result->hybrid_speed_mkeys;
+    db_benchmark.efficiency_ratio = result->efficiency_ratio;
+
+    // Set benchmark metadata
+    db_benchmark.benchmark_duration_seconds = duration_seconds;
+    strncpy(db_benchmark.keyhunt_version, KEYHUNT_VERSION, sizeof(db_benchmark.keyhunt_version) - 1);
+    strncpy(db_benchmark.notes, "Automated benchmark run", sizeof(db_benchmark.notes) - 1);
+
+    // Copy hardware information
+    memcpy(&db_benchmark.hardware, &sysinfo, sizeof(system_info_t));
+
+    // Compute hardware fingerprint
+    perfdb_compute_hardware_hash(&sysinfo, db_benchmark.hardware_hash, sizeof(db_benchmark.hardware_hash));
+
+    // Save to database (errors are non-fatal)
+    int save_result = perfdb_save_benchmark(&db_benchmark);
+    if (save_result == 0) {
+        char db_path[512];
+        perfdb_get_filepath(db_path, sizeof(db_path));
+        printf(CLR_GREEN "✓" CLR_RESET " Benchmark results saved to database: %s\n", db_path);
+    } else {
+        printf(CLR_YELLOW "⚠" CLR_RESET " Failed to save benchmark results to database\n");
+    }
+    printf("\n");
 
     return 0;
 }

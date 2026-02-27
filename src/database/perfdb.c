@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <sqlite3.h>
+#include "database/sqlite3.h"
 
 #if !PLATFORM_WINDOWS
 #include <sys/stat.h>
