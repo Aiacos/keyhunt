@@ -23,6 +23,7 @@
 #include <time.h>
 #include <errno.h>
 #include <ctype.h>      /* isalnum() */
+#include <fcntl.h>      /* open(), O_* flags */
 
 #if !PLATFORM_WINDOWS
 #include <sys/wait.h>
@@ -1334,8 +1335,9 @@ int wizard_client_run(wizard_config_t *cfg) {
             /* Report to server */
             dist_worker_report_found(&client, found_key, found_addr);
 
-            /* Save locally */
-            FILE *f = fopen("FOUND_KEY.txt", "w");
+            /* Save locally (restricted permissions — sensitive data) */
+            int key_fd = open("FOUND_KEY.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+            FILE *f = key_fd >= 0 ? fdopen(key_fd, "w") : NULL;
             if (f) {
                 time_t now = time(NULL);
                 fprintf(f, "PRIVATE KEY FOUND!\n");

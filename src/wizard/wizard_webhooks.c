@@ -63,6 +63,16 @@ int wizard_webhook_telegram(const char *bot_token, const char *chat_id, const ch
         return -1;
     }
 
+    /* Validate bot_token format: digits, colon, alphanumeric, hyphen, underscore only */
+    for (const char *p = bot_token; *p; p++) {
+        char c = *p;
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+              (c >= 'A' && c <= 'Z') || c == ':' || c == '-' || c == '_')) {
+            fprintf(stderr, "[-] wizard_webhook_telegram: Bot token contains invalid characters\n");
+            return -1;
+        }
+    }
+
     /* Build Telegram API URL: https://api.telegram.org/bot<token>/sendMessage */
     char url[512];
     int url_len = snprintf(url, sizeof(url), "https://api.telegram.org/bot%s/sendMessage", bot_token);

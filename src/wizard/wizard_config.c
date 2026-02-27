@@ -122,6 +122,27 @@ void wizard_config_init(wizard_config_t *cfg) {
  * JSON Writer (no external deps)
  * ============================================================================ */
 
+static void fprintf_json_string(FILE *f, const char *key, const char *val, int trailing_comma) {
+    fprintf(f, "    \"%s\": \"", key);
+    if (val) {
+        for (const char *p = val; *p; p++) {
+            unsigned char c = (unsigned char)*p;
+            switch (c) {
+                case '"':  fprintf(f, "\\\""); break;
+                case '\\': fprintf(f, "\\\\"); break;
+                case '\n': fprintf(f, "\\n");  break;
+                case '\r': fprintf(f, "\\r");  break;
+                case '\t': fprintf(f, "\\t");  break;
+                default:
+                    if (c < 32) fprintf(f, "\\u%04x", c);
+                    else        fputc(c, f);
+                    break;
+            }
+        }
+    }
+    fprintf(f, "\"%s\n", trailing_comma ? "," : "");
+}
+
 int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     FILE *f = fopen(filepath, "w");
     if (!f) {
@@ -143,24 +164,24 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
 
     fprintf(f, "  \"puzzle\": {\n");
     fprintf(f, "    \"number\": %d,\n", cfg->puzzle_number);
-    fprintf(f, "    \"target_address\": \"%s\",\n", cfg->target_address);
-    fprintf(f, "    \"range_start\": \"%s\",\n", cfg->range_start);
-    fprintf(f, "    \"range_end\": \"%s\",\n", cfg->range_end);
+    fprintf_json_string(f, "target_address", cfg->target_address, 1);
+    fprintf_json_string(f, "range_start", cfg->range_start, 1);
+    fprintf_json_string(f, "range_end", cfg->range_end, 1);
     fprintf(f, "    \"bits\": %d\n", cfg->bits);
     fprintf(f, "  },\n");
 
     fprintf(f, "  \"server\": {\n");
-    fprintf(f, "    \"host\": \"%s\",\n", cfg->server_host);
+    fprintf_json_string(f, "host", cfg->server_host, 1);
     fprintf(f, "    \"port\": %d,\n", cfg->server_port);
     fprintf(f, "    \"work_unit_size\": \"%llx\",\n", (unsigned long long)cfg->work_unit_size);
     fprintf(f, "    \"checkpoint_interval\": %d,\n", cfg->checkpoint_interval_sec);
     fprintf(f, "    \"also_worker\": %s,\n", cfg->server_also_worker ? "true" : "false");
-    fprintf(f, "    \"auth_token\": \"%s\"\n", cfg->auth_token);
+    fprintf_json_string(f, "auth_token", cfg->auth_token, 0);
     fprintf(f, "  },\n");
 
     fprintf(f, "  \"search\": {\n");
-    fprintf(f, "    \"mode\": \"%s\",\n", cfg->mode);
-    fprintf(f, "    \"key_type\": \"%s\",\n", cfg->key_type);
+    fprintf_json_string(f, "mode", cfg->mode, 1);
+    fprintf_json_string(f, "key_type", cfg->key_type, 1);
     fprintf(f, "    \"random_mode\": %s,\n", cfg->random_mode ? "true" : "false");
     fprintf(f, "    \"threads\": %d,\n", cfg->threads);
     fprintf(f, "    \"gpu_percent\": %d,\n", cfg->gpu_percent);
@@ -170,7 +191,7 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
 
     fprintf(f, "  \"community\": {\n");
     fprintf(f, "    \"enabled\": %s,\n", cfg->community_enabled ? "true" : "false");
-    fprintf(f, "    \"source\": \"%s\",\n", cfg->community_source);
+    fprintf_json_string(f, "source", cfg->community_source, 1);
     fprintf(f, "    \"sync_interval\": %d,\n", cfg->community_sync_interval_sec);
     fprintf(f, "    \"last_sync\": %ld\n", (long)cfg->community_last_sync);
     fprintf(f, "  },\n");
@@ -179,18 +200,18 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     fprintf(f, "    \"total_ranges\": %llu,\n", (unsigned long long)cfg->total_ranges);
     fprintf(f, "    \"local_completed\": %llu,\n", (unsigned long long)cfg->local_completed);
     fprintf(f, "    \"community_excluded\": %llu,\n", (unsigned long long)cfg->community_excluded);
-    fprintf(f, "    \"progress_file\": \"%s\",\n", cfg->progress_file);
-    fprintf(f, "    \"exclusion_file\": \"%s\"\n", cfg->exclusion_file);
+    fprintf_json_string(f, "progress_file", cfg->progress_file, 1);
+    fprintf_json_string(f, "exclusion_file", cfg->exclusion_file, 0);
     fprintf(f, "  },\n");
 
     fprintf(f, "  \"webhooks\": {\n");
-    fprintf(f, "    \"discord_url\": \"%s\",\n", cfg->webhook_discord_url);
-    fprintf(f, "    \"telegram_url\": \"%s\"\n", cfg->webhook_telegram_url);
+    fprintf_json_string(f, "discord_url", cfg->webhook_discord_url, 1);
+    fprintf_json_string(f, "telegram_url", cfg->webhook_telegram_url, 0);
     fprintf(f, "  },\n");
 
     fprintf(f, "  \"progress_reporting\": {\n");
     fprintf(f, "    \"report_progress_enabled\": %s,\n", cfg->report_progress_enabled ? "true" : "false");
-    fprintf(f, "    \"report_progress_url\": \"%s\"\n", cfg->report_progress_url);
+    fprintf_json_string(f, "report_progress_url", cfg->report_progress_url, 0);
     fprintf(f, "  }\n");
 
     fprintf(f, "}\n");

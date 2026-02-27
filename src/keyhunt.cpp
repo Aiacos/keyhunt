@@ -1382,25 +1382,27 @@ thread_local bool cpu_cached_block_valid = false;
 bool acquire_base_key(Int &key) {
 	// Work pool mode for hybrid (work-stealing)
 	if (g_work_pool.enabled.load(std::memory_order_acquire)) {
-		// Check if we have a valid cached block with remaining work
-		if (!cpu_cached_block_valid || !cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
-			// Get a new block from the work pool
-			if (!g_work_pool.get_block(cpu_cached_block_start, cpu_cached_block_end)) {
-				return false;  // No more work available
+		for (;;) {
+			// Check if we have a valid cached block with remaining work
+			if (!cpu_cached_block_valid || !cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
+				// Get a new block from the work pool
+				if (!g_work_pool.get_block(cpu_cached_block_start, cpu_cached_block_end)) {
+					return false;  // No more work available
+				}
+				cpu_cached_block_valid = true;
 			}
-			cpu_cached_block_valid = true;
+			// IMPORTANT: Check block boundary BEFORE returning the key
+			// This ensures we never return a key outside the assigned block
+			if (!cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
+				// Current position already at or past block end, need new block
+				cpu_cached_block_valid = false;
+				continue;  // Retry with new block
+			}
+			// Return next key from cached block
+			key.Set(&cpu_cached_block_start);
+			cpu_cached_block_start.Add(N_SEQUENTIAL_MAX);
+			return true;
 		}
-		// IMPORTANT: Check block boundary BEFORE returning the key
-		// This ensures we never return a key outside the assigned block
-		if (!cpu_cached_block_start.IsLower(&cpu_cached_block_end)) {
-			// Current position already at or past block end, need new block
-			cpu_cached_block_valid = false;
-			return acquire_base_key(key);  // Retry with new block
-		}
-		// Return next key from cached block
-		key.Set(&cpu_cached_block_start);
-		cpu_cached_block_start.Add(N_SEQUENTIAL_MAX);
-		return true;
 	}
 
 #ifndef _WIN64

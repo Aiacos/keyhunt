@@ -50,11 +50,15 @@ int wizard_http_get(const char *url, char **response, size_t *response_len) {
 
     /* Build curl command for GET request */
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
+    int cmd_len = snprintf(cmd, sizeof(cmd),
              "curl -sL --max-time %d --compressed "
              "-A '%s' "
              "'%s' 2>/dev/null",
              WIZARD_HTTP_TIMEOUT, WIZARD_HTTP_USER_AGENT, url);
+    if (cmd_len < 0 || cmd_len >= (int)sizeof(cmd)) {
+        fprintf(stderr, "[-] wizard_http_get: URL too long for command buffer\n");
+        return -1;
+    }
 
     FILE *fp = popen(cmd, "r");
     if (!fp) {
@@ -150,8 +154,9 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
 
     /* Build curl command for POST request */
     char cmd[2048];
+    int cmd_len;
     if (body && body_len > 0) {
-        snprintf(cmd, sizeof(cmd),
+        cmd_len = snprintf(cmd, sizeof(cmd),
                  "curl -sL --max-time %d --compressed "
                  "-A '%s' "
                  "-X POST "
@@ -163,12 +168,17 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
                  tmp_file, url);
     } else {
         /* POST without body */
-        snprintf(cmd, sizeof(cmd),
+        cmd_len = snprintf(cmd, sizeof(cmd),
                  "curl -sL --max-time %d --compressed "
                  "-A '%s' "
                  "-X POST "
                  "'%s' 2>/dev/null",
                  WIZARD_HTTP_TIMEOUT, WIZARD_HTTP_USER_AGENT, url);
+    }
+    if (cmd_len < 0 || cmd_len >= (int)sizeof(cmd)) {
+        if (tmp_file[0]) unlink(tmp_file);
+        fprintf(stderr, "[-] wizard_http_post: URL too long for command buffer\n");
+        return -1;
     }
 
     FILE *fp = popen(cmd, "r");

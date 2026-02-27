@@ -1448,9 +1448,10 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         }
         pthread_mutex_unlock(&coord->result_mutex);
 
-        /* Backup found key to KEYFOUNDKEYFOUND.txt for redundancy */
+        /* Backup found key to KEYFOUNDKEYFOUND.txt for redundancy (restricted perms) */
         {
-            FILE *backup = fopen("KEYFOUNDKEYFOUND.txt", "a");
+            int bak_fd = open("KEYFOUNDKEYFOUND.txt", O_WRONLY | O_CREAT | O_APPEND, 0600);
+            FILE *backup = bak_fd >= 0 ? fdopen(bak_fd, "a") : NULL;
             if (backup) {
                 fprintf(backup, "Private Key: %s\nAddress: %s\nWorker: %d\nTime: %llu\n\n",
                         privkey, address, worker->id, (unsigned long long)time_ms());
@@ -2584,7 +2585,10 @@ int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
     //   defense-in-depth if the hash module gains a C-linkage API.
     /* Authentication (if enabled) */
     if (coordinator->auth_enabled && coordinator->auth_token[0]) {
-        fprintf(f, "  \"auth_token\": \"%s\",\n", coordinator->auth_token);
+        char escaped_token[256];
+        if (json_escape(coordinator->auth_token, escaped_token, sizeof(escaped_token)) == 0) {
+            fprintf(f, "  \"auth_token\": \"%s\",\n", escaped_token);
+        }
     }
 
     /* Work units array - only save PENDING and COMPLETED status */
@@ -2953,13 +2957,18 @@ int dist_federation_connect(dist_coordinator_t *coordinator) {
 
     /* Send registration message */
     char msg[DIST_MAX_MSG_SIZE];
+    char escaped_token[256];
+    if (json_escape(coordinator->auth_token, escaped_token, sizeof(escaped_token)) != 0) {
+        printf(LOG_FEDERATION LOG_ERR "Auth token contains unsafe characters\n");
+        return -1;
+    }
     snprintf(msg, sizeof(msg),
              "{\"type\":\"federation_register\","
              "\"role\":\"secondary\","
              "\"port\":%d,"
              "\"auth_token\":\"%s\"}",
              coordinator->port,
-             coordinator->auth_token);
+             escaped_token);
 
     if (send_msg(primary->socket_fd, msg) != 0) {
         printf(LOG_FEDERATION LOG_ERR "Failed to send registration\n");
@@ -3081,11 +3090,17 @@ int dist_federation_share_result(dist_coordinator_t *coordinator,
     }
 
     char msg[DIST_MAX_MSG_SIZE];
+    char escaped_key[256], escaped_addr[256];
+    if (json_escape(private_key, escaped_key, sizeof(escaped_key)) != 0 ||
+        json_escape(address, escaped_addr, sizeof(escaped_addr)) != 0) {
+        printf(LOG_FEDERATION LOG_ERR "Failed to escape result data for JSON\n");
+        return -1;
+    }
     snprintf(msg, sizeof(msg),
              "{\"type\":\"federation_found\","
              "\"private_key\":\"%s\","
              "\"address\":\"%s\"}",
-             private_key, address);
+             escaped_key, escaped_addr);
 
     int shared = 0;
     for (int i = 0; i < coordinator->federation.peer_count; i++) {

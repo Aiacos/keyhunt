@@ -134,7 +134,7 @@ TEST_EXE := run_tests$(EXE_EXT)
 # Create obj directory structure
 OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
-.PHONY: all clean legacy bsgsd directories test sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
+.PHONY: all clean legacy bsgsd directories test run_tests sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 
 all: directories $(KEYHUNT_EXE)
 
@@ -268,8 +268,10 @@ TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OB
 $(TEST_EXE): directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
 	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
 
-# Keep legacy name target for backwards compatibility
+# Legacy name compatibility (only when TEST_EXE differs from run_tests)
+ifneq ($(TEST_EXE),run_tests)
 run_tests: $(TEST_EXE)
+endif
 
 # Run all tests
 test: $(TEST_EXE)

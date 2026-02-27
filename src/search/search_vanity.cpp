@@ -777,6 +777,7 @@ int addvanity(char *target)	{
 		raw_value_length = 50;
 		b58tobin(raw_value_A,&raw_value_length,target_copy,stringsize);
 		if(raw_value_length < 25)	{
+			if(stringsize >= 49) break;
 			target_copy[stringsize] = '1';
 			stringsize++;
 		}
@@ -792,6 +793,7 @@ int addvanity(char *target)	{
 
 			j++;
 			values_A_size = j;
+			if(stringsize >= 49) break;
 			target_copy[stringsize] = '1';
 			stringsize++;
 		}
@@ -807,6 +809,7 @@ int addvanity(char *target)	{
 		raw_value_length = 50;
 		b58tobin(raw_value_B,&raw_value_length,target_copy,stringsize);
 		if(raw_value_length < 25)	{
+			if(stringsize >= 49) break;
 			target_copy[stringsize] = 'z';
 			stringsize++;
 		}
@@ -815,7 +818,6 @@ int addvanity(char *target)	{
 			b58tobin(raw_value_B,&raw_value_length,target_copy,stringsize);
 			vanity_rmd_limit_values_B[vanity_rmd_targets] = (uint8_t**)realloc(vanity_rmd_limit_values_B[vanity_rmd_targets],(j+1) * sizeof(unsigned char *));
 			checkpointer((void *)vanity_rmd_limit_values_B[vanity_rmd_targets],__FILE__,"realloc","vanity_rmd_limit_values_B" ,__LINE__ -1 );
-			checkpointer((void *)vanity_rmd_limit_values_B[vanity_rmd_targets],__FILE__,"realloc","vanity_rmd_limit_values_B" ,__LINE__ -1 );
 			vanity_rmd_limit_values_B[vanity_rmd_targets][j] = (uint8_t*)calloc(20,1);
 			checkpointer((void *)vanity_rmd_limit_values_B[vanity_rmd_targets][j],__FILE__,"calloc","vanity_rmd_limit_values_B" ,__LINE__ -1 );
 			memcpy(vanity_rmd_limit_values_B[vanity_rmd_targets][j],raw_value_B+1,20);
@@ -823,6 +825,7 @@ int addvanity(char *target)	{
 			j++;
 			values_B_size = j;
 
+			if(stringsize >= 49) break;
 			target_copy[stringsize] = 'z';
 			stringsize++;
 		}
