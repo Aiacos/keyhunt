@@ -1613,6 +1613,57 @@ The default coordinator port is **7777**. To use a different port, configure it 
 
 ---
 
+# Real-time Progress Visualization
+
+Keyhunt supports an enhanced progress display mode for better visibility into search progress and performance.
+
+## Using Visual Mode
+
+Enable real-time visualization with the `--visual` flag:
+
+```bash
+./keyhunt --visual -m address -f tests/66.txt -b 66 -l compress -R -q -s 10
+```
+
+### Features
+
+The visual mode provides:
+
+- **ASCII Progress Bar**: Shows percentage of key range covered with a visual progress indicator
+- **Real-time Speed Graph**: Live ASCII graph displaying keys/second over the last 60 seconds using block characters (▁▂▃▄▅▆▇█)
+- **Memory Usage Indicator**: Color-coded memory bar (BSGS mode) showing current memory usage:
+  - Green: < 60% memory usage (safe)
+  - Yellow: 60-80% memory usage (moderate)
+  - Red: > 80% memory usage (high)
+- **ETA Calculation**: Estimated time to completion based on current search speed
+- **Active Threads Count**: Shows number of worker threads actively processing keys
+
+### Example Output
+
+```
+┌─ Search Progress ──────────────────────────────────────────────────────┐
+│ Progress: [████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 32.5%      │
+│ Speed:    5.24 Mkeys/s  ▃▄▅▆▇█▇▆▅▄▅▆▇▇▆▅▄▃▄▅▆▇█▇                       │
+│ Keys:     1.25G checked                                                │
+│ ETA:      2h 15m                                                       │
+│ Memory:   [████████████░░░░░░░░░] 2.4 GB / 4.0 GB                     │
+│ Threads:  8 active                                                     │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### Compatibility
+
+- Works in standard terminals without external dependencies (no ncurses required)
+- Compatible with all search modes (ADDRESS, BSGS, XPOINT, etc.)
+- Memory bar only displayed in BSGS mode (memory-intensive searches)
+- Backward compatible: searches work normally without `--visual` flag
+
+### Performance Impact
+
+The visual mode has minimal performance overhead (<1%) as it updates the display only once per second and uses efficient circular buffer for speed tracking.
+
+---
+
 # Community Progress Integration
 
 Keyhunt integrates with community puzzle-solving efforts to avoid redundant searches.
