@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #ifdef __APPLE__
 #include <OpenCL/opencl.h>
@@ -42,6 +43,19 @@ static gpu_backend_info_t g_info;
 
 #define MAX_OPENCL_DEVICES 8
 #define MAX_OPENCL_PLATFORMS 4
+#define MAX_FOUND_KEYS 256
+
+// 256-bit integer for private keys and ECC operations
+typedef struct {
+    uint32_t d[8];
+} uint256_d;
+
+// Found key result structure (must match kernel definition)
+typedef struct {
+    uint256_d privkey;
+    int compressed;  // 0 = uncompressed, 2/3 = compressed prefix
+    int valid;
+} FoundKey;
 
 // Per-device context
 typedef struct {
@@ -66,6 +80,10 @@ typedef struct {
     cl_mem d_targets;
     cl_mem d_bloom;
 
+    // Found keys buffers
+    cl_mem d_found_keys;
+    cl_mem d_found_count;
+
     // Compiled kernels (to be loaded in later subtasks)
     cl_program program;
     cl_kernel kernel_hash160;
@@ -88,6 +106,55 @@ static size_t g_GTable_count = 0;
 static size_t g_target_count = 0;
 static size_t g_bloom_size = 0;
 static int g_bloom_hashes = 0;
+
+// ============================================================================
+// 256-bit arithmetic (host helpers)
+// ============================================================================
+
+static inline int u256_cmp_host(const uint256_d *a, const uint256_d *b) {
+    for (int i = 7; i >= 0; i--) {
+        if (a->d[i] < b->d[i]) return -1;
+        if (a->d[i] > b->d[i]) return 1;
+    }
+    return 0;
+}
+
+static inline void u256_add_u64_host(uint256_d *a, uint64_t v) {
+    uint64_t carry = v;
+    for (int i = 0; i < 8 && carry; i++) {
+        uint64_t sum = (uint64_t)a->d[i] + (carry & 0xFFFFFFFFULL);
+        a->d[i] = (uint32_t)sum;
+        carry = (sum >> 32) + (carry >> 32);
+    }
+}
+
+static inline uint64_t u256_sub_sat_u64_host(const uint256_d *a, const uint256_d *b) {
+    // Return a - b as uint64_t, saturating to 0 if b > a or UINT64_MAX if overflow
+    int cmp = u256_cmp_host(a, b);
+    if (cmp <= 0) return 0;
+
+    // Simple case: only bottom 2 words differ
+    uint64_t diff = ((uint64_t)a->d[1] << 32) | a->d[0];
+    uint64_t b_low = ((uint64_t)b->d[1] << 32) | b->d[0];
+
+    // Check if upper words are same
+    int same_upper = 1;
+    for (int i = 2; i < 8; i++) {
+        if (a->d[i] != b->d[i]) {
+            same_upper = 0;
+            break;
+        }
+    }
+
+    if (same_upper) {
+        if (diff >= b_low) {
+            return diff - b_low;
+        }
+    }
+
+    // Too large, saturate
+    return UINT64_MAX;
+}
 
 // ============================================================================
 // OpenCL kernel source (to be populated in subtasks 2-3, 2-4, 2-5)
@@ -217,8 +284,14 @@ static int compile_kernels_for_device(opencl_device_t *dev) {
         return -1;
     }
 
-    // Subtask 2-4, 2-5: Full search kernel (to be implemented later)
-    dev->kernel_full_search = NULL;
+    // Subtask 2-4, 2-5: Full search kernel
+    dev->kernel_full_search = clCreateKernel(dev->program, "kernel_full_search_compressed", &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Warning: Failed to create kernel_full_search_compressed: %s (%d)\n",
+                clGetErrorString(err), err);
+        // Non-fatal - this kernel may not be implemented yet
+        dev->kernel_full_search = NULL;
+    }
 
     printf("[OpenCL] Created kernel objects for device %d\n", dev->device_id);
     return 0;
@@ -478,6 +551,14 @@ void gpu_backend_shutdown(void) {
             clReleaseMemObject(dev->d_bloom);
             dev->d_bloom = NULL;
         }
+        if (dev->d_found_keys) {
+            clReleaseMemObject(dev->d_found_keys);
+            dev->d_found_keys = NULL;
+        }
+        if (dev->d_found_count) {
+            clReleaseMemObject(dev->d_found_count);
+            dev->d_found_count = NULL;
+        }
 
         // Release queue and context
         if (dev->queue) {
@@ -697,10 +778,31 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
     memcpy(h_GTable_copy, gtable, gtable_bytes);
     g_GTable_count = point_count;
 
-    printf("[OpenCL] GTable uploaded (%zu points, %.2f MB)\n",
-           point_count, (double)gtable_bytes / (1024.0 * 1024.0));
+    // Upload to all active devices
+    cl_int err;
+    for (int i = 0; i < g_device_count; i++) {
+        opencl_device_t *dev = &g_devices[i];
+        if (!dev->active) continue;
 
-    // TODO: Upload to device memory in subtask 2-4
+        // Release old buffer if exists
+        if (dev->d_GTable) {
+            clReleaseMemObject(dev->d_GTable);
+            dev->d_GTable = NULL;
+        }
+
+        // Allocate and upload
+        dev->d_GTable = clCreateBuffer(dev->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                       gtable_bytes, h_GTable_copy, &err);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to upload GTable to device %d: %s (%d)\n",
+                    i, clGetErrorString(err), err);
+            return -1;
+        }
+    }
+
+    printf("[OpenCL] GTable uploaded to %d device(s) (%zu points, %.2f MB)\n",
+           g_device_count, point_count, (double)gtable_bytes / (1024.0 * 1024.0));
+
     return 0;
 }
 
@@ -725,10 +827,31 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
     memcpy(h_targets_copy, targets, targets_bytes);
     g_target_count = count;
 
-    printf("[OpenCL] Targets uploaded (%zu hashes, %.2f KB)\n",
-           count, (double)targets_bytes / 1024.0);
+    // Upload to all active devices
+    cl_int err;
+    for (int i = 0; i < g_device_count; i++) {
+        opencl_device_t *dev = &g_devices[i];
+        if (!dev->active) continue;
 
-    // TODO: Upload to device memory in subtask 2-4
+        // Release old buffer if exists
+        if (dev->d_targets) {
+            clReleaseMemObject(dev->d_targets);
+            dev->d_targets = NULL;
+        }
+
+        // Allocate and upload
+        dev->d_targets = clCreateBuffer(dev->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                        targets_bytes, h_targets_copy, &err);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to upload targets to device %d: %s (%d)\n",
+                    i, clGetErrorString(err), err);
+            return -1;
+        }
+    }
+
+    printf("[OpenCL] Targets uploaded to %d device(s) (%zu hashes, %.2f KB)\n",
+           g_device_count, count, (double)targets_bytes / 1024.0);
+
     return 0;
 }
 
@@ -752,17 +875,329 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
     g_bloom_size = bloom_size;
     g_bloom_hashes = num_hashes;
 
-    printf("[OpenCL] Bloom filter uploaded (%.2f MB, %d hashes)\n",
-           (double)bloom_size / (1024.0 * 1024.0), num_hashes);
+    // Upload to all active devices
+    cl_int err;
+    for (int i = 0; i < g_device_count; i++) {
+        opencl_device_t *dev = &g_devices[i];
+        if (!dev->active) continue;
 
-    // TODO: Upload to device memory in subtask 2-4
+        // Release old buffer if exists
+        if (dev->d_bloom) {
+            clReleaseMemObject(dev->d_bloom);
+            dev->d_bloom = NULL;
+        }
+
+        // Allocate and upload
+        dev->d_bloom = clCreateBuffer(dev->context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                      bloom_size, h_bloom_copy, &err);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to upload bloom filter to device %d: %s (%d)\n",
+                    i, clGetErrorString(err), err);
+            return -1;
+        }
+    }
+
+    printf("[OpenCL] Bloom filter uploaded to %d device(s) (%.2f MB, %d hashes)\n",
+           g_device_count, (double)bloom_size / (1024.0 * 1024.0), num_hashes);
+
     return 0;
 }
 
 int gpu_full_search(const gpu_search_config_t *config) {
-    (void)config;
-    fprintf(stderr, "[OpenCL] gpu_full_search not yet implemented\n");
-    return -1;
+    if (!g_available || !config || g_device_count == 0) {
+        return -1;
+    }
+
+    // Verify all devices have required data
+    for (int d = 0; d < g_device_count; d++) {
+        opencl_device_t *dev = &g_devices[d];
+        if (!dev->active) continue;
+
+        if (!dev->d_GTable || g_GTable_count == 0) {
+            fprintf(stderr, "[OpenCL] Device %d: G table not uploaded\n", d);
+            return -1;
+        }
+        if (!dev->d_targets || g_target_count == 0) {
+            fprintf(stderr, "[OpenCL] Device %d: targets not uploaded\n", d);
+            return -1;
+        }
+        if (!dev->kernel_full_search) {
+            fprintf(stderr, "[OpenCL] Device %d: full search kernel not available\n", d);
+            return -1;
+        }
+    }
+
+    // Count active devices
+    int active_devices = 0;
+    for (int d = 0; d < g_device_count; d++) {
+        if (g_devices[d].active) {
+            active_devices++;
+        }
+    }
+
+    if (active_devices == 0) {
+        fprintf(stderr, "[OpenCL] No active devices\n");
+        return -1;
+    }
+
+    // Convert start_key and end_key to uint256_d format
+    uint256_d start_key, end_key;
+    for (int i = 0; i < 8; i++) {
+        start_key.d[i] = ((uint32_t)config->start_key[(7-i)*4+3]) |
+                         ((uint32_t)config->start_key[(7-i)*4+2] << 8) |
+                         ((uint32_t)config->start_key[(7-i)*4+1] << 16) |
+                         ((uint32_t)config->start_key[(7-i)*4] << 24);
+        end_key.d[i] = ((uint32_t)config->end_key[(7-i)*4+3]) |
+                       ((uint32_t)config->end_key[(7-i)*4+2] << 8) |
+                       ((uint32_t)config->end_key[(7-i)*4+1] << 16) |
+                       ((uint32_t)config->end_key[(7-i)*4] << 24);
+    }
+
+    // Allocate found keys buffers on all active devices
+    cl_int err;
+    for (int d = 0; d < g_device_count; d++) {
+        opencl_device_t *dev = &g_devices[d];
+        if (!dev->active) continue;
+
+        // Allocate found keys buffer
+        if (!dev->d_found_keys) {
+            dev->d_found_keys = clCreateBuffer(dev->context, CL_MEM_READ_WRITE,
+                                               sizeof(FoundKey) * MAX_FOUND_KEYS,
+                                               NULL, &err);
+            if (err != CL_SUCCESS) {
+                fprintf(stderr, "[OpenCL] Failed to allocate found_keys buffer on device %d: %s\n",
+                        d, clGetErrorString(err));
+                return -1;
+            }
+        }
+
+        // Allocate found count buffer
+        if (!dev->d_found_count) {
+            dev->d_found_count = clCreateBuffer(dev->context, CL_MEM_READ_WRITE,
+                                                sizeof(int), NULL, &err);
+            if (err != CL_SUCCESS) {
+                fprintf(stderr, "[OpenCL] Failed to allocate found_count buffer on device %d: %s\n",
+                        d, clGetErrorString(err));
+                return -1;
+            }
+        }
+
+        // Initialize found count to 0
+        int zero = 0;
+        err = clEnqueueWriteBuffer(dev->queue, dev->d_found_count, CL_TRUE, 0,
+                                   sizeof(int), &zero, 0, NULL, NULL);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to initialize found_count on device %d: %s\n",
+                    d, clGetErrorString(err));
+            return -1;
+        }
+    }
+
+    // Print search info
+    printf("[+] OpenCL search: %d device(s)\n", active_devices);
+    for (int d = 0; d < g_device_count; d++) {
+        opencl_device_t *dev = &g_devices[d];
+        if (!dev->active) continue;
+        printf("    Device %d: %s (%u CUs, max WG size %zu)\n",
+               d, dev->device_name, dev->compute_units, dev->max_work_group_size);
+    }
+    printf("[+] Range: [start, end)\n");
+    fflush(stdout);
+
+    // Main search loop parameters
+    uint256_d cursor;
+    memcpy(&cursor, &start_key, sizeof(uint256_d));
+
+    uint64_t total_keys = 0;
+    int total_found = 0;
+
+    // Kernel launch parameters (conservative defaults for OpenCL)
+    // These will be refined in auto-tuning subtask 2-6
+    const int keys_per_thread = 1024;
+    const int threads_per_block = 256;
+
+    // Timing
+    uint64_t start_time_ns = platform_time_now_ns();
+
+#ifdef __cplusplus
+    // C++ mode: use atomic load
+    while (!config->should_stop->load(std::memory_order_acquire) && u256_cmp_host(&cursor, &end_key) < 0) {
+#else
+    // C mode: use volatile read
+    while (!(*config->should_stop) && u256_cmp_host(&cursor, &end_key) < 0) {
+#endif
+        // Launch kernel on all active devices
+        for (int d = 0; d < g_device_count; d++) {
+            opencl_device_t *dev = &g_devices[d];
+            if (!dev->active) continue;
+
+            // Calculate work sizes
+            size_t blocks = dev->compute_units * 16;  // 16 blocks per CU (conservative)
+            size_t global_work_size = blocks * threads_per_block;
+            size_t local_work_size = threads_per_block;
+            uint64_t keys_per_launch = global_work_size * keys_per_thread;
+
+            // Check remaining keys
+            uint64_t remaining64 = u256_sub_sat_u64_host(&end_key, &cursor);
+            if (remaining64 == 0) {
+                dev->active = 0;
+                continue;
+            }
+
+            uint64_t keys_this_launch = (remaining64 < keys_per_launch) ? remaining64 : keys_per_launch;
+
+            // Adjust keys_per_thread for last batch
+            cl_ulong actual_keys_per_thread = keys_per_thread;
+            if (keys_this_launch < keys_per_launch) {
+                actual_keys_per_thread = (keys_this_launch + global_work_size - 1) / global_work_size;
+                if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
+            }
+
+            // Set kernel arguments (matches kernel_full_search_compressed signature)
+            // kernel_full_search_compressed(cursor, start_idx, keys_per_thread, total_keys,
+            //                               d_GTable, d_targets, target_count,
+            //                               d_bloom, bloom_size, bloom_hashes, use_bloom,
+            //                               d_found_keys, d_found_count)
+            cl_ulong start_idx = 0;
+            cl_ulong total_keys_arg = keys_this_launch;
+            cl_ulong target_count_arg = g_target_count;
+            cl_ulong bloom_size_arg = g_bloom_size;
+            cl_int bloom_hashes_arg = g_bloom_hashes;
+            cl_int use_bloom_arg = config->use_bloom ? 1 : 0;
+
+            int arg_idx = 0;
+            err  = clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(uint256_d), &cursor);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_ulong), &start_idx);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_ulong), &actual_keys_per_thread);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_ulong), &total_keys_arg);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_mem), &dev->d_GTable);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_mem), &dev->d_targets);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_ulong), &target_count_arg);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_mem), &dev->d_bloom);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_ulong), &bloom_size_arg);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_int), &bloom_hashes_arg);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_int), &use_bloom_arg);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_mem), &dev->d_found_keys);
+            err |= clSetKernelArg(dev->kernel_full_search, arg_idx++, sizeof(cl_mem), &dev->d_found_count);
+
+            if (err != CL_SUCCESS) {
+                fprintf(stderr, "[OpenCL] Failed to set kernel arguments on device %d: %s (%d)\n",
+                        d, clGetErrorString(err), err);
+                dev->active = 0;
+                continue;
+            }
+
+            // Launch kernel
+            err = clEnqueueNDRangeKernel(dev->queue, dev->kernel_full_search, 1, NULL,
+                                        &global_work_size, &local_work_size,
+                                        0, NULL, NULL);
+            if (err != CL_SUCCESS) {
+                fprintf(stderr, "[OpenCL] Failed to launch kernel on device %d: %s (%d)\n",
+                        d, clGetErrorString(err), err);
+                dev->active = 0;
+                continue;
+            }
+
+            // Advance cursor
+            u256_add_u64_host(&cursor, keys_this_launch);
+            dev->keys_processed += keys_this_launch;
+            total_keys += keys_this_launch;
+        }
+
+        // Synchronize all devices and check for results
+        for (int d = 0; d < g_device_count; d++) {
+            opencl_device_t *dev = &g_devices[d];
+            if (!dev->active) continue;
+
+            // Wait for kernel completion
+            err = clFinish(dev->queue);
+            if (err != CL_SUCCESS) {
+                fprintf(stderr, "\n[OpenCL ERROR] Device %d kernel error: %s (%d)\n",
+                        d, clGetErrorString(err), err);
+                dev->active = 0;
+                continue;
+            }
+
+            // Check for found keys
+            int found_count = 0;
+            err = clEnqueueReadBuffer(dev->queue, dev->d_found_count, CL_TRUE, 0,
+                                     sizeof(int), &found_count, 0, NULL, NULL);
+            if (err != CL_SUCCESS) {
+                fprintf(stderr, "[OpenCL] Failed to read found_count from device %d: %s\n",
+                        d, clGetErrorString(err));
+                continue;
+            }
+
+            if (found_count > 0) {
+                // Read found keys
+                FoundKey h_found[MAX_FOUND_KEYS];
+                err = clEnqueueReadBuffer(dev->queue, dev->d_found_keys, CL_TRUE, 0,
+                                         sizeof(FoundKey) * found_count, h_found,
+                                         0, NULL, NULL);
+                if (err != CL_SUCCESS) {
+                    fprintf(stderr, "[OpenCL] Failed to read found_keys from device %d: %s\n",
+                            d, clGetErrorString(err));
+                    continue;
+                }
+
+                // Process found keys
+                for (int i = 0; i < found_count && i < MAX_FOUND_KEYS; i++) {
+                    if (h_found[i].valid) {
+                        total_found++;
+
+                        // Convert uint256_d to big-endian bytes
+                        uint8_t privkey_be[32];
+                        for (int w = 0; w < 8; w++) {
+                            uint32_t val = h_found[i].privkey.d[7 - w];
+                            privkey_be[w*4]     = (val >> 24) & 0xFF;
+                            privkey_be[w*4 + 1] = (val >> 16) & 0xFF;
+                            privkey_be[w*4 + 2] = (val >> 8) & 0xFF;
+                            privkey_be[w*4 + 3] = val & 0xFF;
+                        }
+
+                        // Call user callback
+                        if (config->callback) {
+                            config->callback(privkey_be,
+                                           h_found[i].compressed != 0,
+                                           config->callback_userdata);
+                        }
+                    }
+                }
+
+                // Reset found count
+                int zero = 0;
+                err = clEnqueueWriteBuffer(dev->queue, dev->d_found_count, CL_TRUE, 0,
+                                          sizeof(int), &zero, 0, NULL, NULL);
+                if (err != CL_SUCCESS) {
+                    fprintf(stderr, "[OpenCL] Failed to reset found_count on device %d: %s\n",
+                            d, clGetErrorString(err));
+                }
+            }
+        }
+
+        // Progress reporting (every ~5 seconds)
+        uint64_t elapsed_ns = platform_time_now_ns() - start_time_ns;
+        if (!config->quiet && elapsed_ns > 5000000000ULL) {
+            double elapsed_sec = elapsed_ns / 1e9;
+            double mkeys_per_sec = (total_keys / 1000000.0) / elapsed_sec;
+            printf("[OpenCL] %.2f MKey/s (%.2f M keys checked)\n",
+                   mkeys_per_sec, total_keys / 1000000.0);
+            fflush(stdout);
+            start_time_ns = platform_time_now_ns();
+        }
+    }
+
+    // Final statistics
+    if (!config->quiet) {
+        uint64_t final_elapsed_ns = platform_time_now_ns() - start_time_ns;
+        double final_elapsed_sec = final_elapsed_ns / 1e9;
+        if (final_elapsed_sec > 0) {
+            double final_mkeys_per_sec = (total_keys / 1000000.0) / final_elapsed_sec;
+            printf("[OpenCL] Search complete: %.2f MKey/s average\n", final_mkeys_per_sec);
+        }
+    }
+
+    return total_found;
 }
 
 size_t gpu_get_optimal_batch_size(void) {
