@@ -448,6 +448,27 @@ uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *b
     mk.Set(&m);
     mk.Mult((uint64_t)k);
 
+    /* Check if M fits in uint64_t (practical limit warning) */
+    bool m_fits_64 = true;
+    for (int i = 1; i < NB64BLOCK; i++) {
+        if (m.bits64[i] != 0) {
+            m_fits_64 = false;
+            break;
+        }
+    }
+
+    if (!m_fits_64) {
+        /* WARNING: M > 2^64 is beyond practical limits */
+        fprintf(stderr, "\n[WARNING] Practical limit exceeded:\n");
+        fprintf(stderr, "  M (sqrt(N)) exceeds 2^64, requiring impossibly large memory.\n");
+        fprintf(stderr, "  For reference:\n");
+        fprintf(stderr, "    - Puzzle #66:  M ~= 2^33  (8 GB RAM)\n");
+        fprintf(stderr, "    - Puzzle #125: M ~= 2^62  (16 EB RAM)\n");
+        fprintf(stderr, "    - Your range:  M > 2^64   (> 64 EB RAM)\n");
+        fprintf(stderr, "  Ranges beyond 160-bit are impractical for BSGS mode.\n");
+        fprintf(stderr, "  Consider using a smaller range or different search mode.\n\n");
+    }
+
     /* Check if M*K fits in uint64_t for memory calculation */
     /* If M*K > 2^64, the memory requirements are impossibly large */
     bool mk_fits_64 = true;
@@ -459,7 +480,15 @@ uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *b
     }
 
     if (!mk_fits_64) {
-        /* Memory requirements exceed addressable space */
+        /* ERROR: Memory requirements exceed addressable space */
+        fprintf(stderr, "\n[ERROR] Memory overflow detected:\n");
+        fprintf(stderr, "  M*K exceeds 2^64, cannot calculate memory requirements.\n");
+        fprintf(stderr, "  This configuration requires more RAM than physically addressable.\n");
+        fprintf(stderr, "  \n");
+        fprintf(stderr, "  Suggestion: Reduce K factor or use a smaller N value.\n");
+        fprintf(stderr, "  For example, for a 125-bit range:\n");
+        fprintf(stderr, "    ./keyhunt -m bsgs -f targets.txt -b 125 -k 128\n\n");
+
         if (bloom_out) *bloom_out = UINT64_MAX;
         if (table_out) *table_out = UINT64_MAX;
         return UINT64_MAX;
@@ -536,6 +565,24 @@ uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *b
     if (bloom_out) *bloom_out = total_bloom;
     if (table_out) *table_out = table_bytes;
 
+    /* Warn about extremely large memory requirements (> 1 TB) */
+    if (total_bytes != UINT64_MAX) {
+        const uint64_t ONE_TB = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+        const uint64_t ONE_PB = 1024ULL * ONE_TB;
+
+        if (total_bytes > ONE_PB) {
+            fprintf(stderr, "\n[WARNING] Impractical memory requirement:\n");
+            fprintf(stderr, "  Total RAM needed: %.2f PB (petabytes)\n", (double)total_bytes / ONE_PB);
+            fprintf(stderr, "  This exceeds typical server memory by 1000x+.\n");
+            fprintf(stderr, "  Ranges beyond 160-bit are theoretical only for BSGS mode.\n\n");
+        } else if (total_bytes > ONE_TB) {
+            fprintf(stderr, "\n[WARNING] Large memory requirement:\n");
+            fprintf(stderr, "  Total RAM needed: %.2f TB (terabytes)\n", (double)total_bytes / ONE_TB);
+            fprintf(stderr, "  This may exceed available system memory.\n");
+            fprintf(stderr, "  Consider reducing K factor or using a smaller range.\n\n");
+        }
+    }
+
     return total_bytes;
 }
 #endif /* __cplusplus */
@@ -550,7 +597,19 @@ int kh_bsgs_config_validate_memory(bsgs_config_t *cfg, uint64_t available_ram) {
     uint64_t needed = kh_bsgs_calc_memory(cfg->n_value, cfg->k_factor, NULL, NULL);
 
     if (needed > available_ram) {
-        /* Would exceed available memory */
+        /* ERROR: Would exceed available memory */
+        const uint64_t ONE_GB = 1024ULL * 1024ULL * 1024ULL;
+
+        fprintf(stderr, "\n[ERROR] Insufficient memory for BSGS configuration:\n");
+        fprintf(stderr, "  Required RAM: %.2f GB\n", (double)needed / ONE_GB);
+        fprintf(stderr, "  Available RAM: %.2f GB\n", (double)available_ram / ONE_GB);
+        fprintf(stderr, "  Deficit: %.2f GB\n", (double)(needed - available_ram) / ONE_GB);
+        fprintf(stderr, "  \n");
+        fprintf(stderr, "  Suggestions:\n");
+        fprintf(stderr, "    1. Reduce K factor (current: %d)\n", cfg->k_factor);
+        fprintf(stderr, "    2. Use a smaller N value (current: %lu)\n", (unsigned long)cfg->n_value);
+        fprintf(stderr, "    3. Use a different search mode (e.g., address mode)\n\n");
+
         return -1;
     }
 
