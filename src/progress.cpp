@@ -597,3 +597,105 @@ int progress_clear_all(void) {
     platform_dir_close(d);
     return count;
 }
+
+// Speed history functions
+
+// Initialize speed history
+void speed_history_init(speed_history_t *history) {
+    if (!history) return;
+
+    memset(history, 0, sizeof(speed_history_t));
+    history->count = 0;
+    history->write_index = 0;
+}
+
+// Add a speed sample to history
+void speed_history_add_sample(speed_history_t *history, double keys_per_second) {
+    if (!history) return;
+
+    // Get current timestamp
+    time_t now = time(NULL);
+
+    // Store sample at write_index
+    history->samples[history->write_index].timestamp = now;
+    history->samples[history->write_index].keys_per_second = keys_per_second;
+
+    // Advance write index (circular buffer)
+    history->write_index = (history->write_index + 1) % SPEED_HISTORY_MAX_SAMPLES;
+
+    // Increment count up to max
+    if (history->count < SPEED_HISTORY_MAX_SAMPLES) {
+        history->count++;
+    }
+}
+
+// Get average speed over all samples
+double speed_history_get_average(const speed_history_t *history) {
+    if (!history || history->count == 0) return 0.0;
+
+    double sum = 0.0;
+    for (int i = 0; i < history->count; i++) {
+        sum += history->samples[i].keys_per_second;
+    }
+
+    return sum / history->count;
+}
+
+// Get average speed over recent N samples (or all if fewer)
+double speed_history_get_recent_average(const speed_history_t *history, int sample_count) {
+    if (!history || history->count == 0 || sample_count <= 0) return 0.0;
+
+    // Limit to available samples
+    int samples_to_use = sample_count;
+    if (samples_to_use > history->count) {
+        samples_to_use = history->count;
+    }
+
+    // Calculate starting position (work backwards from most recent)
+    // Most recent sample is at (write_index - 1 + MAX) % MAX
+    int start_offset = history->write_index - samples_to_use;
+    if (start_offset < 0) {
+        start_offset += SPEED_HISTORY_MAX_SAMPLES;
+    }
+
+    double sum = 0.0;
+    for (int i = 0; i < samples_to_use; i++) {
+        int idx = (start_offset + i) % SPEED_HISTORY_MAX_SAMPLES;
+        sum += history->samples[idx].keys_per_second;
+    }
+
+    return sum / samples_to_use;
+}
+
+// Get speed trend (-1 = decreasing, 0 = stable, 1 = increasing)
+int speed_history_get_trend(const speed_history_t *history) {
+    if (!history || history->count < 4) return 0;  // Need at least 4 samples for trend
+
+    // Compare first half average vs second half average
+    int half = history->count / 2;
+
+    // Calculate first half average
+    double first_half_sum = 0.0;
+    for (int i = 0; i < half; i++) {
+        first_half_sum += history->samples[i].keys_per_second;
+    }
+    double first_half_avg = first_half_sum / half;
+
+    // Calculate second half average (most recent samples)
+    double second_half_sum = 0.0;
+    int second_half_start = history->count - half;
+    for (int i = second_half_start; i < history->count; i++) {
+        second_half_sum += history->samples[i].keys_per_second;
+    }
+    double second_half_avg = second_half_sum / half;
+
+    // Determine trend (with 5% threshold to avoid noise)
+    double threshold = first_half_avg * 0.05;
+    if (second_half_avg > first_half_avg + threshold) {
+        return 1;  // Increasing
+    } else if (second_half_avg < first_half_avg - threshold) {
+        return -1;  // Decreasing
+    } else {
+        return 0;  // Stable
+    }
+}
