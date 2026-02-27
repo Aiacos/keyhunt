@@ -46,7 +46,11 @@ INCLUDES := -I$(SRCDIR)
 # Union removed from Int class - strict aliasing is now safe
 LTO_FLAGS ?= -flto=auto
 
-# Optional CUDA backend (auto-detected if nvcc is available)
+# ============================================================================
+# GPU Backend Detection and Selection (Priority: CUDA > OpenCL > None)
+# ============================================================================
+
+# Detect CUDA availability
 NVCC ?= nvcc
 CUDA_ARCH ?= sm_75
 # New Fedora/GCC versions may be newer than the CUDA validation matrix.
@@ -58,13 +62,33 @@ ifneq ($(CUDA_CC_BINDIR),)
   NVCCFLAGS += --compiler-bindir=$(CUDA_CC_BINDIR)
 endif
 HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
-ifeq ($(HAVE_NVCC),)
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
-  GPU_CXXFLAGS :=
-else
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
+
+# Detect OpenCL availability
+HAVE_OPENCL := $(shell echo '\#include <CL/cl.h>' | $(CXX) -E - >/dev/null 2>&1 && echo 1 || echo 0)
+
+# Common GPU objects (always included regardless of backend)
+GPU_COMMON_OBJS := $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
+
+# Backend priority: CUDA > OpenCL > None
+ifneq ($(HAVE_NVCC),)
+  # CUDA backend (highest priority)
+  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(GPU_COMMON_OBJS)
   GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
   override NVCCFLAGS += -DHAVE_CUDA_BACKEND=1
+  CUDA_HOME ?= /usr/local/cuda
+  LDFLAGS += -L$(CUDA_HOME)/lib64
+  LDFLAGS += -Wl,-rpath,$(CUDA_HOME)/lib64
+  LDLIBS += -lcudart
+else ifeq ($(HAVE_OPENCL),1)
+  # OpenCL backend (second priority)
+  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_opencl.o $(GPU_COMMON_OBJS)
+  GPU_CXXFLAGS := -DHAVE_OPENCL=1
+  CFLAGS += -DHAVE_OPENCL=1
+  LDLIBS += -lOpenCL
+else
+  # No GPU backend (fallback)
+  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o $(GPU_COMMON_OBJS)
+  GPU_CXXFLAGS :=
 endif
 
 CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
@@ -75,23 +99,6 @@ LDFLAGS ?=
 LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
 LDLIBS ?=
 LDLIBS += -lm -lpthread $(PLATFORM_LIBS)
-
-# If CUDA backend is built, link against cudart (toolkit runtime)
-CUDA_HOME ?= /usr/local/cuda
-ifneq ($(HAVE_NVCC),)
-  LDFLAGS += -L$(CUDA_HOME)/lib64
-  LDFLAGS += -Wl,-rpath,$(CUDA_HOME)/lib64
-  LDLIBS += -lcudart
-endif
-
-# Optional OpenCL backend (auto-detected if OpenCL library is available)
-# OpenCL provides GPU acceleration for AMD and other GPUs
-HAVE_OPENCL := $(shell echo '\#include <CL/cl.h>' | $(CXX) -E - >/dev/null 2>&1 && echo 1 || echo 0)
-ifeq ($(HAVE_OPENCL),1)
-  CFLAGS += -DHAVE_OPENCL=1
-  CXXFLAGS += -DHAVE_OPENCL=1
-  LDLIBS += -lOpenCL
-endif
 
 # Optional TLS support with OpenSSL
 # Usage: make ENABLE_TLS=1
