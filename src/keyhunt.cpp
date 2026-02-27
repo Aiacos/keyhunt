@@ -74,6 +74,7 @@
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
 #else
+#include <signal.h>
 #ifdef __linux__
 #include <sys/mman.h>
 #include <sys/random.h>
@@ -674,6 +675,27 @@ std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
 std::atomic<int> g_gpu_should_stop{0};
 static int g_gpu_bloom_uploaded = 0;
 int g_gpu_range_percent = 0;
+
+// Multi-GPU worker instance (for signal handler access)
+static gpu_multi_worker_t *g_multi_gpu_workers = NULL;
+
+/*
+ * Signal handler for SIGINT (Ctrl+C) - gracefully stop multi-GPU workers
+ */
+#ifndef _WIN64
+static void sigint_handler(int sig) {
+	(void)sig; /* Unused parameter */
+
+	/* Set stop flag for GPU workers */
+	g_gpu_should_stop.store(1, std::memory_order_release);
+
+	/* If multi-GPU workers are active, stop them gracefully */
+	if (g_multi_gpu_workers != NULL) {
+		output_info("\nReceived Ctrl+C, stopping multi-GPU workers...\n");
+		gpu_worker_stop(g_multi_gpu_workers, 10000); /* 10 second timeout */
+	}
+}
+#endif
 
 // Range and stride variables
 int bitrange = 0;
@@ -3955,9 +3977,23 @@ int main(int argc, char **argv)	{
 							multi_gpu_shutdown(scheduler);
 							gpu_result = -1;
 						} else {
+							// Set global pointer for signal handler access
+							g_multi_gpu_workers = workers;
+
+#ifndef _WIN64
+							// Register signal handler for graceful shutdown on Ctrl+C
+							struct sigaction sa;
+							memset(&sa, 0, sizeof(sa));
+							sa.sa_handler = sigint_handler;
+							sigemptyset(&sa.sa_mask);
+							sa.sa_flags = 0;
+							sigaction(SIGINT, &sa, NULL);
+#endif
+
 							// Start worker threads
 							if (!gpu_worker_start(workers)) {
 								output_error("Failed to start multi-GPU workers\n");
+								g_multi_gpu_workers = NULL; // Clear global pointer
 								gpu_worker_shutdown(workers);
 								multi_gpu_shutdown(scheduler);
 								gpu_result = -1;
@@ -3983,6 +4019,7 @@ int main(int argc, char **argv)	{
 
 								// Cleanup
 								gpu_worker_shutdown(workers);
+								g_multi_gpu_workers = NULL; // Clear global pointer
 								multi_gpu_shutdown(scheduler);
 
 								if (gpu_result == 0) {
