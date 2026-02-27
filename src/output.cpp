@@ -143,6 +143,42 @@ void output_progress_bar(double percent, int width) {
     printf(CLR_RESET);
 }
 
+void output_speed_graph(double *values, int count, int height) {
+    // Validate inputs
+    if (!values || count <= 0) return;
+    if (height < 3) height = 3;
+    if (height > 5) height = 5;
+
+    // Find min/max for scaling
+    double min_val = values[0];
+    double max_val = values[0];
+    for (int i = 1; i < count; i++) {
+        if (values[i] < min_val) min_val = values[i];
+        if (values[i] > max_val) max_val = values[i];
+    }
+
+    // Avoid division by zero
+    double range = max_val - min_val;
+    if (range < 0.001) range = 0.001;
+
+    // Block characters for 8 levels of height (1/8 to 8/8)
+    const char *blocks[] = {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+
+    // Render graph from top to bottom
+    printf(CLR_CYAN);
+    for (int i = 0; i < count; i++) {
+        // Normalize value to 0-8 range
+        double normalized = ((values[i] - min_val) / range) * 8.0;
+        int level = (int)(normalized + 0.5);  // Round to nearest
+        if (level < 0) level = 0;
+        if (level > 8) level = 8;
+
+        printf("%s", blocks[level]);
+    }
+    printf(CLR_RESET);
+    fflush(stdout);
+}
+
 void output_info(const char *fmt, ...) {
     if (g_output_level < OUTPUT_NORMAL || !fmt) return;
 

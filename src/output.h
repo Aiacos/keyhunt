@@ -49,6 +49,9 @@ void output_final_stats(uint64_t total_keys, double total_time_sec,
 // Progress bar helper
 void output_progress_bar(double percent, int width);
 
+// ASCII speed graph (uses block characters ▁▂▃▄▅▆▇█)
+void output_speed_graph(double *values, int count, int height);
+
 #ifdef __cplusplus
 }
 #endif
