@@ -30,6 +30,6 @@
   "platform_support": ["linux", "windows", "cygwin"],
   "dependencies": {
     "required": ["pthread (linux)", "windows.h (windows)"],
-    "optional": ["cuda", "openssl", "gmp"]
+    "optional": ["cuda", "opencl", "openssl", "gmp"]
   }
 }
