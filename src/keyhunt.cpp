@@ -623,6 +623,7 @@ int FLAGDEBUG = 0;
 int FLAGQUIET = 0;
 int FLAGMATRIX = 0;
 int FLAGPROGRESSBAR = 0;
+int FLAGVISUAL = 0;
 int KFACTOR = 1;
 int MAXLENGTHADDRESS = 20;
 int NTHREADS = 1;
@@ -1660,6 +1661,9 @@ int main(int argc, char **argv)	{
 			continue;
 		} else if (strncmp(argv[ai], "--save-config=", 14) == 0) {
 			g_save_config_path = argv[ai] + 14;
+			continue;
+		} else if (strcmp(argv[ai], "--visual") == 0) {
+			FLAGVISUAL = 1;
 			continue;
 		}
 		// Keep this argument
@@ -4274,7 +4278,39 @@ int main(int argc, char **argv)	{
 								double remaining_ratio = (1000.0 - permille) / 1000.0;
 								double total_estimate = (permille > 0) ? (secs / (permille / 1000.0)) : 0;
 								int eta_seconds = (int)(total_estimate * remaining_ratio);
-								output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
+
+								// Add speed sample to history for visual mode
+								if (g_progress_enabled) {
+									speed_history_add_sample(&g_progress_state.speed_history, speed_mkeys * 1000000.0);
+								}
+
+								// Show detailed progress if visual mode enabled
+								if (FLAGVISUAL) {
+									// Get memory usage
+									uint64_t memory_used_mb = platform_memory_usage_mb();
+									uint64_t memory_total_mb = g_sysinfo.ram_total;
+
+									// Extract speed history for graph
+									double speed_samples[SPEED_HISTORY_MAX_SAMPLES];
+									int sample_count = 0;
+									if (g_progress_enabled && g_progress_state.speed_history.count > 0) {
+										const speed_history_t *hist = &g_progress_state.speed_history;
+										sample_count = hist->count;
+										// Extract samples in chronological order
+										int start_idx = (hist->write_index - hist->count + SPEED_HISTORY_MAX_SAMPLES) % SPEED_HISTORY_MAX_SAMPLES;
+										for (int i = 0; i < hist->count; i++) {
+											int idx = (start_idx + i) % SPEED_HISTORY_MAX_SAMPLES;
+											speed_samples[i] = hist->samples[idx].keys_per_second / 1000000.0; // Convert to Mkeys/s
+										}
+									}
+
+									output_progress_detailed(percent, speed_mkeys, keys_checked, eta_seconds,
+									                        memory_used_mb, memory_total_mb,
+									                        sample_count > 0 ? speed_samples : NULL, sample_count,
+									                        NTHREADS);
+								} else {
+									output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
+								}
 								printf("\n");
 							}
 						}
@@ -4379,7 +4415,39 @@ int main(int argc, char **argv)	{
 								double remaining_ratio = (1000.0 - permille) / 1000.0;
 								double total_estimate = (permille > 0) ? (secs / (permille / 1000.0)) : 0;
 								int eta_seconds = (int)(total_estimate * remaining_ratio);
-								output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
+
+								// Add speed sample to history for visual mode
+								if (g_progress_enabled) {
+									speed_history_add_sample(&g_progress_state.speed_history, speed_mkeys * 1000000.0);
+								}
+
+								// Show detailed progress if visual mode enabled
+								if (FLAGVISUAL) {
+									// Get memory usage
+									uint64_t memory_used_mb = platform_memory_usage_mb();
+									uint64_t memory_total_mb = g_sysinfo.ram_total;
+
+									// Extract speed history for graph
+									double speed_samples[SPEED_HISTORY_MAX_SAMPLES];
+									int sample_count = 0;
+									if (g_progress_enabled && g_progress_state.speed_history.count > 0) {
+										const speed_history_t *hist = &g_progress_state.speed_history;
+										sample_count = hist->count;
+										// Extract samples in chronological order
+										int start_idx = (hist->write_index - hist->count + SPEED_HISTORY_MAX_SAMPLES) % SPEED_HISTORY_MAX_SAMPLES;
+										for (int i = 0; i < hist->count; i++) {
+											int idx = (start_idx + i) % SPEED_HISTORY_MAX_SAMPLES;
+											speed_samples[i] = hist->samples[idx].keys_per_second / 1000000.0; // Convert to Mkeys/s
+										}
+									}
+
+									output_progress_detailed(percent, speed_mkeys, keys_checked, eta_seconds,
+									                        memory_used_mb, memory_total_mb,
+									                        sample_count > 0 ? speed_samples : NULL, sample_count,
+									                        NTHREADS);
+								} else {
+									output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
+								}
 								printf("\n");
 							}
 						}
@@ -4593,6 +4661,7 @@ void menu() {
 	printf("  --wizard-client <hp>  Non-interactive client mode (host:port)\n");
 	printf("  --config <file>       Load configuration from file\n");
 	printf("  --save-config <file>  Save current configuration to file\n");
+	printf("  --visual              Enhanced progress display with graphs and stats\n");
 	printf("\n");
 	printf("QUICK START EXAMPLES:\n");
 	printf("\n");
