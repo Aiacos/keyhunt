@@ -75,6 +75,7 @@ LDFLAGS ?=
 LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
 LDLIBS ?=
 LDLIBS += -lm -lpthread $(PLATFORM_LIBS)
+LDLIBS += -lsqlite3
 
 # If CUDA backend is built, link against cudart (toolkit runtime)
 CUDA_HOME ?= /usr/local/cuda
