@@ -11,6 +11,10 @@
 #include <string.h>
 #include <math.h>
 
+#ifdef __cplusplus
+#include "../secp256k1/Int.h"
+#endif
+
 /* ============================================================================
  * String Constants for Mode Names
  * ============================================================================ */
@@ -631,3 +635,60 @@ void kh_env_overrides_init(env_overrides_t *env) {
     env->cpu_n_override         = env_int("KEYHUNT_CPU_N", 0);
     env->hybrid_cpu_n_override  = env_int("KEYHUNT_HYBRID_CPU_N", 0);
 }
+
+/* ============================================================================
+ * Helper Functions for Int/uint64_t Conversion (C++ only)
+ * ============================================================================ */
+
+#ifdef __cplusplus
+
+/**
+ * Convert a uint64_t value to an Int* (256-bit integer).
+ *
+ * Creates a new Int object on the heap initialized with the given 64-bit value.
+ * The caller is responsible for freeing the returned Int*.
+ *
+ * @param value  The 64-bit unsigned integer to convert
+ * @return       Newly allocated Int* (caller must free with delete)
+ */
+Int* uint64_to_int(uint64_t value) {
+    return new Int(value);
+}
+
+/**
+ * Safely convert an Int* to uint64_t, checking for overflow.
+ *
+ * Extracts the lower 64 bits from an Int value and checks if the higher
+ * bits are non-zero (indicating overflow). Returns 0 if the input is NULL.
+ *
+ * @param value     The Int* to convert (can be NULL)
+ * @param overflow  Output flag set to true if value doesn't fit in 64 bits (can be NULL)
+ * @return          The lower 64 bits of the Int value (0 if value is NULL)
+ *
+ * Note: Returns the lower 64 bits even on overflow. Check the overflow flag
+ *       to determine if data was lost.
+ */
+uint64_t int_to_uint64_safe(Int* value, bool* overflow) {
+    /* Handle NULL input */
+    if (!value) {
+        if (overflow) *overflow = true;
+        return 0;
+    }
+
+    /* Check if higher bits (beyond bits64[0]) are non-zero */
+    bool has_overflow = false;
+    for (int i = 1; i < NB64BLOCK; i++) {
+        if (value->bits64[i] != 0) {
+            has_overflow = true;
+            break;
+        }
+    }
+
+    /* Set overflow flag if requested */
+    if (overflow) *overflow = has_overflow;
+
+    /* Return lower 64 bits using Int's built-in getter */
+    return value->GetInt64();
+}
+
+#endif /* __cplusplus */
