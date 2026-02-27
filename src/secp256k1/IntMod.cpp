@@ -18,6 +18,7 @@
 #include "Int.h"
 #include <emmintrin.h>
 #include <string.h>
+#include "IntMod_avx2.h"
 
 #define MAX(x,y) (((x)>(y))?(x):(y))
 #define MIN(x,y) (((x)<(y))?(x):(y))
@@ -30,6 +31,7 @@ static Int     _R4;      // Montgomery multiplication R4
 static int32_t  Msize;    // Montgomery mult size
 static uint32_t MM32;     // 32bits lsb negative inverse of P
 static uint64_t MM64;     // 64bits lsb negative inverse of P
+static int      _avx2_available = -1;  // -1 = not checked, 0 = no, 1 = yes
 #define MSK62  0x3FFFFFFFFFFFFFFF
 
 extern Int _ONE;
@@ -852,6 +854,19 @@ void Int::MontgomeryMult(Int *a, Int *b) {
 
 void Int::ModMulK1(Int *a, Int *b) {
 
+  // Runtime dispatch: check AVX2 availability once
+  if (_avx2_available == -1) {
+    _avx2_available = modmulk1_avx2_available();
+  }
+
+  // Use AVX2-optimized version if available
+  if (_avx2_available == 1) {
+    ModMulK1_avx2(a->bits64, b->bits64, bits64);
+    bits64[4] = 0;
+    return;
+  }
+
+  // Scalar fallback for non-AVX2 CPUs
 #ifndef _WIN64
 #if (__GNUC__ > 7) || (__GNUC__ == 7 && (__GNUC_MINOR__ > 2))
   unsigned char c;
@@ -862,7 +877,6 @@ void Int::ModMulK1(Int *a, Int *b) {
 #else
   unsigned char c;
 #endif
-
 
   uint64_t ah, al;
   uint64_t t[5];
@@ -892,28 +906,46 @@ void Int::ModMulK1(Int *a, Int *b) {
   c = _addcarry_u64(c, r512[6], t[3], r512 + 6);
   c = _addcarry_u64(c, r512[7], t[4], r512 + 7);
 
-  // Reduce from 512 to 320 
+  // Reduce from 512 to 320
   imm_umul(r512 + 4, 0x1000003D1ULL, t);
   c = _addcarry_u64(0, r512[0], t[0], r512 + 0);
   c = _addcarry_u64(c, r512[1], t[1], r512 + 1);
   c = _addcarry_u64(c, r512[2], t[2], r512 + 2);
   c = _addcarry_u64(c, r512[3], t[3], r512 + 3);
 
-  // Reduce from 320 to 256 
+  // Reduce from 320 to 256
   // No overflow possible here t[4]+c<=0x1000003D1ULL
-  al = _umul128(t[4] + c, 0x1000003D1ULL, &ah); 
+  al = _umul128(t[4] + c, 0x1000003D1ULL, &ah);
   c = _addcarry_u64(0, r512[0], al, bits64 + 0);
   c = _addcarry_u64(c, r512[1], ah, bits64 + 1);
   c = _addcarry_u64(c, r512[2], 0ULL, bits64 + 2);
   c = _addcarry_u64(c, r512[3], 0ULL, bits64 + 3);
 
   // Probability of carry here or that this>P is very very unlikely
-  bits64[4] = 0; 
+  bits64[4] = 0;
 
 }
 
 void Int::ModMulK1(Int *a) {
 
+  // Runtime dispatch: check AVX2 availability once
+  if (_avx2_available == -1) {
+    _avx2_available = modmulk1_avx2_available();
+  }
+
+  // Use AVX2-optimized version if available
+  if (_avx2_available == 1) {
+    uint64_t temp[4];
+    temp[0] = bits64[0];
+    temp[1] = bits64[1];
+    temp[2] = bits64[2];
+    temp[3] = bits64[3];
+    ModMulK1_avx2(a->bits64, temp, bits64);
+    bits64[4] = 0;
+    return;
+  }
+
+  // Scalar fallback for non-AVX2 CPUs
 #ifndef _WIN64
 #if (__GNUC__ > 7) || (__GNUC__ == 7 && (__GNUC_MINOR__ > 2))
   unsigned char c;
@@ -953,14 +985,14 @@ void Int::ModMulK1(Int *a) {
   c = _addcarry_u64(c, r512[6], t[3], r512 + 6);
   c = _addcarry_u64(c, r512[7], t[4], r512 + 7);
 
-  // Reduce from 512 to 320 
+  // Reduce from 512 to 320
   imm_umul(r512 + 4, 0x1000003D1ULL, t);
   c = _addcarry_u64(0, r512[0], t[0], r512 + 0);
   c = _addcarry_u64(c, r512[1], t[1], r512 + 1);
   c = _addcarry_u64(c, r512[2], t[2], r512 + 2);
   c = _addcarry_u64(c, r512[3], t[3], r512 + 3);
 
-  // Reduce from 320 to 256 
+  // Reduce from 320 to 256
   // No overflow possible here t[4]+c<=0x1000003D1ULL
   al = _umul128(t[4] + c, 0x1000003D1ULL, &ah);
   c = _addcarry_u64(0, r512[0], al, bits64 + 0);

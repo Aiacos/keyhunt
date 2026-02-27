@@ -98,7 +98,7 @@ BSGSD_OBJS := $(OBJDIR)/bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(LEGACY_COMMON_OBJS) $(GMP256K1_OBJS)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
 .PHONY: all clean legacy bsgsd directories test sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 
@@ -121,7 +121,7 @@ keyhunt_legacy: directories $(LEGACY_OBJS)
 	$(CXX) $(LDFLAGS) $(LEGACY_OBJS) $(LDLIBS) -lcrypto -lgmp -o $@
 
 clean:
-	$(RM) keyhunt keyhunt_legacy bsgsd run_tests keyhunt_pgo_gen keyhunt_pgo
+	$(RM) keyhunt keyhunt_legacy bsgsd run_tests keyhunt_pgo_gen keyhunt_pgo benchmark_intgroup test_intgroup_avx2
 	$(RM) -r $(OBJDIR)
 
 # ============================================================================
@@ -283,6 +283,10 @@ $(OBJDIR)/bsgs/bsgs_ops.o: $(SRCDIR)/bsgs/bsgs_ops.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
 
 $(OBJDIR)/bsgs/bsgs_fast.o: $(SRCDIR)/bsgs/bsgs_fast.cpp | directories
+	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
+
+# Secp256k1 AVX2 optimizations
+$(OBJDIR)/secp256k1/IntMod.o: $(SRCDIR)/secp256k1/IntMod.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx2 -c $< -o $@
 
 # ============================================================================
@@ -488,6 +492,32 @@ fuzz_afl: tests/fuzz_json.cpp
 	@echo ""
 	@echo "AFL fuzzer built. Run with:"
 	@echo "  afl-fuzz -i tests/fuzz_corpus -o fuzz_out ./fuzz_json_afl @@"
+	@echo ""
+
+# ============================================================================
+# Benchmarks
+# ============================================================================
+# Build standalone benchmark executables for performance testing
+#
+# Usage:
+#   make benchmark_intgroup     # Build IntGroup::ModInv() benchmark
+#   ./benchmark_intgroup         # Run the benchmark
+# ============================================================================
+
+# IntGroup::ModInv() benchmark - compares original vs optimized
+benchmark_intgroup: directories $(SECP256K1_OBJS)
+	$(CXX) $(CXXFLAGS) -mavx2 $(SRCDIR)/benchmarks/benchmark_intgroup.cpp $(SECP256K1_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+	@echo ""
+	@echo "IntGroup benchmark built successfully. Run with:"
+	@echo "  ./benchmark_intgroup"
+	@echo ""
+
+# IntGroup AVX2 unit tests
+test_intgroup_avx2: directories $(SECP256K1_OBJS)
+	$(CXX) $(CXXFLAGS) -mavx2 tests/test_intgroup_avx2.cpp $(SECP256K1_OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+	@echo ""
+	@echo "IntGroup AVX2 test suite built successfully. Run with:"
+	@echo "  ./test_intgroup_avx2"
 	@echo ""
 
 .PHONY: fuzz fuzz_afl
