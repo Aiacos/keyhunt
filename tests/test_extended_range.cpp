@@ -384,6 +384,101 @@ TEST(integration_parse_128bit_and_validate) {
 }
 
 /* ============================================================================
+ * Negative Tests - Impractical Ranges
+ * ============================================================================ */
+
+TEST(negative_impractical_200bit_range) {
+    /* Test that a 200-bit range is properly detected as impractical */
+    Int n_int;
+
+    /* For 200-bit range: N = 2^200 */
+    /* Hex: 0x100000000000000000000000000000000000000000000000000 (1 followed by 50 zeros) */
+    const char *hex_200 = "0x100000000000000000000000000000000000000000000000000";
+    int ret = parse_n_value_extended(hex_200, &n_int);
+
+    ASSERT_EQ(0, ret);  /* Parsing should succeed */
+
+    /* Memory calculation should detect this as impractical */
+    /* M = sqrt(2^200) = 2^100, which exceeds uint64_t range */
+    Int *m_int = NULL;
+    uint64_t bloom_size = 0;
+    uint64_t table_size = 0;
+
+    uint64_t total_mem = kh_bsgs_calc_memory_int(&n_int, 1, &m_int, &bloom_size, &table_size);
+
+    /* Should return UINT64_MAX to indicate overflow/impractical */
+    ASSERT_EQ(UINT64_MAX, total_mem);
+    ASSERT_EQ(UINT64_MAX, bloom_size);
+    ASSERT_EQ(UINT64_MAX, table_size);
+
+    /* M should still be calculated (even if impractical) */
+    if (m_int) {
+        delete m_int;
+    }
+}
+
+TEST(negative_impractical_160bit_range) {
+    /* Test 160-bit range (mentioned in docs as practical limit) */
+    Int n_int;
+
+    /* For 160-bit range: N = 2^160 */
+    const char *hex_160 = "0x10000000000000000000000000000000000000000";
+    int ret = parse_n_value_extended(hex_160, &n_int);
+
+    ASSERT_EQ(0, ret);  /* Parsing should succeed */
+
+    /* M = sqrt(2^160) = 2^80, which exceeds uint64_t practical range */
+    Int *m_int = NULL;
+    uint64_t total_mem = kh_bsgs_calc_memory_int(&n_int, 1, &m_int, NULL, NULL);
+
+    /* Should return UINT64_MAX to indicate overflow/impractical */
+    ASSERT_EQ(UINT64_MAX, total_mem);
+
+    if (m_int) {
+        delete m_int;
+    }
+}
+
+TEST(negative_impractical_256bit_max_range) {
+    /* Test maximum 256-bit value (completely impractical) */
+    Int n_int;
+
+    /* Maximum 256-bit value */
+    const char *hex_256_max = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF";
+    int ret = parse_n_value_extended(hex_256_max, &n_int);
+
+    ASSERT_EQ(0, ret);  /* Parsing should succeed */
+
+    /* Memory calculation should detect this as completely impractical */
+    uint64_t total_mem = kh_bsgs_calc_memory_int(&n_int, 1, NULL, NULL, NULL);
+
+    /* Should return UINT64_MAX to indicate overflow/impractical */
+    ASSERT_EQ(UINT64_MAX, total_mem);
+}
+
+TEST(negative_validate_memory_impractical_config) {
+    /* Test that validation properly rejects impractical configurations */
+    bsgs_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+
+    /* Set up a config with impractical N value */
+    /* For demonstration, use a large but still parseable value */
+    /* N = 2^130 requires M = 2^65, which is impractical */
+    uint64_t impractical_n = UINT64_MAX;  /* Maximum 64-bit value */
+    cfg.n_value = impractical_n;
+    cfg.k_factor = 1024;  /* Large K factor makes it even worse */
+
+    /* Try to validate against available memory (e.g., 16 GB) */
+    uint64_t available_ram = 16ULL * 1024ULL * 1024ULL * 1024ULL;  /* 16 GB */
+
+    /* Validation should fail due to insufficient memory */
+    int validation_result = kh_bsgs_config_validate_memory(&cfg, available_ram);
+
+    /* Should return -1 to indicate validation failure */
+    ASSERT_EQ(-1, validation_result);
+}
+
+/* ============================================================================
  * Main Test Runner
  * ============================================================================ */
 
@@ -427,6 +522,12 @@ int run_extended_range_tests(void) {
     TEST_SECTION("Integration Tests");
     RUN_TEST(integration_parse_and_memory_calc);
     RUN_TEST(integration_parse_128bit_and_validate);
+
+    TEST_SECTION("Negative Tests - Impractical Ranges");
+    RUN_TEST(negative_impractical_200bit_range);
+    RUN_TEST(negative_impractical_160bit_range);
+    RUN_TEST(negative_impractical_256bit_max_range);
+    RUN_TEST(negative_validate_memory_impractical_config);
 
     return TEST_RESULTS();
 }
