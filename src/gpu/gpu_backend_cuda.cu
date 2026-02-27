@@ -16,8 +16,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
 #include <cuda_runtime.h>
+
+// Platform abstraction for cross-platform timing
+#include "../platform/platform_time.h"
 
 // Optimized hash functions (fully unrolled, register-only)
 #include "gpu_hash_optimized.cuh"
@@ -2407,9 +2409,8 @@ int gpu_full_search(const gpu_search_config_t *config) {
         worker_count++;
     }
 
-    // Timing
-    struct timeval tv0;
-    gettimeofday(&tv0, NULL);
+    // Timing (platform-agnostic monotonic clock)
+    uint64_t start_time_ns = platform_time_now_ns();
 
     // Print multi-GPU info
     if (active_gpus > 1) {
@@ -2600,10 +2601,8 @@ int gpu_full_search(const gpu_search_config_t *config) {
         // Progress output
         static uint64_t last_progress_keys = 0;
         if (!config->quiet && (total_keys - last_progress_keys) >= (total_keys_per_round * 10)) {
-            struct timeval tv1;
-            gettimeofday(&tv1, NULL);
-            double elapsed_sec = (double)(tv1.tv_sec - tv0.tv_sec) +
-                                 (double)(tv1.tv_usec - tv0.tv_usec) / 1e6;
+            uint64_t current_time_ns = platform_time_now_ns();
+            double elapsed_sec = (double)(current_time_ns - start_time_ns) / 1e9;
             last_progress_keys = total_keys;
 
             double speed = 0.0;
@@ -2676,10 +2675,8 @@ int gpu_full_search(const gpu_search_config_t *config) {
     }
 
     // Final timing
-    struct timeval tv_end;
-    gettimeofday(&tv_end, NULL);
-    double total_elapsed_sec = (double)(tv_end.tv_sec - tv0.tv_sec) +
-                               (double)(tv_end.tv_usec - tv0.tv_usec) / 1e6;
+    uint64_t end_time_ns = platform_time_now_ns();
+    double total_elapsed_sec = (double)(end_time_ns - start_time_ns) / 1e9;
 
     double final_speed = (total_elapsed_sec > 0) ? (double)total_keys / total_elapsed_sec : 0.0;
     const char *final_unit = "keys/s";
