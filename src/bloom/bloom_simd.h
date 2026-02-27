@@ -17,6 +17,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/*
+ * Maximum batch size for stack-allocated arrays in batch check functions.
+ * Matches CPU_GRP_SIZE (1024) which is the standard batch size used throughout
+ * the codebase. Batches larger than this will fall back to dynamic allocation.
+ */
+#ifndef BLOOM_BATCH_MAX
+#define BLOOM_BATCH_MAX 1024
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
