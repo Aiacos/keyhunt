@@ -3652,14 +3652,14 @@ int main(int argc, char **argv)	{
 		if(!FLAGREADEDFILE3)	{
 			printf("\r[BSGS] ");
 			output_progress_bar(0.0, 25);
-			printf(" sorting bP table: %lu elements (0.0%%)   ", bsgs_m3);
+			printf(" sorting bP table: %" PRIu64 " elements (0.0%%)   ", bsgs_m3);
 			fflush(stdout);
 			bsgs_sort(bPtable,bsgs_m3);
 			sha256((uint8_t*)bPtable, bytes,(uint8_t*) checksum);
 			memcpy(checksum_backup,checksum,32);
 			printf("\r[BSGS] ");
 			output_progress_bar(100.0, 25);
-			printf(" sorting bP table: %lu elements (100.0%%) ✓\n", bsgs_m3);
+			printf(" sorting bP table: %" PRIu64 " elements (100.0%%) ✓\n", bsgs_m3);
 			fflush(stdout);
 		}
 		if(FLAGSAVEREADFILE || FLAGUPDATEFILE1 )	{

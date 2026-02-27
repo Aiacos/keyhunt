@@ -7,9 +7,14 @@
 #include <errno.h>
 #include <time.h>
 
-#if !PLATFORM_WINDOWS
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#if PLATFORM_WINDOWS
+#include <io.h>        /* _unlink, _access */
+#define unlink _unlink
+#else
+#include <unistd.h>    /* unlink */
 #endif
 
 // Simple hash function for generating unique filenames

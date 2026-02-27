@@ -22,10 +22,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <pthread.h>
-
-/* TODO: Migrate from pthread to platform abstraction layer (src/platform/)
- * for Windows compatibility. See platform_thread.h for the unified API. */
+#include "platform/platform.h"
 
 /* ============================================================================
  * TLS Support (Optional - requires OpenSSL)
@@ -124,7 +121,7 @@ typedef struct {
 #endif
 
     /* Per-worker threading for non-blocking client handling */
-    pthread_t handler_thread;   /* Dedicated thread for this worker */
+    platform_thread_t handler_thread;   /* Dedicated thread for this worker */
     bool handler_running;       /* Is the handler thread running? */
     void *coordinator;          /* Back-reference to coordinator (cast to dist_coordinator_t*) */
 
@@ -214,7 +211,7 @@ typedef struct {
     rate_limit_entry_t *entries;    /* Array of rate limit entries */
     int entry_count;                /* Number of entries */
     int entry_capacity;             /* Capacity of entries array */
-    pthread_mutex_t mutex;          /* Protects entries */
+    platform_mutex_t mutex;          /* Protects entries */
     int max_connections_per_window; /* Max connections per IP per window */
     int max_messages_per_window;    /* Max messages per connection per window */
     int window_sec;                 /* Window duration in seconds */
@@ -247,10 +244,10 @@ typedef struct {
     bool all_work_done;
 
     /* Thread synchronization - fine-grained locking for scalability */
-    pthread_mutex_t work_mutex;     /* Protects work unit assignment - hold briefly! */
-    pthread_mutex_t stats_mutex;    /* Protects statistics counters - separate from work */
-    pthread_mutex_t worker_mutex;   /* Protects worker array modifications */
-    pthread_mutex_t result_mutex;   /* Protects results array and result_count */
+    platform_mutex_t work_mutex;     /* Protects work unit assignment - hold briefly! */
+    platform_mutex_t stats_mutex;    /* Protects statistics counters - separate from work */
+    platform_mutex_t worker_mutex;   /* Protects worker array modifications */
+    platform_mutex_t result_mutex;   /* Protects results array and result_count */
 
     /* Work distribution optimization */
     int next_pending_hint;          /* Hint for next pending work unit (optimization) */

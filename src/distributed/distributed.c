@@ -1,5 +1,9 @@
 /*
  * distributed.c - Distributed Mode Implementation
+ *
+ * Note: The distributed networking module requires POSIX sockets (socket, bind,
+ * listen, accept, poll, fcntl, etc.) and is not available on Windows.
+ * On Windows, all public functions return error codes or no-ops.
  */
 
 #include "distributed.h"
@@ -10,7 +14,271 @@
 #include <errno.h>
 #include <time.h>
 
-#if !PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS
+/* ============================================================================
+ * Windows Stub Implementations
+ * ============================================================================
+ *
+ * Distributed mode requires POSIX sockets which are not available on Windows.
+ * All functions return appropriate error codes.
+ * ============================================================================ */
+
+int dist_coordinator_check_port(int port, const char *bind_address) {
+    (void)port; (void)bind_address;
+    fprintf(stderr, "[distributed] Not supported on Windows\n");
+    return -1;
+}
+
+int dist_coordinator_init(dist_coordinator_t *coordinator, int port) {
+    (void)coordinator; (void)port;
+    fprintf(stderr, "[distributed] Not supported on Windows\n");
+    return -1;
+}
+
+int dist_coordinator_set_range(dist_coordinator_t *coordinator,
+                               const char *range_start, const char *range_end,
+                               uint64_t work_unit_size) {
+    (void)coordinator; (void)range_start; (void)range_end; (void)work_unit_size;
+    return -1;
+}
+
+void dist_coordinator_set_job_config(dist_coordinator_t *coordinator,
+                                     const char *target_address,
+                                     const char *mode,
+                                     const char *key_type,
+                                     int puzzle_number,
+                                     int bits) {
+    (void)coordinator; (void)target_address; (void)mode;
+    (void)key_type; (void)puzzle_number; (void)bits;
+}
+
+void dist_coordinator_set_heartbeat_interval(dist_coordinator_t *coordinator,
+                                             int interval_sec) {
+    (void)coordinator; (void)interval_sec;
+}
+
+void dist_coordinator_set_auth_token(dist_coordinator_t *coordinator,
+                                     const char *token) {
+    (void)coordinator; (void)token;
+}
+
+void dist_coordinator_set_bind_address(dist_coordinator_t *coordinator,
+                                       const char *address) {
+    (void)coordinator; (void)address;
+}
+
+void dist_coordinator_set_worker_timeout(dist_coordinator_t *coordinator,
+                                         int timeout_sec) {
+    (void)coordinator; (void)timeout_sec;
+}
+
+void dist_coordinator_set_work_timeout(dist_coordinator_t *coordinator,
+                                       int timeout_sec) {
+    (void)coordinator; (void)timeout_sec;
+}
+
+void dist_coordinator_set_connection_timeout(dist_coordinator_t *coordinator,
+                                             int timeout_sec) {
+    (void)coordinator; (void)timeout_sec;
+}
+
+void dist_coordinator_enable_rate_limiting(dist_coordinator_t *coordinator,
+                                           int max_connections,
+                                           int max_messages,
+                                           int window_sec) {
+    (void)coordinator; (void)max_connections; (void)max_messages; (void)window_sec;
+}
+
+int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
+                                const char *cert_file,
+                                const char *key_file) {
+    (void)coordinator; (void)cert_file; (void)key_file;
+    return -1;
+}
+
+int dist_coordinator_start(dist_coordinator_t *coordinator) {
+    (void)coordinator;
+    return -1;
+}
+
+int dist_coordinator_process(dist_coordinator_t *coordinator, int timeout_ms) {
+    (void)coordinator; (void)timeout_ms;
+    return -1;
+}
+
+void dist_coordinator_stats(const dist_coordinator_t *coordinator,
+                            int *workers_active, int *work_pending,
+                            int *work_completed, double *throughput) {
+    (void)coordinator;
+    if (workers_active) *workers_active = 0;
+    if (work_pending) *work_pending = 0;
+    if (work_completed) *work_completed = 0;
+    if (throughput) *throughput = 0.0;
+}
+
+void dist_coordinator_print_worker_stats(const dist_coordinator_t *coordinator) {
+    (void)coordinator;
+}
+
+void dist_coordinator_get_speed_stats(const dist_coordinator_t *coordinator,
+                                      double *total_cpu_speed,
+                                      double *total_gpu_speed,
+                                      double *total_combined) {
+    (void)coordinator;
+    if (total_cpu_speed) *total_cpu_speed = 0.0;
+    if (total_gpu_speed) *total_gpu_speed = 0.0;
+    if (total_combined) *total_combined = 0.0;
+}
+
+void dist_coordinator_shutdown(dist_coordinator_t *coordinator) {
+    (void)coordinator;
+}
+
+int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
+                                const char *filepath) {
+    (void)coordinator; (void)filepath;
+    return -1;
+}
+
+int dist_coordinator_load_state(dist_coordinator_t *coordinator,
+                                const char *filepath) {
+    (void)coordinator; (void)filepath;
+    return 1; /* File not found */
+}
+
+void dist_coordinator_get_state_path(const dist_coordinator_t *coordinator,
+                                     char *filepath, size_t filepath_size) {
+    (void)coordinator;
+    if (filepath && filepath_size > 0) filepath[0] = '\0';
+}
+
+int dist_worker_init(dist_worker_client_t *client,
+                     const char *coordinator_host, int coordinator_port,
+                     double perf_score) {
+    (void)client; (void)coordinator_host; (void)coordinator_port; (void)perf_score;
+    fprintf(stderr, "[distributed] Not supported on Windows\n");
+    return -1;
+}
+
+int dist_worker_connect(dist_worker_client_t *client) {
+    (void)client;
+    return -1;
+}
+
+int dist_worker_request_work(dist_worker_client_t *client,
+                             char *range_start, char *range_end) {
+    (void)client; (void)range_start; (void)range_end;
+    return -1;
+}
+
+int dist_worker_report_done(dist_worker_client_t *client,
+                            uint64_t keys_processed, uint64_t elapsed_ms) {
+    (void)client; (void)keys_processed; (void)elapsed_ms;
+    return -1;
+}
+
+int dist_worker_report_found(dist_worker_client_t *client,
+                             const char *private_key, const char *address) {
+    (void)client; (void)private_key; (void)address;
+    return -1;
+}
+
+int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last) {
+    (void)client; (void)keys_since_last;
+    return -1;
+}
+
+int dist_worker_leave(dist_worker_client_t *client, const char *reason) {
+    (void)client; (void)reason;
+    return -1;
+}
+
+void dist_worker_disconnect(dist_worker_client_t *client) {
+    (void)client;
+}
+
+void dist_worker_set_hardware_info(dist_worker_client_t *client,
+                                   int cpu_cores, int cpu_threads,
+                                   const char *cpu_name,
+                                   const char *gpu_name, int gpu_memory_mb) {
+    (void)client; (void)cpu_cores; (void)cpu_threads;
+    (void)cpu_name; (void)gpu_name; (void)gpu_memory_mb;
+}
+
+int dist_worker_get_job_config(const dist_worker_client_t *client,
+                               char *target_address,
+                               char *mode,
+                               char *key_type) {
+    (void)client; (void)target_address; (void)mode; (void)key_type;
+    return -1;
+}
+
+int dist_worker_get_heartbeat_interval(const dist_worker_client_t *client) {
+    (void)client;
+    return 30;
+}
+
+void dist_worker_set_auth_token(dist_worker_client_t *client, const char *token) {
+    (void)client; (void)token;
+}
+
+void dist_worker_set_local_progress(dist_worker_client_t *client, int count) {
+    (void)client; (void)count;
+}
+
+int dist_worker_enable_tls(dist_worker_client_t *client, bool verify_server) {
+    (void)client; (void)verify_server;
+    return -1;
+}
+
+int dist_federation_init_primary(dist_coordinator_t *coordinator,
+                                 int federation_port) {
+    (void)coordinator; (void)federation_port;
+    return -1;
+}
+
+int dist_federation_init_secondary(dist_coordinator_t *coordinator,
+                                   const char *primary_host, int primary_port) {
+    (void)coordinator; (void)primary_host; (void)primary_port;
+    return -1;
+}
+
+int dist_federation_add_peer(dist_coordinator_t *coordinator,
+                             const char *host, int port) {
+    (void)coordinator; (void)host; (void)port;
+    return -1;
+}
+
+int dist_federation_connect(dist_coordinator_t *coordinator) {
+    (void)coordinator;
+    return -1;
+}
+
+int dist_federation_process(dist_coordinator_t *coordinator, int timeout_ms) {
+    (void)coordinator; (void)timeout_ms;
+    return -1;
+}
+
+int dist_federation_share_result(dist_coordinator_t *coordinator,
+                                 const char *private_key, const char *address) {
+    (void)coordinator; (void)private_key; (void)address;
+    return -1;
+}
+
+void dist_federation_stats(const dist_coordinator_t *coordinator,
+                           int *total_peers, int *total_units, int *total_completed) {
+    (void)coordinator;
+    if (total_peers) *total_peers = 0;
+    if (total_units) *total_units = 0;
+    if (total_completed) *total_completed = 0;
+}
+
+void dist_federation_shutdown(dist_coordinator_t *coordinator) {
+    (void)coordinator;
+}
+
+#else /* POSIX implementation */
+
 #include <sys/socket.h>
 #include <poll.h>
 #include <netinet/in.h>
@@ -18,7 +286,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <fcntl.h>
-#endif
+#include <unistd.h>
 
 /* ============================================================================
  * TLS/SSL Support (Optional - requires OpenSSL)
@@ -41,17 +309,17 @@
  * ============================================================================ */
 
 static bool g_openssl_initialized = false;
-static pthread_mutex_t g_openssl_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static platform_mutex_t g_openssl_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Initialize OpenSSL library (thread-safe, called once) */
 static void tls_init_openssl(void) {
-    pthread_mutex_lock(&g_openssl_init_mutex);
+    platform_mutex_lock(&g_openssl_init_mutex);
     if (!g_openssl_initialized) {
         /* OpenSSL 1.1.0+ auto-initializes, but we call this for compatibility */
         OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
         g_openssl_initialized = true;
     }
-    pthread_mutex_unlock(&g_openssl_init_mutex);
+    platform_mutex_unlock(&g_openssl_init_mutex);
 }
 
 /* Print OpenSSL error and return -1 */
@@ -512,9 +780,14 @@ static uint64_t time_ms(void) {
 
 /* Set socket to non-blocking */
 static int set_nonblocking(int fd) {
+#if PLATFORM_WINDOWS
+    u_long mode = 1;
+    return ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
 }
 
 /* Set socket receive/send timeout
@@ -525,6 +798,16 @@ static int set_nonblocking(int fd) {
 static int set_socket_timeout(int fd, int timeout_sec) {
     if (fd < 0) return -1;
 
+#if PLATFORM_WINDOWS
+    /* Windows setsockopt uses milliseconds (DWORD) for socket timeouts */
+    DWORD timeout_ms = (DWORD)timeout_sec * 1000;
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms)) < 0) {
+        return -1;
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms)) < 0) {
+        return -1;
+    }
+#else
     struct timeval tv;
     tv.tv_sec = timeout_sec;
     tv.tv_usec = 0;
@@ -535,6 +818,7 @@ static int set_socket_timeout(int fd, int timeout_sec) {
     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
         return -1;
     }
+#endif
     return 0;
 }
 
@@ -668,7 +952,7 @@ static int rate_limiter_init(rate_limiter_t *rl) {
     rl->entries = calloc(rl->entry_capacity, sizeof(rate_limit_entry_t));
     if (!rl->entries) return -1;
 
-    if (pthread_mutex_init(&rl->mutex, NULL) != 0) {
+    if (platform_mutex_init(&rl->mutex) != 0) {
         free(rl->entries);
         rl->entries = NULL;
         return -1;
@@ -688,14 +972,14 @@ static void rate_limiter_destroy(rate_limiter_t *rl) {
         free(rl->entries);
         rl->entries = NULL;
     }
-    pthread_mutex_destroy(&rl->mutex);
+    platform_mutex_destroy(&rl->mutex);
 }
 
 /* Check if connection from IP is allowed. Returns 1 if allowed, 0 if blocked. */
 static int rate_limiter_check_connection(rate_limiter_t *rl, uint32_t ip_addr) {
     if (!rl->enabled) return 1;  /* Rate limiting disabled */
 
-    pthread_mutex_lock(&rl->mutex);
+    platform_mutex_lock(&rl->mutex);
 
     uint64_t now = time_ms();
     uint64_t window_start = now - (rl->window_sec * 1000ULL);
@@ -724,7 +1008,7 @@ static int rate_limiter_check_connection(rate_limiter_t *rl, uint32_t ip_addr) {
         } else {
             /* Table full, allow connection (fail-open for availability) */
             printf(LOG_SERVER LOG_WARN "Rate limiter table full, allowing connection (fail-open)\n");
-            pthread_mutex_unlock(&rl->mutex);
+            platform_mutex_unlock(&rl->mutex);
             return 1;
         }
         entry->ip_addr = ip_addr;
@@ -748,7 +1032,7 @@ static int rate_limiter_check_connection(rate_limiter_t *rl, uint32_t ip_addr) {
         entry->connection_count++;
     }
 
-    pthread_mutex_unlock(&rl->mutex);
+    platform_mutex_unlock(&rl->mutex);
     return allowed;
 }
 
@@ -758,7 +1042,7 @@ __attribute__((unused))
 static int rate_limiter_check_message(rate_limiter_t *rl, uint32_t ip_addr) {
     if (!rl->enabled) return 1;  /* Rate limiting disabled */
 
-    pthread_mutex_lock(&rl->mutex);
+    platform_mutex_lock(&rl->mutex);
 
     uint64_t now = time_ms();
     uint64_t window_start = now - (rl->window_sec * 1000ULL);
@@ -773,7 +1057,7 @@ static int rate_limiter_check_message(rate_limiter_t *rl, uint32_t ip_addr) {
     }
 
     if (!entry) {
-        pthread_mutex_unlock(&rl->mutex);
+        platform_mutex_unlock(&rl->mutex);
         return 1;  /* No entry, allow */
     }
 
@@ -792,7 +1076,7 @@ static int rate_limiter_check_message(rate_limiter_t *rl, uint32_t ip_addr) {
         entry->message_count++;
     }
 
-    pthread_mutex_unlock(&rl->mutex);
+    platform_mutex_unlock(&rl->mutex);
     return allowed;
 }
 
@@ -914,31 +1198,31 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->connection_timeout_sec = 30;  /* Default: 30 seconds for TCP connection accept */
 
     /* Initialize fine-grained mutexes for thread-safe operations */
-    if (pthread_mutex_init(&coord->work_mutex, NULL) != 0) {
+    if (platform_mutex_init(&coord->work_mutex) != 0) {
         return -1;
     }
-    if (pthread_mutex_init(&coord->stats_mutex, NULL) != 0) {
-        pthread_mutex_destroy(&coord->work_mutex);
+    if (platform_mutex_init(&coord->stats_mutex) != 0) {
+        platform_mutex_destroy(&coord->work_mutex);
         return -1;
     }
-    if (pthread_mutex_init(&coord->worker_mutex, NULL) != 0) {
-        pthread_mutex_destroy(&coord->stats_mutex);
-        pthread_mutex_destroy(&coord->work_mutex);
+    if (platform_mutex_init(&coord->worker_mutex) != 0) {
+        platform_mutex_destroy(&coord->stats_mutex);
+        platform_mutex_destroy(&coord->work_mutex);
         return -1;
     }
-    if (pthread_mutex_init(&coord->result_mutex, NULL) != 0) {
-        pthread_mutex_destroy(&coord->worker_mutex);
-        pthread_mutex_destroy(&coord->stats_mutex);
-        pthread_mutex_destroy(&coord->work_mutex);
+    if (platform_mutex_init(&coord->result_mutex) != 0) {
+        platform_mutex_destroy(&coord->worker_mutex);
+        platform_mutex_destroy(&coord->stats_mutex);
+        platform_mutex_destroy(&coord->work_mutex);
         return -1;
     }
 
     /* Initialize rate limiter */
     if (rate_limiter_init(&coord->rate_limiter) != 0) {
-        pthread_mutex_destroy(&coord->result_mutex);
-        pthread_mutex_destroy(&coord->worker_mutex);
-        pthread_mutex_destroy(&coord->stats_mutex);
-        pthread_mutex_destroy(&coord->work_mutex);
+        platform_mutex_destroy(&coord->result_mutex);
+        platform_mutex_destroy(&coord->worker_mutex);
+        platform_mutex_destroy(&coord->stats_mutex);
+        platform_mutex_destroy(&coord->work_mutex);
         return -1;
     }
 
@@ -947,10 +1231,10 @@ int dist_coordinator_init(dist_coordinator_t *coord, int port) {
     coord->results = calloc(coord->result_capacity, sizeof(dist_result_t));
     if (!coord->results) {
         rate_limiter_destroy(&coord->rate_limiter);
-        pthread_mutex_destroy(&coord->result_mutex);
-        pthread_mutex_destroy(&coord->worker_mutex);
-        pthread_mutex_destroy(&coord->stats_mutex);
-        pthread_mutex_destroy(&coord->work_mutex);
+        platform_mutex_destroy(&coord->result_mutex);
+        platform_mutex_destroy(&coord->worker_mutex);
+        platform_mutex_destroy(&coord->stats_mutex);
+        platform_mutex_destroy(&coord->work_mutex);
         return -1;
     }
 
@@ -1242,14 +1526,14 @@ static void *worker_handler_thread(void *arg) {
     }
 
     /* Mark worker as disconnected */
-    pthread_mutex_lock(&coord->worker_mutex);
+    platform_mutex_lock(&coord->worker_mutex);
     worker->connected = false;
     worker->status = WORKER_STATUS_DISCONNECTED;
     worker->handler_running = false;
 
     /* Reassign any pending work from this worker */
     if (worker->current_work_id >= 0 && worker->current_work_id < coord->work_unit_count) {
-        pthread_mutex_lock(&coord->work_mutex);
+        platform_mutex_lock(&coord->work_mutex);
         dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
         if (unit->status == WORK_STATUS_ASSIGNED && unit->assigned_worker == worker->id) {
             unit->status = WORK_STATUS_PENDING;
@@ -1260,10 +1544,10 @@ static void *worker_handler_thread(void *arg) {
                 coord->next_pending_hint = worker->current_work_id;
             }
         }
-        pthread_mutex_unlock(&coord->work_mutex);
+        platform_mutex_unlock(&coord->work_mutex);
         worker->current_work_id = -1;
     }
-    pthread_mutex_unlock(&coord->worker_mutex);
+    platform_mutex_unlock(&coord->worker_mutex);
 
     printf(LOG_SERVER LOG_WARN "Worker " CLR_YELLOW "#%d" CLR_RESET " (%s) handler thread exited\n",
            worker->id, worker->hostname[0] ? worker->hostname : "localhost");
@@ -1292,14 +1576,14 @@ static int start_worker_handler_thread(dist_coordinator_t *coord, dist_worker_t 
     worker->coordinator = coord;
     worker->handler_running = true;
 
-    if (pthread_create(&worker->handler_thread, NULL, worker_handler_thread, worker) != 0) {
+    if (platform_thread_create(&worker->handler_thread, worker_handler_thread, worker) != 0) {
         worker->handler_running = false;
         printf(LOG_SERVER LOG_ERR "Failed to create handler thread for worker #%d\n", worker->id);
         return -1;
     }
 
     /* Detach thread so it cleans up automatically when done */
-    pthread_detach(worker->handler_thread);
+    platform_thread_detach(worker->handler_thread);
 
     return 0;
 }
@@ -1321,7 +1605,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         char range_end[65] = {0};
 
         /* Brief lock for work assignment only - release before I/O */
-        pthread_mutex_lock(&coord->work_mutex);
+        platform_mutex_lock(&coord->work_mutex);
 
         dist_work_unit_t *unit = find_pending_work(coord);
 
@@ -1338,7 +1622,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             strncpy(range_end, unit->range_end, sizeof(range_end) - 1);
         }
 
-        pthread_mutex_unlock(&coord->work_mutex);
+        platform_mutex_unlock(&coord->work_mutex);
         /* Lock released before network I/O - critical for performance */
 
         /* Build response outside the lock */
@@ -1378,7 +1662,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         worker->last_heartbeat = time_ms();
 
         /* Brief lock for work unit status update only */
-        pthread_mutex_lock(&coord->work_mutex);
+        platform_mutex_lock(&coord->work_mutex);
 
         if (work_id >= 0 && work_id < coord->work_unit_count) {
             dist_work_unit_t *unit = &coord->work_units[work_id];
@@ -1387,13 +1671,13 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             coord->work_units_completed++;
         }
 
-        pthread_mutex_unlock(&coord->work_mutex);
+        platform_mutex_unlock(&coord->work_mutex);
 
         /* Update statistics with separate lock - doesn't block work assignment */
-        pthread_mutex_lock(&coord->stats_mutex);
+        platform_mutex_lock(&coord->stats_mutex);
         worker->keys_processed += keys;
         coord->keys_processed += keys;
-        pthread_mutex_unlock(&coord->stats_mutex);
+        platform_mutex_unlock(&coord->stats_mutex);
 
         if (elapsed > 0) {
             /* Check if worker sent separate CPU/GPU speeds (hybrid mode).
@@ -1404,7 +1688,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
 
             /* Update speed stats atomically with stats_mutex to ensure
              * dashboard reads consistent values */
-            pthread_mutex_lock(&coord->stats_mutex);
+            platform_mutex_lock(&coord->stats_mutex);
 
             worker->throughput = (double)keys / (double)elapsed * 1000.0 / 1000000.0;
 
@@ -1421,7 +1705,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
                 }
             }
 
-            pthread_mutex_unlock(&coord->stats_mutex);
+            platform_mutex_unlock(&coord->stats_mutex);
         }
 
         /* Send ack */
@@ -1434,7 +1718,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         json_get_string(msg, "private_key", privkey, sizeof(privkey));
         json_get_string(msg, "address", address, sizeof(address));
 
-        pthread_mutex_lock(&coord->result_mutex);
+        platform_mutex_lock(&coord->result_mutex);
         if (coord->result_count < coord->result_capacity) {
             dist_result_t *result = &coord->results[coord->result_count++];
             strncpy(result->private_key, privkey, sizeof(result->private_key)-1);
@@ -1446,7 +1730,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
             printf(LOG_INFO "Private Key: " CLR_BOLD "%s" CLR_RESET "\n", privkey);
             printf(LOG_INFO "Address:     " CLR_BOLD "%s" CLR_RESET "\n\n", address);
         }
-        pthread_mutex_unlock(&coord->result_mutex);
+        platform_mutex_unlock(&coord->result_mutex);
 
         /* Backup found key to KEYFOUNDKEYFOUND.txt for redundancy (restricted perms) */
         {
@@ -1485,19 +1769,19 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
         json_get_string(msg, "reason", reason, sizeof(reason));
 
         /* Update worker status to leaving */
-        pthread_mutex_lock(&coord->worker_mutex);
+        platform_mutex_lock(&coord->worker_mutex);
         worker->status = WORKER_STATUS_LEAVING;
         worker->leave_requested = true;
-        pthread_mutex_unlock(&coord->worker_mutex);
+        platform_mutex_unlock(&coord->worker_mutex);
 
         printf(LOG_SERVER LOG_INFO "Worker " CLR_YELLOW "#%d" CLR_RESET " (%s) requesting graceful leave%s%s\n",
                worker->id, worker->hostname[0] ? worker->hostname : "localhost",
                reason[0] ? ": " : "", reason[0] ? reason : "");
 
         /* Reassign any current work unit back to pending */
-        pthread_mutex_lock(&coord->worker_mutex);
+        platform_mutex_lock(&coord->worker_mutex);
         if (worker->current_work_id >= 0 && worker->current_work_id < coord->work_unit_count) {
-            pthread_mutex_lock(&coord->work_mutex);
+            platform_mutex_lock(&coord->work_mutex);
             dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
             if (unit->status == WORK_STATUS_ASSIGNED && unit->assigned_worker == worker->id) {
                 /* Enhanced audit logging: work reassignment during graceful leave */
@@ -1511,10 +1795,10 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
                     coord->next_pending_hint = worker->current_work_id;
                 }
             }
-            pthread_mutex_unlock(&coord->work_mutex);
+            platform_mutex_unlock(&coord->work_mutex);
             worker->current_work_id = -1;
         }
-        pthread_mutex_unlock(&coord->worker_mutex);
+        platform_mutex_unlock(&coord->worker_mutex);
 
         /* Send acknowledgment */
         if (send_msg_ex(worker->socket_fd, worker->ssl, "{\"type\":\"ack\"}") != 0) {
@@ -1526,11 +1810,11 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
                worker->id, worker->hostname[0] ? worker->hostname : "localhost");
 
         /* Mark worker as disconnected and trigger handler thread exit */
-        pthread_mutex_lock(&coord->worker_mutex);
+        platform_mutex_lock(&coord->worker_mutex);
         worker->connected = false;
         worker->status = WORKER_STATUS_DISCONNECTED;
         worker->handler_running = false;
-        pthread_mutex_unlock(&coord->worker_mutex);
+        platform_mutex_unlock(&coord->worker_mutex);
 
         /* Return -1 to exit handler loop */
         return -1;
@@ -1595,7 +1879,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
             }
         }
 
-        pthread_mutex_lock(&coord->worker_mutex);
+        platform_mutex_lock(&coord->worker_mutex);
         if (client_fd >= 0 && coord->worker_count < DIST_MAX_WORKERS) {
             int opt = 1;
             setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
@@ -1611,7 +1895,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 if (!client_ssl) {
                     printf(LOG_SERVER LOG_WARN "TLS handshake failed for new connection\n");
                     close(client_fd);
-                    pthread_mutex_unlock(&coord->worker_mutex);
+                    platform_mutex_unlock(&coord->worker_mutex);
                     return 0;  /* Reject connection */
                 }
             }
@@ -1752,7 +2036,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         } else if (client_fd >= 0) {
             close(client_fd);  /* Too many workers */
         }
-        pthread_mutex_unlock(&coord->worker_mutex);
+        platform_mutex_unlock(&coord->worker_mutex);
     }
 
     /* ==========================================================================
@@ -1770,7 +2054,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
         uint64_t stale_timeout_ms = (uint64_t)coord->work_timeout_sec * 1000;
 
         /* Check for stale work units (assigned but worker unresponsive) */
-        pthread_mutex_lock(&coord->work_mutex);
+        platform_mutex_lock(&coord->work_mutex);
         for (int i = 0; i < coord->work_unit_count; i++) {
             dist_work_unit_t *unit = &coord->work_units[i];
             if (unit->status == WORK_STATUS_ASSIGNED) {
@@ -1814,13 +2098,13 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                 }
             }
         }
-        pthread_mutex_unlock(&coord->work_mutex);
+        platform_mutex_unlock(&coord->work_mutex);
 
         /* Check for stuck workers (connected but no progress for too long) */
         /* Use configurable worker timeout for disconnecting stuck workers */
         uint64_t stuck_timeout_ms = (uint64_t)coord->worker_timeout_sec * 1000;
 
-        pthread_mutex_lock(&coord->worker_mutex);
+        platform_mutex_lock(&coord->worker_mutex);
         for (int i = 0; i < coord->worker_count; i++) {
             dist_worker_t *worker = &coord->workers[i];
             if (worker->connected && worker->socket_fd >= 0) {
@@ -1838,7 +2122,7 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                     worker->throughput = 0.0;
 
                     /* Reassign any work this worker had */
-                    pthread_mutex_lock(&coord->work_mutex);
+                    platform_mutex_lock(&coord->work_mutex);
                     if (worker->current_work_id >= 0 &&
                         worker->current_work_id < coord->work_unit_count) {
                         dist_work_unit_t *unit = &coord->work_units[worker->current_work_id];
@@ -1855,21 +2139,21 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                             }
                         }
                     }
-                    pthread_mutex_unlock(&coord->work_mutex);
+                    platform_mutex_unlock(&coord->work_mutex);
                 }
             }
         }
-        pthread_mutex_unlock(&coord->worker_mutex);
+        platform_mutex_unlock(&coord->worker_mutex);
 
         /* Update total throughput - only during health check to avoid overhead */
-        pthread_mutex_lock(&coord->stats_mutex);
+        platform_mutex_lock(&coord->stats_mutex);
         coord->total_throughput = 0.0;
         for (int i = 0; i < coord->worker_count; i++) {
             if (coord->workers[i].connected) {
                 coord->total_throughput += coord->workers[i].throughput;
             }
         }
-        pthread_mutex_unlock(&coord->stats_mutex);
+        platform_mutex_unlock(&coord->stats_mutex);
     }  /* end health check block */
 
     /* Check if all done */
@@ -1907,7 +2191,7 @@ void dist_coordinator_get_speed_stats(const dist_coordinator_t *coord,
      * requires non-const access. This is safe because we're not modifying
      * any data, just synchronizing reads. */
     dist_coordinator_t *mutable_coord = (dist_coordinator_t *)coord;
-    pthread_mutex_lock(&mutable_coord->stats_mutex);
+    platform_mutex_lock(&mutable_coord->stats_mutex);
 
     for (int i = 0; i < coord->worker_count; i++) {
         if (coord->workers[i].connected) {
@@ -1916,7 +2200,7 @@ void dist_coordinator_get_speed_stats(const dist_coordinator_t *coord,
         }
     }
 
-    pthread_mutex_unlock(&mutable_coord->stats_mutex);
+    platform_mutex_unlock(&mutable_coord->stats_mutex);
 
     if (total_cpu_speed) *total_cpu_speed = cpu_sum;
     if (total_gpu_speed) *total_gpu_speed = gpu_sum;
@@ -2000,10 +2284,10 @@ void dist_coordinator_shutdown(dist_coordinator_t *coord) {
     free(coord->results);
 
     /* Destroy all mutexes */
-    pthread_mutex_destroy(&coord->work_mutex);
-    pthread_mutex_destroy(&coord->stats_mutex);
-    pthread_mutex_destroy(&coord->worker_mutex);
-    pthread_mutex_destroy(&coord->result_mutex);
+    platform_mutex_destroy(&coord->work_mutex);
+    platform_mutex_destroy(&coord->stats_mutex);
+    platform_mutex_destroy(&coord->worker_mutex);
+    platform_mutex_destroy(&coord->result_mutex);
 
     /* Destroy rate limiter */
     rate_limiter_destroy(&coord->rate_limiter);
@@ -3256,3 +3540,5 @@ int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
     return -1;
 #endif
 }
+
+#endif /* !PLATFORM_WINDOWS */

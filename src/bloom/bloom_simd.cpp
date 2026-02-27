@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include <math.h>
 #if defined(_WIN32) || defined(_WIN64)
 #include <malloc.h>  /* For _aligned_malloc / _aligned_free */
@@ -420,10 +421,10 @@ void bloom_simd_print(struct bloom_simd *bloom) {
         printf(" *** NOT READY ***\n");
         return;
     }
-    printf(" ->entries = %lu\n", bloom->entries);
+    printf(" ->entries = %" PRIu64 "\n", bloom->entries);
     printf(" ->error = %f\n", bloom->error);
-    printf(" ->sectors = %lu (64-byte cache lines)\n", bloom->sectors);
-    printf(" ->bytes = %lu\n", bloom->bytes);
+    printf(" ->sectors = %" PRIu64 " (64-byte cache lines)\n", bloom->sectors);
+    printf(" ->bytes = %" PRIu64 "\n", bloom->bytes);
     unsigned int KB = bloom->bytes / 1024;
     unsigned int MB = KB / 1024;
     printf(" (%u KB, %u MB)\n", KB, MB);
