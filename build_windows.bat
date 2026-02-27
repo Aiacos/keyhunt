@@ -5,6 +5,8 @@ REM Automatically detects Visual Studio installation and sets up environment
 REM
 REM Requirements: Visual Studio 2019 or 2022 with C++ Desktop Development
 REM Supported: Windows 10/11 (64-bit)
+REM
+REM For GPU/CUDA support: Use build_windows_cuda.bat instead
 REM ============================================================================
 
 setlocal enabledelayedexpansion

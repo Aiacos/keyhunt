@@ -10,6 +10,10 @@ SRCDIR := src
 # ============================================================================
 # Detect MinGW-w64 cross-compilation for Windows
 # Usage: make CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+#
+# For native Windows builds with MSVC:
+#   CPU-only: build_windows.bat
+#   GPU/CUDA: build_windows_cuda.bat
 # ============================================================================
 ifneq (,$(findstring mingw,$(CXX)))
   IS_MINGW := 1
