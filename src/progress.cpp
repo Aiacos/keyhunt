@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 
 #if !PLATFORM_WINDOWS
 #include <sys/stat.h>
@@ -460,8 +461,8 @@ int progress_list(void) {
         return -1;
     }
 
-    DIR *d = opendir(dir);
-    if (!d) {
+    platform_dir_handle_t d = platform_dir_open(dir);
+    if (d == NULL) {
         printf("No saved progress found.\n");
         return 0;
     }
@@ -472,13 +473,13 @@ int progress_list(void) {
     printf("%-12s %-6s %-20s %-15s %s\n",
            "----", "----", "------------", "-------", "----");
 
-    struct dirent *entry;
+    platform_dir_entry_t entry;
     int count = 0;
 
-    while ((entry = readdir(d)) != NULL) {
-        if (entry->d_type != DT_REG) continue;
+    while (platform_dir_read(d, &entry) == 1) {
+        if (entry.is_directory) continue;
 
-        const char *name = entry->d_name;
+        const char *name = entry.name;
         size_t len = strlen(name);
         if (len < 5 || strcmp(name + len - 5, ".json") != 0) continue;
 
@@ -544,7 +545,7 @@ int progress_list(void) {
         count++;
     }
 
-    closedir(d);
+    platform_dir_close(d);
 
     if (count == 0) {
         printf("No saved progress found.\n");
@@ -572,16 +573,16 @@ int progress_clear_all(void) {
         return -1;
     }
 
-    DIR *d = opendir(dir);
-    if (!d) return 0;  // No directory means nothing to clear
+    platform_dir_handle_t d = platform_dir_open(dir);
+    if (d == NULL) return 0;  // No directory means nothing to clear
 
-    struct dirent *entry;
+    platform_dir_entry_t entry;
     int count = 0;
 
-    while ((entry = readdir(d)) != NULL) {
-        if (entry->d_type != DT_REG) continue;
+    while (platform_dir_read(d, &entry) == 1) {
+        if (entry.is_directory) continue;
 
-        const char *name = entry->d_name;
+        const char *name = entry.name;
         size_t len = strlen(name);
         if (len < 5 || strcmp(name + len - 5, ".json") != 0) continue;
 
@@ -593,6 +594,6 @@ int progress_clear_all(void) {
         }
     }
 
-    closedir(d);
+    platform_dir_close(d);
     return count;
 }
