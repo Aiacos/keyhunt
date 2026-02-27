@@ -33,6 +33,9 @@
 #include <algorithm>
 #include <atomic>
 #include <inttypes.h>
+#if defined(_WIN32) || defined(_WIN64)
+#include <malloc.h>  /* For _aligned_malloc / _aligned_free */
+#endif
 #include "base58/libbase58.h"
 #include "bloom/bloom.h"
 #include "bloom/bloom_wrapper.h"
@@ -84,17 +87,30 @@
 /*
  * Allocate zero-initialized memory aligned to cache line boundaries (64 bytes).
  * This prevents false sharing between threads accessing adjacent array elements.
- * Uses aligned_alloc() which requires size to be a multiple of alignment.
+ * Uses _aligned_malloc on Windows (MinGW/MSVC) or aligned_alloc on POSIX.
  */
 static inline void* aligned_calloc(size_t alignment, size_t count, size_t elem_size) {
     size_t total_size = count * elem_size;
     // Round up to multiple of alignment
     total_size = ((total_size + alignment - 1) / alignment) * alignment;
+#if defined(_WIN32) || defined(_WIN64)
+    void* ptr = _aligned_malloc(total_size, alignment);
+#else
     void* ptr = aligned_alloc(alignment, total_size);
+#endif
     if (ptr) {
         memset(ptr, 0, total_size);  // Zero-initialize like calloc
     }
     return ptr;
+}
+
+/* Portable aligned free (matches aligned_calloc) */
+static inline void aligned_free(void *ptr) {
+#if defined(_WIN32) || defined(_WIN64)
+    _aligned_free(ptr);
+#else
+    free(ptr);
+#endif
 }
 
 /* ============================================================================
@@ -457,7 +473,7 @@ struct bPload	{
 	uint32_t finished;
 };
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
+#if defined(_MSC_VER)
 #define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
 PACK(struct publickey
 {
@@ -557,7 +573,7 @@ typedef struct {
 	std::atomic<int> completed{0};
 } gpu_hybrid_args_t;
 
-static void *gpu_hybrid_thread(void *arg);
+static platform_thread_return_t PLATFORM_THREAD_CALL gpu_hybrid_thread(void *arg);
 
 /* readFileAddress, readFileVanity, forceReadFileAddress, forceReadFileAddressEth,
    forceReadFileXPoint, processOneVanity, writeFileIfNeeded moved to io/io.cpp */
@@ -565,8 +581,10 @@ static void *gpu_hybrid_thread(void *arg);
 void calcualteindex(int i,Int *key);
 /* Thread entry points declared in search/search_common.h */
 /* BSGS loading threads (defined in search/search_bsgs_threads.cpp) */
-void *thread_bPload(void *vargp);
-void *thread_bPload_2blooms(void *vargp);
+/* BSGS loading thread declarations (defined in search/search_bsgs_threads.cpp) */
+/* Use platform_thread_return_t and PLATFORM_THREAD_CALL for Windows compatibility */
+platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp);
+platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp);
 
 volatile int THREADOUTPUT = 0;
 char *bit_range_str_min;
@@ -1307,14 +1325,14 @@ typedef struct {
 	std::atomic<int> *stop_flag;
 } gpu_full_stats_args_t;
 
-static void *gpu_full_stats_thread(void *arg) {
+static platform_thread_return_t PLATFORM_THREAD_CALL gpu_full_stats_thread(void *arg) {
 	gpu_full_stats_args_t *args = (gpu_full_stats_args_t *)arg;
 	if (args == NULL || args->stop_flag == NULL) {
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 	const int period = args->period_seconds;
 	if (period <= 0) {
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	uint64_t prev_total = 0;
@@ -1369,7 +1387,7 @@ static void *gpu_full_stats_thread(void *arg) {
 		prev_total = total_u64;
 	}
 
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 #endif
 
@@ -3375,7 +3393,7 @@ int main(int argc, char **argv)	{
 				double initial_percent = (bsgs_m > 0) ? ((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100.0 : 0.0;
 				printf("\r[BSGS] ");
 				output_progress_bar(initial_percent, 25);
-				printf(" processing bP points: %lu/%lu (%.1f%%)   ", FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
+				printf(" processing bP points: %" PRIu64 "/%" PRIu64 " (%.1f%%)   ", (uint64_t)FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
 				fflush(stdout);
 
 				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
@@ -3425,7 +3443,7 @@ int main(int argc, char **argv)	{
 							double percent = (bsgs_m2 > 0) ? ((double)current_items/(double)bsgs_m2)*100.0 : 0.0;
 							printf("\r[BSGS] ");
 							output_progress_bar(percent, 25);
-							printf(" processing bP points: %lu/%lu (%.1f%%)   ", current_items, bsgs_m2, percent);
+							printf(" processing bP points: %" PRIu64 "/%" PRIu64 " (%.1f%%)   ", current_items, bsgs_m2, percent);
 							fflush(stdout);
 							OLDFINISHED_ITEMS = current_items;
 						}
@@ -3446,7 +3464,7 @@ int main(int argc, char **argv)	{
 				}while(FINISHED_THREADS_COUNTER < THREADCYCLES);
 				printf("\r[BSGS] ");
 				output_progress_bar(100.0, 25);
-				printf(" processing bP points: %lu/%lu (100.0%%) ✓\n", bsgs_m2, bsgs_m2);
+				printf(" processing bP points: %" PRIu64 "/%" PRIu64 " (100.0%%) done\n", bsgs_m2, bsgs_m2);
 				
 				free(tid);
 				free(bPload_mutex);
@@ -3480,7 +3498,7 @@ int main(int argc, char **argv)	{
 				double initial_percent = (bsgs_m > 0) ? ((double)FINISHED_ITEMS.load(std::memory_order_relaxed)/(double)bsgs_m)*100.0 : 0.0;
 				printf("\r[BSGS] ");
 				output_progress_bar(initial_percent, 25);
-				printf(" processing bP points: %lu/%lu (%.1f%%)   ", FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
+				printf(" processing bP points: %" PRIu64 "/%" PRIu64 " (%.1f%%)   ", (uint64_t)FINISHED_ITEMS.load(std::memory_order_relaxed), bsgs_m, initial_percent);
 				fflush(stdout);
 
 				tid = (platform_thread_t *) calloc(NTHREADS, sizeof(platform_thread_t));
@@ -3533,7 +3551,7 @@ int main(int argc, char **argv)	{
 							double percent = (bsgs_m > 0) ? ((double)current_items/(double)bsgs_m)*100.0 : 0.0;
 							printf("\r[BSGS] ");
 							output_progress_bar(percent, 25);
-							printf(" processing bP points: %lu/%lu (%.1f%%)   ", current_items, bsgs_m, percent);
+							printf(" processing bP points: %" PRIu64 "/%" PRIu64 " (%.1f%%)   ", current_items, bsgs_m, percent);
 							fflush(stdout);
 							OLDFINISHED_ITEMS = current_items;
 						}
@@ -3555,7 +3573,7 @@ int main(int argc, char **argv)	{
 				}while(FINISHED_THREADS_COUNTER < THREADCYCLES);
 				printf("\r[BSGS] ");
 				output_progress_bar(100.0, 25);
-				printf(" processing bP points: %lu/%lu (100.0%%) ✓\n", bsgs_m, bsgs_m);
+				printf(" processing bP points: %" PRIu64 "/%" PRIu64 " (100.0%%) done\n", bsgs_m, bsgs_m);
 				
 				free(tid);
 				free(bPload_mutex);
@@ -4742,7 +4760,7 @@ static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *
 }
 
 // GPU hybrid thread function with work-stealing
-static void *gpu_hybrid_thread(void *arg) {
+static platform_thread_return_t PLATFORM_THREAD_CALL gpu_hybrid_thread(void *arg) {
 	gpu_hybrid_args_t *args = (gpu_hybrid_args_t *)arg;
 	int total_found = 0;
 	uint64_t blocks_processed = 0;
@@ -4764,7 +4782,7 @@ static void *gpu_hybrid_thread(void *arg) {
 		args->result.store(total_found, std::memory_order_release);
 		args->completed.store(1, std::memory_order_release);
 		printf("[GPU] Static-range thread completed: %d keys found\n", total_found);
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	printf("[GPU] Work-stealing thread started\n");
@@ -4816,7 +4834,7 @@ static void *gpu_hybrid_thread(void *arg) {
 	args->result.store(total_found, std::memory_order_release);
 	args->completed.store(1, std::memory_order_release);
 
-	return NULL;
+	return (platform_thread_return_t)0;
 }
 
 	// Run full GPU search with CPU fallback

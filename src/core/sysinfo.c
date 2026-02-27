@@ -9,7 +9,11 @@
     /* Windows-specific headers for system information */
     #include <windows.h>
     #include <psapi.h>
-    #include <intrin.h>  /* For __cpuid and __cpuidex intrinsics */
+    #ifdef _MSC_VER
+        #include <intrin.h>  /* For __cpuid and __cpuidex intrinsics (MSVC only) */
+    #elif defined(__GNUC__)
+        #include <cpuid.h>   /* For __builtin_cpu_init/__builtin_cpu_supports (GCC/MinGW) */
+    #endif
 #else
     /* POSIX headers */
     #include <unistd.h>
@@ -20,6 +24,9 @@
         #include <dlfcn.h>
     #endif
 #endif
+
+/* Portable format specifier for uint64_t */
+#include <inttypes.h>
 
 #if PLATFORM_POSIX
 // Helper function to read integer from file (POSIX only)
@@ -296,6 +303,7 @@ static void detect_memory(system_info_t *info) {
 
 // Detect CPU features (AVX2, AVX-512, SHA-NI)
 // Note: /proc/cpuinfo "flags" lines can exceed small fixed buffers.
+#ifdef __linux__
 static bool token_present(const char *line, const char *token) {
     const size_t token_len = strlen(token);
     const char *p = line;
@@ -307,6 +315,7 @@ static bool token_present(const char *line, const char *token) {
     }
     return false;
 }
+#endif
 
 static void detect_cpu_features(system_info_t *info) {
     info->has_avx2 = false;
@@ -318,8 +327,8 @@ static void detect_cpu_features(system_info_t *info) {
     info->has_sha_ni = false;
     info->numa_nodes = 1;
 
-#if PLATFORM_WINDOWS && (defined(_M_X64) || defined(_M_IX86))
-    /* Windows CPU feature detection using __cpuid intrinsics */
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    /* MSVC CPU feature detection using __cpuid intrinsics */
     int cpu_info[4];  /* EAX, EBX, ECX, EDX */
 
     /* Check CPUID support and get max function ID */
@@ -761,9 +770,9 @@ void sysinfo_print(const system_info_t *info) {
         printf(" (%d NUMA nodes)", info->numa_nodes);
     }
     printf("\n");
-    printf("    ├─ Cache: L1=%lu KB, L2=%lu KB, L3=%lu KB\n",
+    printf("    ├─ Cache: L1=%" PRIu64 " KB, L2=%" PRIu64 " KB, L3=%" PRIu64 " KB\n",
            info->cache_l1_size, info->cache_l2_size, info->cache_l3_size);
-    printf("    ├─ RAM: %lu MB total, %lu MB available\n",
+    printf("    ├─ RAM: %" PRIu64 " MB total, %" PRIu64 " MB available\n",
            info->ram_total, info->ram_available);
     if (info->gpu_count > 0) {
         if (info->gpu_vram_mb > 0) {
