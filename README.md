@@ -17,6 +17,7 @@ Work for Ethereum
 
 ## New Features
 
+- **[Native Windows Support](#building-on-windows-native)**: Full 64-bit Windows support with MinGW-w64 and Visual Studio
 - **[Distributed Mode](#distributed-mode)**: Coordinate searches across multiple machines with server/client architecture
 - **[Community Progress Integration](#community-progress-integration)**: Leverage community scanning data to avoid redundant searches
 - **[Hardware Auto-Detection](#hardware-auto-detection)**: Automatic CPU/GPU detection with optimized parameters
@@ -76,9 +77,9 @@ Please read the CHANGELOG.md to see the new changes
 
 # Download and build
 
-This program was made in a linux environment.
-if you are windows user i strongly recommend to use WSL enviroment on Windows.
-it is available in the Microsoft store
+This program supports both **Linux/macOS** and **native Windows (64-bit)** environments.
+
+## Building on Linux/macOS
 
 Please install on your system
 
@@ -118,6 +119,59 @@ First compile:
 ```
 make
 ```
+
+## Building on Windows (Native)
+
+**Native Windows support** is available using MinGW-w64 or Visual Studio 2019+.
+
+### Prerequisites
+
+**Option 1: MinGW-w64 (Recommended)**
+
+1. Install [MSYS2](https://www.msys2.org/)
+2. Open MSYS2 MinGW 64-bit terminal
+3. Install required packages:
+```bash
+pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-make git
+```
+
+**Option 2: Visual Studio**
+
+1. Install [Visual Studio 2019 or later](https://visualstudio.microsoft.com/)
+2. Install "Desktop development with C++" workload
+3. Open "x64 Native Tools Command Prompt for VS"
+
+### Build Steps
+
+**Using MinGW-w64:**
+```bash
+git clone https://github.com/albertobsd/keyhunt.git
+cd keyhunt
+mingw32-make
+```
+
+**Using Visual Studio:**
+```cmd
+git clone https://github.com/albertobsd/keyhunt.git
+cd keyhunt
+nmake /f Makefile.win
+```
+
+The compiled executable will be `keyhunt.exe`.
+
+### Windows Notes
+
+- **64-bit only**: Windows builds require a 64-bit system and compiler
+- **No CUDA on MinGW**: GPU acceleration is only available with Visual Studio + CUDA Toolkit
+- **WSL Alternative**: You can also use Windows Subsystem for Linux (WSL) and follow the Linux instructions above
+
+### Running on Windows
+
+```cmd
+keyhunt.exe -m address -f tests\66.txt -b 66 -l compress -R -q -s 10
+```
+
+Note: Use backslashes (`\`) for file paths on Windows.
 
 ## Optional CUDA (GPU) support
 
