@@ -50,6 +50,7 @@
 #include "hybrid/adaptive_scheduler.h"
 #include "wizard/wizard.h"
 #include "benchmark.h"
+#include "diagnostics/diagnostics.h"
 #include "output.h"
 #include "progress.h"
 #include "cli.h"
@@ -1653,6 +1654,13 @@ int main(int argc, char **argv)	{
 			benchmark_result_t bench_result;
 			benchmark_run(&bench_result, 15);  // 15 second benchmark
 			benchmark_print_results(&bench_result, 66);  // Default to puzzle 66
+			exit(EXIT_SUCCESS);
+		}
+		// Diagnostic mode
+		if (strcmp(argv[ai], "--diagnose") == 0) {
+			diagnostic_report_t report;
+			diagnostics_run(&report);
+			diagnostics_print_report(&report);
 			exit(EXIT_SUCCESS);
 		}
 	}
