@@ -1650,9 +1650,23 @@ int main(int argc, char **argv)	{
 		}
 		// Benchmark mode
 		if (strcmp(argv[ai], "--benchmark") == 0) {
+			// Check if --submit-benchmark flag is also present
+			bool submit_to_community = false;
+			for (int check_i = 1; check_i < argc; check_i++) {
+				if (strcmp(argv[check_i], "--submit-benchmark") == 0) {
+					submit_to_community = true;
+					break;
+				}
+			}
+
 			benchmark_result_t bench_result;
-			benchmark_run(&bench_result, 15);  // 15 second benchmark
+			benchmark_run(&bench_result, 15, submit_to_community);  // 15 second benchmark
 			benchmark_print_results(&bench_result, 66);  // Default to puzzle 66
+			exit(EXIT_SUCCESS);
+		}
+		// Performance comparison mode
+		if (strcmp(argv[ai], "--perf-compare") == 0) {
+			benchmark_show_community_stats();
 			exit(EXIT_SUCCESS);
 		}
 	}

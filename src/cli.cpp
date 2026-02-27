@@ -135,6 +135,23 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
             args->run_benchmark = true;
             return 0;
         }
+        if (strcmp(argv[i], "--submit-benchmark") == 0) {
+            args->submit_benchmark = true;
+            // Don't return here - this flag modifies --benchmark behavior
+        }
+        if (strcmp(argv[i], "--perf-history") == 0) {
+            args->show_perf_history = true;
+            extern void benchmark_show_performance_history(void);
+            benchmark_show_performance_history();
+            return 0;
+        }
+        if (strcmp(argv[i], "--perf-compare") == 0) {
+            args->show_perf_compare = true;
+            // Display community statistics
+            extern void benchmark_show_community_stats(void);
+            benchmark_show_community_stats();
+            return 0;
+        }
         if (strcmp(argv[i], "--wizard-client") == 0 && i + 1 < argc) {
             strncpy(args->wizard_client, argv[i + 1], sizeof(args->wizard_client) - 1);
             args->wizard_client[sizeof(args->wizard_client) - 1] = '\0';

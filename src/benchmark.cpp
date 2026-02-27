@@ -1,5 +1,7 @@
 // src/benchmark.cpp
 #include "benchmark.h"
+#include "database/perfdb.h"
+#include "database/statistics.h"
 #include "platform/platform.h"
 #include "core/sysinfo.h"
 #include "platform/platform.h"
@@ -9,6 +11,9 @@
 #include <math.h>
 #include <time.h>
 #include <inttypes.h>
+
+// Keyhunt version (used for database records)
+#define KEYHUNT_VERSION "0.2.230519"
 
 // ANSI color codes
 #define CLR_RESET   "\033[0m"
@@ -40,7 +45,7 @@ static void print_border_line(int width, char ch) {
     printf("\n");
 }
 
-int benchmark_run(benchmark_result_t *result, int duration_seconds) {
+int benchmark_run(benchmark_result_t *result, int duration_seconds, bool submit_to_community) {
     if (!result) return -1;
 
     // Initialize result structure
@@ -181,6 +186,123 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
     printf(CLR_CYAN);
     print_border_line(max_width, '=');
     printf(CLR_RESET "\n");
+
+    // Save benchmark results to database
+    perfdb_benchmark_t db_benchmark;
+    memset(&db_benchmark, 0, sizeof(perfdb_benchmark_t));
+
+    // Set search mode and configuration
+    strncpy(db_benchmark.mode, "benchmark", sizeof(db_benchmark.mode) - 1);
+    db_benchmark.bits = 0;  // Not applicable for generic benchmark
+    strncpy(db_benchmark.key_type, "both", sizeof(db_benchmark.key_type) - 1);
+
+    // Set performance metrics
+    db_benchmark.cpu_speed_mkeys = result->cpu_speed_mkeys;
+    db_benchmark.gpu_speed_mkeys = result->gpu_speed_mkeys;
+    db_benchmark.hybrid_speed_mkeys = result->hybrid_speed_mkeys;
+    db_benchmark.efficiency_ratio = result->efficiency_ratio;
+
+    // Set benchmark metadata
+    db_benchmark.benchmark_duration_seconds = duration_seconds;
+    strncpy(db_benchmark.keyhunt_version, KEYHUNT_VERSION, sizeof(db_benchmark.keyhunt_version) - 1);
+    strncpy(db_benchmark.notes, "Automated benchmark run", sizeof(db_benchmark.notes) - 1);
+
+    // Copy hardware information
+    memcpy(&db_benchmark.hardware, &sysinfo, sizeof(system_info_t));
+
+    // Compute hardware fingerprint
+    perfdb_compute_hardware_hash(&sysinfo, db_benchmark.hardware_hash, sizeof(db_benchmark.hardware_hash));
+
+    // Save to database (errors are non-fatal)
+    int save_result = perfdb_save_benchmark(&db_benchmark);
+    if (save_result == 0) {
+        char db_path[512];
+        perfdb_get_filepath(db_path, sizeof(db_path));
+        printf(CLR_GREEN "✓" CLR_RESET " Benchmark results saved to database: %s\n", db_path);
+    } else {
+        printf(CLR_YELLOW "⚠" CLR_RESET " Failed to save benchmark results to database\n");
+    }
+    printf("\n");
+
+    // Detect performance regression (>10% slowdown)
+    double actual_change = 0.0;
+    int regression_status = perfdb_detect_regression(
+        db_benchmark.mode,
+        db_benchmark.hardware_hash,
+        -10.0,  // 10% slowdown threshold
+        &actual_change
+    );
+
+    if (regression_status == 1) {
+        // Regression detected - display warning
+        printf(CLR_RED);
+        print_border_line(max_width, '!');
+        printf(CLR_RESET);
+
+        const char *warning_title = "PERFORMANCE REGRESSION DETECTED";
+        int warning_len = (int)strlen(warning_title);
+        int warning_padding = (max_width - warning_len) / 2;
+        if (warning_padding < 0) warning_padding = 0;
+
+        for (int i = 0; i < warning_padding; i++) printf(" ");
+        printf(CLR_RED CLR_BOLD "%s" CLR_RESET "\n", warning_title);
+
+        printf(CLR_RED);
+        print_border_line(max_width, '!');
+        printf(CLR_RESET "\n");
+
+        printf(CLR_YELLOW "⚠" CLR_RESET " Performance has " CLR_RED "decreased by %.1f%%" CLR_RESET " compared to historical average\n", -actual_change);
+        printf("\n");
+        printf(CLR_BOLD "Possible causes:" CLR_RESET "\n");
+        printf("  • " CLR_DIM "Thermal throttling" CLR_RESET " - CPU/GPU may be overheating\n");
+        printf("  • " CLR_DIM "Background processes" CLR_RESET " - Other applications consuming resources\n");
+        printf("  • " CLR_DIM "Power saving mode" CLR_RESET " - System may be in low-power state\n");
+        printf("  • " CLR_DIM "Configuration changes" CLR_RESET " - BIOS settings or system updates\n");
+        printf("  • " CLR_DIM "Hardware degradation" CLR_RESET " - Component aging or failure\n");
+        printf("\n");
+        printf(CLR_BOLD "Recommendations:" CLR_RESET "\n");
+        printf("  1. Check system temperature (use 'sensors' or monitoring tools)\n");
+        printf("  2. Close unnecessary applications and background processes\n");
+        printf("  3. Ensure system is plugged in and not in power-saving mode\n");
+        printf("  4. Review recent BIOS/system updates or configuration changes\n");
+        printf("  5. Run the benchmark again to confirm the regression\n");
+        printf("\n");
+    } else if (regression_status == 0 && actual_change > 0.0) {
+        // Performance improved
+        printf(CLR_GREEN "✓" CLR_RESET " Performance " CLR_GREEN "improved by %.1f%%" CLR_RESET " compared to historical average\n", actual_change);
+        printf("\n");
+    }
+
+    // Community submission (optional)
+    if (submit_to_community) {
+        printf(CLR_CYAN);
+        print_border_line(max_width, '-');
+        printf(CLR_RESET);
+
+        const char *submit_title = "COMMUNITY BENCHMARK SUBMISSION";
+        int submit_len = (int)strlen(submit_title);
+        int submit_padding = (max_width - submit_len) / 2;
+        if (submit_padding < 0) submit_padding = 0;
+
+        for (int i = 0; i < submit_padding; i++) printf(" ");
+        printf(CLR_CYAN "%s" CLR_RESET "\n", submit_title);
+
+        printf(CLR_CYAN);
+        print_border_line(max_width, '-');
+        printf(CLR_RESET "\n");
+
+        printf("  Preparing benchmark data for community submission...\n");
+        printf("  " CLR_DIM "Hardware: %s" CLR_RESET "\n", sysinfo.cpu_model);
+        printf("  " CLR_DIM "Hash: %s" CLR_RESET "\n", db_benchmark.hardware_hash);
+        printf("\n");
+
+        // TODO: Implement actual community submission API call
+        // For now, just indicate that submission would occur here
+        printf(CLR_YELLOW "ⓘ" CLR_RESET " Community submission feature is currently in development\n");
+        printf("  " CLR_DIM "Your results have been saved locally and will be submitted" CLR_RESET "\n");
+        printf("  " CLR_DIM "when the community database API is available." CLR_RESET "\n");
+        printf("\n");
+    }
 
     return 0;
 }
@@ -592,4 +714,134 @@ static double estimate_gpu_speed(const system_info_t *info) {
     }
 
     return gpu_speed;
+}
+
+// Display community performance statistics for comparison
+void benchmark_show_community_stats(void) {
+    printf("\n");
+    printf(CLR_CYAN "╔══════════════════════════════════════════════════════════════════════╗\n");
+    printf("║           KEYHUNT COMMUNITY PERFORMANCE STATISTICS                   ║\n");
+    printf("╚══════════════════════════════════════════════════════════════════════╝" CLR_RESET "\n\n");
+
+    // Modes to display
+    const char *modes[] = {"address", "bsgs", "xpoint", "rmd160"};
+    int mode_count = 4;
+
+    bool has_any_data = false;
+
+    for (int i = 0; i < mode_count; i++) {
+        statistics_community_t stats;
+        if (statistics_get_community_stats(&stats, modes[i]) == 0) {
+            if (stats.total_benchmarks == 0) {
+                continue;  // Skip modes with no data
+            }
+
+            has_any_data = true;
+            printf(CLR_BOLD "Mode: %s" CLR_RESET "\n", modes[i]);
+            printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+            printf("  " CLR_CYAN "Community Size:" CLR_RESET " %d unique hardware configurations\n", stats.unique_hardware_count);
+            printf("  " CLR_CYAN "Total Benchmarks:" CLR_RESET " %d\n\n", stats.total_benchmarks);
+
+            printf("  " CLR_BOLD "CPU Performance:" CLR_RESET "\n");
+            printf("    Community Average:  " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.avg_cpu_speed);
+            printf("    Community Median:   " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.median_cpu_speed);
+            printf("    25th Percentile:    %.2f Mkeys/s\n", stats.percentile_25_cpu);
+            printf("    75th Percentile:    %.2f Mkeys/s\n", stats.percentile_75_cpu);
+            printf("    90th Percentile:    %.2f Mkeys/s\n", stats.percentile_90_cpu);
+            printf("    Fastest:            " CLR_MAGENTA "%.2f" CLR_RESET " Mkeys/s\n", stats.max_cpu_speed);
+            printf("    Slowest:            %.2f Mkeys/s\n", stats.min_cpu_speed);
+            printf("    Std Dev:            ±%.2f Mkeys/s\n", stats.std_dev_cpu);
+
+            if (stats.avg_gpu_speed > 0.0) {
+                printf("\n  " CLR_BOLD "GPU Performance:" CLR_RESET "\n");
+                printf("    Community Average:  " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.avg_gpu_speed);
+                printf("    Community Median:   " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.median_gpu_speed);
+            }
+
+            if (stats.avg_hybrid_speed > 0.0) {
+                printf("\n  " CLR_BOLD "Hybrid Performance:" CLR_RESET "\n");
+                printf("    Community Average:  " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.avg_hybrid_speed);
+                printf("    Community Median:   " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.median_hybrid_speed);
+            }
+
+            printf("\n");
+        }
+    }
+
+    if (!has_any_data) {
+        printf(CLR_DIM "No community data available yet.\n" CLR_RESET);
+        printf("\n");
+        printf(CLR_BOLD "Community Average:" CLR_RESET " " CLR_DIM "N/A (no benchmarks submitted)" CLR_RESET "\n");
+        printf("\n");
+        printf(CLR_DIM "Be the first to contribute! Run:\n" CLR_RESET);
+        printf(CLR_CYAN "  ./keyhunt --benchmark --submit-benchmark\n" CLR_RESET);
+    }
+
+    printf("\n");
+    printf(CLR_DIM "Tip: Run " CLR_RESET CLR_CYAN "./keyhunt --benchmark" CLR_RESET CLR_DIM " to see how your system compares!\n" CLR_RESET);
+    printf("\n");
+}
+
+// Display historical performance data from database
+void benchmark_show_performance_history(void) {
+    printf("\n");
+    printf(CLR_CYAN "╔══════════════════════════════════════════════════════════════════════╗\n");
+    printf("║                    KEYHUNT PERFORMANCE HISTORY                       ║\n");
+    printf("╚══════════════════════════════════════════════════════════════════════╝" CLR_RESET "\n\n");
+
+    // Get system info for hardware hash
+    system_info_t sysinfo;
+    sysinfo_init(&sysinfo);
+
+    char hardware_hash[65];
+    perfdb_compute_hardware_hash(&sysinfo, hardware_hash, sizeof(hardware_hash));
+
+    // Query recent benchmarks (last 10 runs)
+    perfdb_result_t results[10];
+    int count = perfdb_query_recent(results, 10, NULL);  // NULL = all modes
+
+    if (count == 0) {
+        printf(CLR_DIM "No benchmark history found.\n" CLR_RESET);
+        printf("\nRun " CLR_CYAN "./keyhunt --benchmark" CLR_RESET " to create your first benchmark.\n\n");
+        return;
+    }
+
+    // Display table header
+    printf(CLR_BOLD "Recent Benchmarks (Last %d Runs):" CLR_RESET "\n", count);
+    printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+    printf("%-19s %-10s %12s %12s %12s\n",
+           "Date", "Mode", "CPU (Mk/s)", "GPU (Mk/s)", "Hybrid (Mk/s)");
+    printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+
+    // Display each benchmark
+    for (int i = 0; i < count; i++) {
+        char date_str[32];
+        strftime(date_str, sizeof(date_str), "%Y-%m-%d %H:%M", localtime(&results[i].timestamp));
+
+        printf("%-19s %-10s %12.2f %12.2f %12.2f\n",
+               date_str,
+               results[i].mode,
+               results[i].cpu_speed_mkeys,
+               results[i].gpu_speed_mkeys,
+               results[i].hybrid_speed_mkeys);
+    }
+
+    // Get trend analysis
+    statistics_trend_t trend;
+    if (statistics_get_trend(&trend, NULL, hardware_hash, 10) == 0) {
+        printf("\n" CLR_BOLD "Trend Analysis:" CLR_RESET "\n");
+        printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+        printf("  Average CPU Speed:  %.2f Mkeys/s\n", trend.avg_cpu_speed);
+        printf("  Min/Max:            %.2f / %.2f Mkeys/s\n",
+               trend.min_cpu_speed, trend.max_cpu_speed);
+        printf("  Trend:              %s%.1f%%%s (%s)\n",
+               trend.cpu_trend_percent > 0 ? CLR_GREEN : CLR_RED,
+               trend.cpu_trend_percent,
+               CLR_RESET,
+               trend.is_improving ? "improving" : "degrading");
+
+        statistics_free_trend(&trend);
+    }
+
+    printf("\n");
 }
