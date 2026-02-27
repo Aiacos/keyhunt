@@ -93,16 +93,58 @@ static int g_bloom_hashes = 0;
 // OpenCL kernel source (to be populated in subtasks 2-3, 2-4, 2-5)
 // ============================================================================
 
-// Placeholder kernel source - will be filled with actual implementations
-static const char *g_opencl_kernel_source =
-"// OpenCL kernels for keyhunt\n"
-"// secp256k1 ECC + SHA256 + RIPEMD160 + bloom/matching\n"
-"\n"
-"// Placeholder - actual kernel implementations in subtasks 2-3, 2-4, 2-5\n"
-"__kernel void placeholder_kernel(__global uchar *data) {\n"
-"    int gid = get_global_id(0);\n"
-"    data[gid] = 0;\n"
-"}\n";
+static char *g_opencl_kernel_source = NULL;
+static size_t g_opencl_kernel_source_len = 0;
+
+// Load OpenCL kernel source from file
+static int load_opencl_kernel_source(void) {
+    if (g_opencl_kernel_source != NULL) {
+        return 0; // Already loaded
+    }
+
+    // Try to load from file in src/gpu/ directory
+    const char *kernel_file = "src/gpu/gpu_hash_opencl.cl";
+    FILE *f = fopen(kernel_file, "rb");
+    if (!f) {
+        fprintf(stderr, "[OpenCL] Failed to open kernel file: %s\n", kernel_file);
+        return -1;
+    }
+
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (file_size <= 0) {
+        fprintf(stderr, "[OpenCL] Invalid kernel file size\n");
+        fclose(f);
+        return -1;
+    }
+
+    // Allocate buffer and read
+    g_opencl_kernel_source = (char*)malloc(file_size + 1);
+    if (!g_opencl_kernel_source) {
+        fprintf(stderr, "[OpenCL] Failed to allocate memory for kernel source\n");
+        fclose(f);
+        return -1;
+    }
+
+    size_t read_size = fread(g_opencl_kernel_source, 1, file_size, f);
+    fclose(f);
+
+    if (read_size != (size_t)file_size) {
+        fprintf(stderr, "[OpenCL] Failed to read kernel file completely\n");
+        free(g_opencl_kernel_source);
+        g_opencl_kernel_source = NULL;
+        return -1;
+    }
+
+    g_opencl_kernel_source[file_size] = '\0';
+    g_opencl_kernel_source_len = file_size;
+
+    printf("[OpenCL] Loaded kernel source from %s (%zu bytes)\n", kernel_file, g_opencl_kernel_source_len);
+    return 0;
+}
 
 // ============================================================================
 // Kernel compilation and loading
@@ -162,12 +204,23 @@ static int compile_kernels_for_device(opencl_device_t *dev) {
 
     printf("[OpenCL] Kernels compiled successfully for device %d\n", dev->device_id);
 
-    // Create kernel objects (will be populated in later subtasks)
-    // For now, we'll create them as placeholders and set to NULL
-    // They will be created with clCreateKernel in subtasks 2-3, 2-4, 2-5
-    dev->kernel_hash160 = NULL;
+    // Create kernel objects
+    // Subtask 2-3: Hash-only mode kernel
+    dev->kernel_hash160 = clCreateKernel(dev->program, "kernel_hash160_fromX", &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to create kernel_hash160_fromX: %s (%d)\n",
+                clGetErrorString(err), err);
+        clReleaseProgram(dev->program);
+        dev->program = NULL;
+        dev->kernel_hash160 = NULL;
+        dev->kernel_full_search = NULL;
+        return -1;
+    }
+
+    // Subtask 2-4, 2-5: Full search kernel (to be implemented later)
     dev->kernel_full_search = NULL;
 
+    printf("[OpenCL] Created kernel objects for device %d\n", dev->device_id);
     return 0;
 }
 
@@ -325,8 +378,19 @@ int gpu_backend_init(gpu_backend_info_t *info) {
 
     memset(&g_info, 0, sizeof(g_info));
     memset(g_devices, 0, sizeof(g_devices));
+    memset(g_hash_buffers, 0, sizeof(g_hash_buffers));
     g_device_count = 0;
     g_platform_count = 0;
+
+    // Load kernel source first
+    if (load_opencl_kernel_source() < 0) {
+        fprintf(stderr, "[OpenCL] Failed to load kernel source\n");
+        g_available = 0;
+        if (info) {
+            memset(info, 0, sizeof(*info));
+        }
+        return -1;
+    }
 
     // Enumerate devices
     int device_count = enumerate_opencl_devices();
@@ -368,6 +432,22 @@ void gpu_backend_shutdown(void) {
     for (int i = 0; i < g_device_count; i++) {
         opencl_device_t *dev = &g_devices[i];
         if (!dev->active) continue;
+
+        // Release hash mode buffers
+        hash_mode_buffers_t *hash_buf = &g_hash_buffers[i];
+        if (hash_buf->d_x32) {
+            clReleaseMemObject(hash_buf->d_x32);
+            hash_buf->d_x32 = NULL;
+        }
+        if (hash_buf->d_out02) {
+            clReleaseMemObject(hash_buf->d_out02);
+            hash_buf->d_out02 = NULL;
+        }
+        if (hash_buf->d_out03) {
+            clReleaseMemObject(hash_buf->d_out03);
+            hash_buf->d_out03 = NULL;
+        }
+        hash_buf->capacity = 0;
 
         // Release kernels
         if (dev->kernel_hash160) {
@@ -426,6 +506,13 @@ void gpu_backend_shutdown(void) {
         h_bloom_copy = NULL;
     }
 
+    // Release kernel source
+    if (g_opencl_kernel_source) {
+        free(g_opencl_kernel_source);
+        g_opencl_kernel_source = NULL;
+        g_opencl_kernel_source_len = 0;
+    }
+
     g_device_count = 0;
     g_platform_count = 0;
     g_available = 0;
@@ -434,17 +521,154 @@ void gpu_backend_shutdown(void) {
 }
 
 // ============================================================================
-// Mode 1: Hash-only (stub - to be implemented in subtask 2-3)
+// Mode 1: Hash-only mode implementation (subtask 2-3)
 // ============================================================================
+
+// Device memory for hash-only mode (per-device)
+typedef struct {
+    cl_mem d_x32;
+    cl_mem d_out02;
+    cl_mem d_out03;
+    size_t capacity;
+} hash_mode_buffers_t;
+
+static hash_mode_buffers_t g_hash_buffers[MAX_OPENCL_DEVICES];
 
 int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
                             uint8_t *out02, uint8_t *out03) {
-    (void)x32_be;
-    (void)count;
-    (void)out02;
-    (void)out03;
-    fprintf(stderr, "[OpenCL] gpu_hash160_fromX_batch not yet implemented\n");
-    return -1;
+    if (!g_available || count == 0) {
+        return -1;
+    }
+
+    if (g_device_count == 0) {
+        fprintf(stderr, "[OpenCL] No devices available\n");
+        return -1;
+    }
+
+    // Use first active device for hash-only mode
+    opencl_device_t *dev = NULL;
+    hash_mode_buffers_t *buffers = NULL;
+    for (int i = 0; i < g_device_count; i++) {
+        if (g_devices[i].active) {
+            dev = &g_devices[i];
+            buffers = &g_hash_buffers[i];
+            break;
+        }
+    }
+
+    if (!dev || !dev->kernel_hash160) {
+        fprintf(stderr, "[OpenCL] No active device with hash160 kernel\n");
+        return -1;
+    }
+
+    cl_int err;
+
+    // Allocate or resize device memory if needed
+    if (count > buffers->capacity) {
+        // Release old buffers
+        if (buffers->d_x32) {
+            clReleaseMemObject(buffers->d_x32);
+            buffers->d_x32 = NULL;
+        }
+        if (buffers->d_out02) {
+            clReleaseMemObject(buffers->d_out02);
+            buffers->d_out02 = NULL;
+        }
+        if (buffers->d_out03) {
+            clReleaseMemObject(buffers->d_out03);
+            buffers->d_out03 = NULL;
+        }
+
+        // Allocate new buffers
+        buffers->d_x32 = clCreateBuffer(dev->context, CL_MEM_READ_ONLY,
+                                        count * 32, NULL, &err);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to allocate d_x32: %s (%d)\n",
+                    clGetErrorString(err), err);
+            return -1;
+        }
+
+        buffers->d_out02 = clCreateBuffer(dev->context, CL_MEM_WRITE_ONLY,
+                                          count * 20, NULL, &err);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to allocate d_out02: %s (%d)\n",
+                    clGetErrorString(err), err);
+            clReleaseMemObject(buffers->d_x32);
+            buffers->d_x32 = NULL;
+            return -1;
+        }
+
+        buffers->d_out03 = clCreateBuffer(dev->context, CL_MEM_WRITE_ONLY,
+                                          count * 20, NULL, &err);
+        if (err != CL_SUCCESS) {
+            fprintf(stderr, "[OpenCL] Failed to allocate d_out03: %s (%d)\n",
+                    clGetErrorString(err), err);
+            clReleaseMemObject(buffers->d_x32);
+            clReleaseMemObject(buffers->d_out02);
+            buffers->d_x32 = NULL;
+            buffers->d_out02 = NULL;
+            return -1;
+        }
+
+        buffers->capacity = count;
+    }
+
+    // Upload input data
+    err = clEnqueueWriteBuffer(dev->queue, buffers->d_x32, CL_FALSE, 0,
+                              count * 32, x32_be, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to upload x32 data: %s (%d)\n",
+                clGetErrorString(err), err);
+        return -1;
+    }
+
+    // Set kernel arguments
+    cl_ulong count_u64 = (cl_ulong)count;
+    err = clSetKernelArg(dev->kernel_hash160, 0, sizeof(cl_mem), &buffers->d_x32);
+    err |= clSetKernelArg(dev->kernel_hash160, 1, sizeof(cl_ulong), &count_u64);
+    err |= clSetKernelArg(dev->kernel_hash160, 2, sizeof(cl_mem), &buffers->d_out02);
+    err |= clSetKernelArg(dev->kernel_hash160, 3, sizeof(cl_mem), &buffers->d_out03);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to set kernel arguments: %s (%d)\n",
+                clGetErrorString(err), err);
+        return -1;
+    }
+
+    // Launch kernel
+    size_t global_work_size = count;
+    size_t local_work_size = 256;  // Standard work group size
+
+    // Round up global work size to multiple of local work size
+    global_work_size = ((count + local_work_size - 1) / local_work_size) * local_work_size;
+
+    err = clEnqueueNDRangeKernel(dev->queue, dev->kernel_hash160, 1, NULL,
+                                &global_work_size, &local_work_size,
+                                0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to launch kernel: %s (%d)\n",
+                clGetErrorString(err), err);
+        return -1;
+    }
+
+    // Download results
+    err = clEnqueueReadBuffer(dev->queue, buffers->d_out02, CL_FALSE, 0,
+                             count * 20, out02, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to download out02: %s (%d)\n",
+                clGetErrorString(err), err);
+        return -1;
+    }
+
+    err = clEnqueueReadBuffer(dev->queue, buffers->d_out03, CL_TRUE, 0,
+                             count * 20, out03, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to download out03: %s (%d)\n",
+                clGetErrorString(err), err);
+        return -1;
+    }
+
+    // Wait for completion (CL_TRUE in last read already does this)
+    return 0;
 }
 
 // ============================================================================

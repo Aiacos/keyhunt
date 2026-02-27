@@ -573,3 +573,50 @@ __kernel void compute_hash160_prefix_batch(
     // Compute and store prefix
     prefixes[idx] = hash160_33_prefix(pubkey);
 }
+
+/*
+ * Hash-only mode kernel: Compute HASH160 from X-coordinates
+ * Given 32-byte X coordinates, compute HASH160 for both compressed formats (02 and 03)
+ *
+ * Input: x32_be - array of 32-byte X coordinates (big-endian)
+ * Output: out02 - array of 20-byte HASH160s for prefix 0x02
+ * Output: out03 - array of 20-byte HASH160s for prefix 0x03
+ */
+__kernel void kernel_hash160_fromX(
+    __global const uchar *x32_be,      // Input: X coordinates (32 bytes each, big-endian)
+    ulong count,                       // Number of X coordinates
+    __global uchar *out02,             // Output: HASH160 for 02-prefix pubkeys
+    __global uchar *out03              // Output: HASH160 for 03-prefix pubkeys
+) {
+    ulong idx = get_global_id(0);
+    if (idx >= count) return;
+
+    __private uchar pubkey[33];
+    __private uchar hash160[20];
+
+    // Load X coordinate
+    __global const uchar *x = x32_be + idx * 32;
+
+    // Compute HASH160 for compressed pubkey with prefix 0x02
+    pubkey[0] = 0x02;
+    for (int i = 0; i < 32; i++) {
+        pubkey[i + 1] = x[i];
+    }
+    hash160_33_optimized(pubkey, hash160);
+
+    // Store result for 0x02 prefix
+    __global uchar *out02_ptr = out02 + idx * 20;
+    for (int i = 0; i < 20; i++) {
+        out02_ptr[i] = hash160[i];
+    }
+
+    // Compute HASH160 for compressed pubkey with prefix 0x03
+    pubkey[0] = 0x03;
+    hash160_33_optimized(pubkey, hash160);
+
+    // Store result for 0x03 prefix
+    __global uchar *out03_ptr = out03 + idx * 20;
+    for (int i = 0; i < 20; i++) {
+        out03_ptr[i] = hash160[i];
+    }
+}
