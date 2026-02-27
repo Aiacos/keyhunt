@@ -611,3 +611,141 @@ double statistics_get_change_rate(const char *mode, const char *hardware_hash,
 
     return change_rate;
 }
+
+// Helper function: Calculate percentile from sorted array
+static double calculate_percentile(const double *sorted_values, int count, double percentile) {
+    if (count == 0 || percentile < 0.0 || percentile > 100.0) {
+        return 0.0;
+    }
+
+    if (count == 1) {
+        return sorted_values[0];
+    }
+
+    // Linear interpolation for percentile calculation
+    double index = (percentile / 100.0) * (count - 1);
+    int lower_index = (int)floor(index);
+    int upper_index = (int)ceil(index);
+
+    if (lower_index == upper_index) {
+        return sorted_values[lower_index];
+    }
+
+    double fraction = index - lower_index;
+    return sorted_values[lower_index] * (1.0 - fraction) + sorted_values[upper_index] * fraction;
+}
+
+// Get community-wide statistics (aggregated across all hardware)
+int statistics_get_community_stats(statistics_community_t *stats, const char *mode) {
+    if (!stats || !mode) {
+        return -1;
+    }
+
+    memset(stats, 0, sizeof(statistics_community_t));
+
+    // Get database path
+    char db_path[512];
+    if (get_db_path(db_path, sizeof(db_path)) != 0) {
+        return -1;
+    }
+
+    sqlite3 *db = NULL;
+    if (sqlite3_open(db_path, &db) != SQLITE_OK) {
+        return -1;
+    }
+
+    // First, get count of unique hardware and total benchmarks
+    const char *sql_counts = "SELECT COUNT(DISTINCT hardware_hash), COUNT(*) "
+                            "FROM performance_history WHERE mode = ?";
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql_counts, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, mode, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        stats->unique_hardware_count = sqlite3_column_int(stmt, 0);
+        stats->total_benchmarks = sqlite3_column_int(stmt, 1);
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (stats->total_benchmarks == 0) {
+        sqlite3_close(db);
+        return 0;  // No data, not an error
+    }
+
+    // Fetch all CPU speeds for statistical calculations
+    const char *sql_speeds = "SELECT cpu_speed_mkeys, gpu_speed_mkeys, hybrid_speed_mkeys "
+                            "FROM performance_history WHERE mode = ? "
+                            "ORDER BY cpu_speed_mkeys";
+
+    if (sqlite3_prepare_v2(db, sql_speeds, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, mode, -1, SQLITE_STATIC);
+
+    // Allocate arrays for all speeds
+    double *cpu_speeds = (double *)malloc(stats->total_benchmarks * sizeof(double));
+    double *gpu_speeds = (double *)malloc(stats->total_benchmarks * sizeof(double));
+    double *hybrid_speeds = (double *)malloc(stats->total_benchmarks * sizeof(double));
+
+    if (!cpu_speeds || !gpu_speeds || !hybrid_speeds) {
+        free(cpu_speeds);
+        free(gpu_speeds);
+        free(hybrid_speeds);
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return -1;
+    }
+
+    // Fetch all data
+    int count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && count < stats->total_benchmarks) {
+        cpu_speeds[count] = sqlite3_column_double(stmt, 0);
+        gpu_speeds[count] = sqlite3_column_double(stmt, 1);
+        hybrid_speeds[count] = sqlite3_column_double(stmt, 2);
+        count++;
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    if (count == 0) {
+        free(cpu_speeds);
+        free(gpu_speeds);
+        free(hybrid_speeds);
+        return -1;
+    }
+
+    // Calculate community statistics
+    stats->avg_cpu_speed = calculate_mean(cpu_speeds, count);
+    stats->avg_gpu_speed = calculate_mean(gpu_speeds, count);
+    stats->avg_hybrid_speed = calculate_mean(hybrid_speeds, count);
+
+    // CPU speeds are already sorted by the query
+    stats->min_cpu_speed = cpu_speeds[0];
+    stats->max_cpu_speed = cpu_speeds[count - 1];
+    stats->median_cpu_speed = calculate_median(cpu_speeds, count);
+    stats->std_dev_cpu = calculate_std_dev(cpu_speeds, count, stats->avg_cpu_speed);
+
+    // Calculate percentiles
+    stats->percentile_25_cpu = calculate_percentile(cpu_speeds, count, 25.0);
+    stats->percentile_75_cpu = calculate_percentile(cpu_speeds, count, 75.0);
+    stats->percentile_90_cpu = calculate_percentile(cpu_speeds, count, 90.0);
+
+    // Sort GPU and hybrid speeds for median calculation
+    stats->median_gpu_speed = calculate_median(gpu_speeds, count);
+    stats->median_hybrid_speed = calculate_median(hybrid_speeds, count);
+
+    free(cpu_speeds);
+    free(gpu_speeds);
+    free(hybrid_speeds);
+
+    return 0;
+}

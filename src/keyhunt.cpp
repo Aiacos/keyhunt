@@ -1645,6 +1645,11 @@ int main(int argc, char **argv)	{
 			benchmark_print_results(&bench_result, 66);  // Default to puzzle 66
 			exit(EXIT_SUCCESS);
 		}
+		// Performance comparison mode
+		if (strcmp(argv[ai], "--perf-compare") == 0) {
+			benchmark_show_community_stats();
+			exit(EXIT_SUCCESS);
+		}
 	}
 
 	// -------------------------------------------------------------------------

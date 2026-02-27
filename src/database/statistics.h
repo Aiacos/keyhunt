@@ -59,6 +59,24 @@ typedef struct {
     int sample_count;
 } statistics_speed_summary_t;
 
+// Community-wide statistics (aggregated across all hardware)
+typedef struct {
+    int unique_hardware_count;      // Number of unique hardware configurations
+    int total_benchmarks;            // Total number of benchmark records
+    double avg_cpu_speed;            // Community average CPU speed
+    double avg_gpu_speed;            // Community average GPU speed
+    double avg_hybrid_speed;         // Community average hybrid speed
+    double median_cpu_speed;         // Community median CPU speed
+    double median_gpu_speed;         // Community median GPU speed
+    double median_hybrid_speed;      // Community median hybrid speed
+    double percentile_25_cpu;        // 25th percentile CPU speed
+    double percentile_75_cpu;        // 75th percentile CPU speed
+    double percentile_90_cpu;        // 90th percentile CPU speed
+    double min_cpu_speed;            // Slowest CPU speed in community
+    double max_cpu_speed;            // Fastest CPU speed in community
+    double std_dev_cpu;              // Standard deviation of CPU speeds
+} statistics_community_t;
+
 // Get trend data for last N benchmark runs
 // Returns: 0 on success, -1 on error
 // Caller must call statistics_free_trend() to free allocated memory
@@ -109,6 +127,10 @@ bool statistics_is_outlier(double speed, const char *mode,
 // Returns: change rate (Mkeys/s per day), or 0.0 if insufficient data
 double statistics_get_change_rate(const char *mode, const char *hardware_hash,
                                  const char *speed_type, int days);
+
+// Get community-wide statistics (aggregated across all hardware)
+// Returns: 0 on success, -1 on error
+int statistics_get_community_stats(statistics_community_t *stats, const char *mode);
 
 #ifdef __cplusplus
 }

@@ -111,6 +111,7 @@ typedef struct {
     bool run_benchmark;
     bool submit_benchmark;
     bool show_perf_history;
+    bool show_perf_compare;
     char wizard_client[128];
 
 } cli_args_t;

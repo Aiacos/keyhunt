@@ -1,6 +1,7 @@
 // src/benchmark.cpp
 #include "benchmark.h"
 #include "database/perfdb.h"
+#include "database/statistics.h"
 #include "platform/platform.h"
 #include "core/sysinfo.h"
 #include "platform/platform.h"
@@ -712,4 +713,70 @@ static double estimate_gpu_speed(const system_info_t *info) {
     }
 
     return gpu_speed;
+}
+
+// Display community performance statistics for comparison
+void benchmark_show_community_stats(void) {
+    printf("\n");
+    printf(CLR_CYAN "╔══════════════════════════════════════════════════════════════════════╗\n");
+    printf("║           KEYHUNT COMMUNITY PERFORMANCE STATISTICS                   ║\n");
+    printf("╚══════════════════════════════════════════════════════════════════════╝" CLR_RESET "\n\n");
+
+    // Modes to display
+    const char *modes[] = {"address", "bsgs", "xpoint", "rmd160"};
+    int mode_count = 4;
+
+    bool has_any_data = false;
+
+    for (int i = 0; i < mode_count; i++) {
+        statistics_community_t stats;
+        if (statistics_get_community_stats(&stats, modes[i]) == 0) {
+            if (stats.total_benchmarks == 0) {
+                continue;  // Skip modes with no data
+            }
+
+            has_any_data = true;
+            printf(CLR_BOLD "Mode: %s" CLR_RESET "\n", modes[i]);
+            printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+            printf("  " CLR_CYAN "Community Size:" CLR_RESET " %d unique hardware configurations\n", stats.unique_hardware_count);
+            printf("  " CLR_CYAN "Total Benchmarks:" CLR_RESET " %d\n\n", stats.total_benchmarks);
+
+            printf("  " CLR_BOLD "CPU Performance:" CLR_RESET "\n");
+            printf("    Community Average:  " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.avg_cpu_speed);
+            printf("    Community Median:   " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.median_cpu_speed);
+            printf("    25th Percentile:    %.2f Mkeys/s\n", stats.percentile_25_cpu);
+            printf("    75th Percentile:    %.2f Mkeys/s\n", stats.percentile_75_cpu);
+            printf("    90th Percentile:    %.2f Mkeys/s\n", stats.percentile_90_cpu);
+            printf("    Fastest:            " CLR_MAGENTA "%.2f" CLR_RESET " Mkeys/s\n", stats.max_cpu_speed);
+            printf("    Slowest:            %.2f Mkeys/s\n", stats.min_cpu_speed);
+            printf("    Std Dev:            ±%.2f Mkeys/s\n", stats.std_dev_cpu);
+
+            if (stats.avg_gpu_speed > 0.0) {
+                printf("\n  " CLR_BOLD "GPU Performance:" CLR_RESET "\n");
+                printf("    Community Average:  " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.avg_gpu_speed);
+                printf("    Community Median:   " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.median_gpu_speed);
+            }
+
+            if (stats.avg_hybrid_speed > 0.0) {
+                printf("\n  " CLR_BOLD "Hybrid Performance:" CLR_RESET "\n");
+                printf("    Community Average:  " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.avg_hybrid_speed);
+                printf("    Community Median:   " CLR_GREEN "%.2f" CLR_RESET " Mkeys/s\n", stats.median_hybrid_speed);
+            }
+
+            printf("\n");
+        }
+    }
+
+    if (!has_any_data) {
+        printf(CLR_DIM "No community data available yet.\n" CLR_RESET);
+        printf("\n");
+        printf(CLR_BOLD "Community Average:" CLR_RESET " " CLR_DIM "N/A (no benchmarks submitted)" CLR_RESET "\n");
+        printf("\n");
+        printf(CLR_DIM "Be the first to contribute! Run:\n" CLR_RESET);
+        printf(CLR_CYAN "  ./keyhunt --benchmark --submit-benchmark\n" CLR_RESET);
+    }
+
+    printf("\n");
+    printf(CLR_DIM "Tip: Run " CLR_RESET CLR_CYAN "./keyhunt --benchmark" CLR_RESET CLR_DIM " to see how your system compares!\n" CLR_RESET);
+    printf("\n");
 }

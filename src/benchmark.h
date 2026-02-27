@@ -30,6 +30,9 @@ void benchmark_print_results(const benchmark_result_t *result, int bits);
 // Quick benchmark for auto-tuning (~5 seconds)
 int benchmark_quick(double *cpu_speed, double *gpu_speed);
 
+// Display community performance statistics for comparison
+void benchmark_show_community_stats(void);
+
 #ifdef __cplusplus
 }
 #endif
