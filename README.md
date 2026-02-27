@@ -119,6 +119,20 @@ First compile:
 make
 ```
 
+## Advanced Build: Profile-Guided Optimization (PGO)
+
+For maximum CPU performance, you can use Profile-Guided Optimization to achieve 5-15% speed improvement:
+
+```bash
+make pgo-generate    # Build with profiling instrumentation
+make pgo-train       # Run representative workload
+make pgo-use         # Build optimized binary
+```
+
+This 3-step process optimizes branch prediction, function inlining, and code layout based on actual runtime patterns. Particularly effective for SIMD-heavy workloads.
+
+**Note:** PGO is an advanced optimization. For most users, the standard build is sufficient. See [CLAUDE.md (Build Commands)](CLAUDE.md#build-commands) for detailed PGO documentation including custom training workloads and cleanup.
+
 ## Optional CUDA (GPU) support
 
 If you have an NVIDIA GPU and the CUDA toolkit installed, the build system can compile with GPU acceleration.

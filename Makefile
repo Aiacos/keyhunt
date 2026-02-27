@@ -100,7 +100,7 @@ LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(LEGACY_COMM
 # Create obj directory structure
 OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests
 
-.PHONY: all clean legacy bsgsd directories test sanitize tsan coverage
+.PHONY: all clean legacy bsgsd directories test sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 
 all: directories keyhunt
 
@@ -121,7 +121,7 @@ keyhunt_legacy: directories $(LEGACY_OBJS)
 	$(CXX) $(LDFLAGS) $(LEGACY_OBJS) $(LDLIBS) -lcrypto -lgmp -o $@
 
 clean:
-	$(RM) keyhunt keyhunt_legacy bsgsd run_tests
+	$(RM) keyhunt keyhunt_legacy bsgsd run_tests keyhunt_pgo_gen keyhunt_pgo
 	$(RM) -r $(OBJDIR)
 
 # ============================================================================
@@ -312,6 +312,55 @@ TSAN_LDFLAGS := -fsanitize=thread
 COVERAGE_FLAGS := --coverage -fprofile-arcs -ftest-coverage -g -O0
 COVERAGE_LDFLAGS := --coverage
 
+# Profile-Guided Optimization (PGO) directories and flags
+PGO_GEN_OBJDIR := obj_pgo_gen
+PGO_USE_OBJDIR := obj_pgo_use
+PGO_GEN_FLAGS := -fprofile-generate=pgo_data -fprofile-arcs
+PGO_GEN_LDFLAGS := -fprofile-generate=pgo_data
+PGO_USE_FLAGS := -fprofile-use=pgo_data -fprofile-correction -Wno-missing-profile
+PGO_USE_LDFLAGS := -fprofile-use=pgo_data
+
+# PGO generate build: instrumented binary for profiling
+pgo-generate: pgo-clean
+	@echo "Building with PGO instrumentation..."
+	@mkdir -p $(PGO_GEN_OBJDIR) pgo_data
+	$(MAKE) keyhunt_pgo_gen OBJDIR=$(PGO_GEN_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(PGO_GEN_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(PGO_GEN_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(PGO_GEN_LDFLAGS) -Wl,--as-needed" \
+		LTO_FLAGS="" GPU_CXXFLAGS="$(GPU_CXXFLAGS)"
+
+keyhunt_pgo_gen: directories $(KEYHUNT_OBJS)
+	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
+
+# PGO training: run representative workloads to generate profile data
+pgo-train: pgo-generate
+	@echo "Running PGO training workloads..."
+	@if [ ! -x pgo_train.sh ]; then chmod +x pgo_train.sh; fi
+	@./pgo_train.sh
+	@echo "Training complete. Profile data ready in pgo_data/"
+
+pgo-clean:
+	$(RM) -r $(PGO_GEN_OBJDIR) $(PGO_USE_OBJDIR) pgo_data keyhunt_pgo_gen keyhunt_pgo *.gcda
+
+# PGO use build: optimized binary using profile data
+pgo-use:
+	@echo "Building optimized binary with PGO profile data..."
+	@if [ ! -d pgo_data ]; then \
+		echo "Error: pgo_data directory not found. Run profile collection first."; \
+		exit 1; \
+	fi
+	@mkdir -p $(PGO_USE_OBJDIR)
+	$(MAKE) keyhunt_pgo OBJDIR=$(PGO_USE_OBJDIR) \
+		CXXFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES) $(PGO_USE_FLAGS)" \
+		CFLAGS="$(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(PGO_USE_FLAGS)" \
+		LDFLAGS="$(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed $(PGO_USE_LDFLAGS)" \
+		GPU_CXXFLAGS="$(GPU_CXXFLAGS)"
+	@echo "PGO-optimized binary created: keyhunt_pgo"
+
+keyhunt_pgo: directories $(KEYHUNT_OBJS)
+	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
+
 # Sanitizer build: AddressSanitizer + UndefinedBehaviorSanitizer
 sanitize: clean-sanitize
 	@echo "Building with AddressSanitizer..."
@@ -405,6 +454,7 @@ clean-coverage:
 
 .PHONY: sanitize run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
 .PHONY: coverage run_tests_cov coverage-report clean-coverage
+.PHONY: pgo-generate keyhunt_pgo_gen pgo-use keyhunt_pgo clean-pgo
 
 # ============================================================================
 # Fuzzing Targets
