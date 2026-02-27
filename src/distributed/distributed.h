@@ -88,6 +88,14 @@ typedef enum {
     WORK_STATUS_FAILED
 } work_status_t;
 
+/* Worker status (lifecycle states) */
+typedef enum {
+    WORKER_STATUS_JOINING = 0,       /* Worker is connecting/registering */
+    WORKER_STATUS_ACTIVE,            /* Worker is active and can accept work */
+    WORKER_STATUS_LEAVING,           /* Worker requested graceful departure */
+    WORKER_STATUS_DISCONNECTED       /* Worker disconnected or timed out */
+} worker_status_t;
+
 /* Worker information */
 typedef struct {
     int id;
@@ -119,6 +127,13 @@ typedef struct {
     pthread_t handler_thread;   /* Dedicated thread for this worker */
     bool handler_running;       /* Is the handler thread running? */
     void *coordinator;          /* Back-reference to coordinator (cast to dist_coordinator_t*) */
+
+    /* Timeout configuration */
+    int heartbeat_timeout_sec;  /* Timeout before marking worker as dead (0 = use coordinator default) */
+
+    /* Worker status and lifecycle */
+    worker_status_t status;     /* Current lifecycle status */
+    bool leave_requested;       /* Worker requested graceful departure */
 } dist_worker_t;
 
 /* Work unit */
@@ -272,6 +287,11 @@ typedef struct {
 
     /* Health check timing */
     uint64_t last_health_check_ms;  /* Last health check timestamp (moved from static) */
+
+    /* Timeout configuration */
+    int worker_timeout_sec;         /* Timeout before marking worker as dead (default: 3x heartbeat) */
+    int work_timeout_sec;           /* Timeout before reassigning work from unresponsive worker (default: 5x heartbeat) */
+    int connection_timeout_sec;     /* TCP connection accept timeout (default: 30) */
 } dist_coordinator_t;
 
 /* Worker client state */
@@ -324,6 +344,11 @@ typedef struct {
     void *ssl_ctx;                              /* Placeholder when OpenSSL not available */
     void *ssl;                                  /* Placeholder when OpenSSL not available */
 #endif
+
+    /* Timeout configuration */
+    int connect_timeout_sec;                    /* Timeout for connecting to coordinator (default: 30) */
+    int response_timeout_sec;                   /* Timeout waiting for coordinator response (default: 60) */
+    int reconnect_delay_sec;                    /* Delay before reconnecting on connection loss (default: 5) */
 } dist_worker_client_t;
 
 /* ============================================================================
@@ -402,6 +427,30 @@ void dist_coordinator_set_auth_token(dist_coordinator_t *coordinator,
  */
 void dist_coordinator_set_bind_address(dist_coordinator_t *coordinator,
                                        const char *address);
+
+/**
+ * Set worker timeout (time before marking worker as dead)
+ * @param coordinator Coordinator state
+ * @param timeout_sec Timeout in seconds (0 = use default: 3x heartbeat interval)
+ */
+void dist_coordinator_set_worker_timeout(dist_coordinator_t *coordinator,
+                                         int timeout_sec);
+
+/**
+ * Set work redistribution timeout (time before reassigning stalled work)
+ * @param coordinator Coordinator state
+ * @param timeout_sec Timeout in seconds (0 = use default: 5x heartbeat interval)
+ */
+void dist_coordinator_set_work_timeout(dist_coordinator_t *coordinator,
+                                       int timeout_sec);
+
+/**
+ * Set connection timeout for accepting new clients
+ * @param coordinator Coordinator state
+ * @param timeout_sec Timeout in seconds (0 = use default: 30)
+ */
+void dist_coordinator_set_connection_timeout(dist_coordinator_t *coordinator,
+                                             int timeout_sec);
 
 /**
  * Enable rate limiting to prevent DoS attacks
@@ -572,6 +621,14 @@ int dist_worker_report_found(dist_worker_client_t *client,
  * @return 0 on success, -1 on error
  */
 int dist_worker_heartbeat(dist_worker_client_t *client, uint64_t keys_since_last);
+
+/**
+ * Gracefully leave coordinator (notify before disconnect)
+ * @param client Client state
+ * @param reason Optional reason for leaving (can be NULL)
+ * @return 0 on success, -1 on error
+ */
+int dist_worker_leave(dist_worker_client_t *client, const char *reason);
 
 /**
  * Disconnect from coordinator
