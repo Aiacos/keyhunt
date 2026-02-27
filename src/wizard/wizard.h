@@ -35,6 +35,11 @@ extern "C" {
 #define PRIVATEKEYS_CACHE_FILE "privatekeys_progress.json"
 #define PRIVATEKEYS_REFRESH_INTERVAL (24 * 60 * 60)  /* 24 hours */
 
+/* Keys.lol puzzle progress integration */
+#define KEYSLOL_URL "https://keys.lol/api/puzzle"
+#define KEYSLOL_CACHE_FILE "keyslol_progress.json"
+#define KEYSLOL_REFRESH_INTERVAL (24 * 60 * 60)  /* 24 hours */
+
 /* Puzzle definition (can be loaded from file or web) */
 typedef struct {
     int number;
@@ -93,6 +98,14 @@ typedef struct {
     char progress_file[256];
     char exclusion_file[256];
 
+    /* Webhook notifications */
+    char webhook_discord_url[512];   /* Discord webhook URL for notifications */
+    char webhook_telegram_url[512];  /* Telegram bot token or webhook URL */
+
+    /* Progress reporting (opt-in) */
+    bool report_progress_enabled;    /* Enable progress reporting to community endpoint */
+    char report_progress_url[512];   /* URL endpoint for progress reporting */
+
     /* Runtime state (not saved to JSON) */
     bool is_server;
     bool server_also_worker;
@@ -114,6 +127,14 @@ typedef struct {
     uint64_t keys_scanned;       /* Absolute count if available */
     time_t fetch_time;           /* When data was fetched */
 } privatekeys_progress_t;
+
+/* Keys.lol progress data */
+typedef struct {
+    int puzzle_number;
+    double percent_scanned;      /* e.g., 0.022477 */
+    uint64_t keys_scanned;       /* Absolute count if available */
+    time_t fetch_time;           /* When data was fetched */
+} keyslol_progress_t;
 
 /* ============================================================================
  * Wizard Entry Point
@@ -190,6 +211,7 @@ int wizard_ask_int(const char *prompt, int min_val, int max_val, int default_val
 bool wizard_ask_yesno(const char *prompt, bool default_val);
 void wizard_print_config_summary(const wizard_config_t *cfg);
 void wizard_print_progress(int current, int total, double speed, const char *status);
+void wizard_print_privacy_warning(void);
 
 /* ============================================================================
  * Community Sync Functions
@@ -215,6 +237,32 @@ int wizard_community_merge_exclusions(const char *exclusion_file,
  * Check if range is excluded
  */
 bool wizard_is_range_excluded(const char *exclusion_file, const char *range_start);
+
+/**
+ * Fetch and aggregate progress from all community sources
+ * @param puzzle_number Puzzle to check
+ * @param btc_ranges Output: BTCPuzzle.info ranges (caller must free)
+ * @param btc_count Output: number of BTCPuzzle.info ranges
+ * @param privatekeys_progress Output: privatekeys.pw progress data
+ * @param keyslol_progress Output: keys.lol progress data
+ * @return 0 on success (at least one source), -1 on complete failure
+ */
+int wizard_community_fetch_all_sources(int puzzle_number,
+                                        community_range_t **btc_ranges,
+                                        int *btc_count,
+                                        privatekeys_progress_t *privatekeys_progress,
+                                        keyslol_progress_t *keyslol_progress);
+
+/**
+ * Report progress to community endpoint (opt-in)
+ *
+ * Sends current search progress to a community API endpoint if enabled.
+ * Requires report_progress_enabled = true in configuration.
+ *
+ * @param cfg Wizard configuration with progress data
+ * @return 0 on success, -1 on error, 1 if reporting disabled
+ */
+int wizard_community_report_progress(const wizard_config_t *cfg);
 
 /* ============================================================================
  * Privatekeys.pw Cloud Search Integration
@@ -256,6 +304,26 @@ void wizard_calculate_search_offset(const puzzle_def_t *puzzle,
 bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
                                  const char *range_start,
                                  double percent_scanned);
+
+/* ============================================================================
+ * Keys.lol Puzzle Progress Integration
+ * ============================================================================ */
+
+/**
+ * Fetch progress from Keys.lol (scrapes HTML/API)
+ * @param puzzle_number Puzzle to check
+ * @param progress Output progress data
+ * @return 0 on success, -1 on error
+ */
+int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progress);
+
+/**
+ * Get progress with 24h caching
+ * @param puzzle_number Puzzle to check
+ * @param progress Output progress data
+ * @return 0 on success (fresh or cached), -1 on error (no data available)
+ */
+int wizard_keyslol_get_progress(int puzzle_number, keyslol_progress_t *progress);
 
 /**
  * Save locally completed range to progress file

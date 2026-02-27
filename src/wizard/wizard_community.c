@@ -3,6 +3,7 @@
  */
 
 #include "wizard.h"
+#include "wizard_http.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -230,7 +231,8 @@ int wizard_community_fetch(int puzzle_number, community_range_t **ranges, int *c
     size_t html_len = 0;
 
     if (fetch_url(url, &html, &html_len) != 0) {
-        printf("[-] Failed to fetch community data\n");
+        printf("[-] Failed to fetch community data (network error or source unavailable)\n");
+        printf("[i] Fallback: Continuing without community range exclusions\n");
         *ranges = NULL;
         *count = 0;
         return -1;
@@ -785,15 +787,21 @@ int wizard_privatekeys_get_progress(int puzzle_number, privatekeys_progress_t *p
         return 0;
     }
 
-    /* Fetch failed - try to use stale cache */
+    /* Fetch failed - try to use stale cache as fallback */
     if (have_cache) {
         double age_hours = (now - progress->fetch_time) / 3600.0;
-        printf("[!] Fetch failed, using stale cache (%.1f hours old)\n", age_hours);
+        double age_days = age_hours / 24.0;
+        if (age_days > 7.0) {
+            printf("[!] Network error - using stale cache as fallback (%.1f days old, may be outdated)\n", age_days);
+        } else {
+            printf("[!] Network error - using stale cache as fallback (%.1f hours old)\n", age_hours);
+        }
         return 0;
     }
 
-    /* No cache available */
-    printf("[!] No community progress data available\n");
+    /* No cache available - fallback to no progress data */
+    printf("[!] No community progress data available (source unavailable and no cache)\n");
+    printf("[i] Fallback: Will start search from beginning of range\n");
     memset(progress, 0, sizeof(*progress));
     return -1;
 }
@@ -856,6 +864,236 @@ bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
 }
 
 /* ============================================================================
+ * Keys.lol Puzzle Progress Integration
+ * ============================================================================ */
+
+/* Get cache file path for Keys.lol */
+static void get_keyslol_cache_filepath(char *path, size_t size) {
+    char dir[512];
+    if (get_cache_dir(dir, sizeof(dir)) != 0) {
+        snprintf(path, size, ".keyhunt_keyslol_cache.json");
+        return;
+    }
+    snprintf(path, size, "%s/keyslol_progress.json", dir);
+}
+
+/* Save Keys.lol progress to cache file */
+static int save_keyslol_cache(const keyslol_progress_t *progress) {
+    char filepath[512];
+    get_keyslol_cache_filepath(filepath, sizeof(filepath));
+
+    FILE *f = fopen(filepath, "w");
+    if (!f) return -1;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"puzzle_number\": %d,\n", progress->puzzle_number);
+    fprintf(f, "  \"percent_scanned\": %.8f,\n", progress->percent_scanned);
+    fprintf(f, "  \"keys_scanned\": %llu,\n", (unsigned long long)progress->keys_scanned);
+    fprintf(f, "  \"fetch_time\": %lld\n", (long long)progress->fetch_time);
+    fprintf(f, "}\n");
+
+    fclose(f);
+    return 0;
+}
+
+/* Load Keys.lol progress from cache file */
+static int load_keyslol_cache(keyslol_progress_t *progress) {
+    char filepath[512];
+    get_keyslol_cache_filepath(filepath, sizeof(filepath));
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) return -1;
+
+    char buf[1024];
+    size_t len = fread(buf, 1, sizeof(buf) - 1, f);
+    buf[len] = '\0';
+    fclose(f);
+
+    /* Simple JSON parsing */
+    memset(progress, 0, sizeof(*progress));
+
+    char *ptr;
+
+    ptr = strstr(buf, "\"puzzle_number\":");
+    if (ptr) progress->puzzle_number = atoi(ptr + 16);
+
+    ptr = strstr(buf, "\"percent_scanned\":");
+    if (ptr) progress->percent_scanned = atof(ptr + 18);
+
+    ptr = strstr(buf, "\"keys_scanned\":");
+    if (ptr) progress->keys_scanned = strtoull(ptr + 15, NULL, 10);
+
+    ptr = strstr(buf, "\"fetch_time\":");
+    if (ptr) progress->fetch_time = (time_t)strtoll(ptr + 13, NULL, 10);
+
+    /* Validate */
+    if (progress->fetch_time == 0) return -1;
+
+    return 0;
+}
+
+int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progress) {
+    if (!progress) return -1;
+
+    memset(progress, 0, sizeof(*progress));
+    progress->puzzle_number = puzzle_number;
+
+    printf("[+] Fetching Keys.lol puzzle progress...\n");
+
+    /* Construct API URL for specific puzzle */
+    char url[256];
+    snprintf(url, sizeof(url), "%s/%d", KEYSLOL_URL, puzzle_number);
+
+    char *response = NULL;
+    size_t response_len = 0;
+
+    if (fetch_url(url, &response, &response_len) != 0) {
+        printf("[-] Failed to fetch Keys.lol API\n");
+        return -1;
+    }
+
+    if (response_len < 50) {
+        printf("[-] Invalid response from Keys.lol\n");
+        free(response);
+        return -1;
+    }
+
+    double percent = 0.0;
+    uint64_t keys_scanned = 0;
+
+    /* Parse JSON response - Keys.lol uses JSON API format
+     * Expected fields: "progress", "percentage", "scanned", "keys_scanned" */
+
+    /* Method 1: Look for "progress" or "percentage" field */
+    char *pct_ptr = strstr(response, "\"progress\":");
+    if (!pct_ptr) pct_ptr = strstr(response, "\"percentage\":");
+
+    if (pct_ptr) {
+        /* Skip to value */
+        char *val_start = strchr(pct_ptr, ':');
+        if (val_start) {
+            val_start++;
+            /* Skip whitespace */
+            while (*val_start == ' ' || *val_start == '\t') val_start++;
+
+            double val = 0.0;
+            if (sscanf(val_start, "%lf", &val) == 1 && val >= 0.0 && val <= 100.0) {
+                percent = val;
+            }
+        }
+    }
+
+    /* Method 2: Look for "scanned" or "keys_scanned" field */
+    char *keys_ptr = strstr(response, "\"keys_scanned\":");
+    if (!keys_ptr) keys_ptr = strstr(response, "\"scanned\":");
+
+    if (keys_ptr) {
+        /* Skip to value */
+        char *val_start = strchr(keys_ptr, ':');
+        if (val_start) {
+            val_start++;
+            /* Skip whitespace and quotes */
+            while (*val_start == ' ' || *val_start == '\t' || *val_start == '"') val_start++;
+
+            uint64_t val = 0;
+            if (sscanf(val_start, "%llu", &val) == 1 && val > 0) {
+                keys_scanned = val;
+            }
+        }
+    }
+
+    /* Method 3: Alternative parsing for percentage with % sign */
+    if (percent <= 0.0) {
+        char *scan = response;
+        while ((scan = strchr(scan, '%')) != NULL) {
+            /* Look backwards for number */
+            char *num_start = scan - 1;
+            while (num_start > response &&
+                   (*num_start == '.' || (*num_start >= '0' && *num_start <= '9'))) {
+                num_start--;
+            }
+            num_start++;
+
+            double val = 0.0;
+            if (sscanf(num_start, "%lf", &val) == 1 && val >= 0.0 && val <= 100.0) {
+                percent = val;
+                break;
+            }
+            scan++;
+        }
+    }
+
+    free(response);
+
+    if (percent <= 0.0 && keys_scanned == 0) {
+        printf("[-] Could not parse progress data from Keys.lol\n");
+        return -1;
+    }
+
+    progress->percent_scanned = percent;
+    progress->keys_scanned = keys_scanned;
+    progress->fetch_time = time(NULL);
+
+    printf("[+] Keys.lol: %.4f%% scanned", percent);
+    if (keys_scanned > 0) {
+        printf(" (%llu keys)", (unsigned long long)keys_scanned);
+    }
+    printf("\n");
+
+    return 0;
+}
+
+/* Keys.lol Caching Logic (24-hour refresh) */
+int wizard_keyslol_get_progress(int puzzle_number, keyslol_progress_t *progress) {
+    if (!progress) return -1;
+
+    /* Try to load from cache first */
+    int cache_result = load_keyslol_cache(progress);
+    bool have_cache = (cache_result == 0 && progress->puzzle_number == puzzle_number);
+
+    /* Check if cache is still fresh (< 24 hours) */
+    time_t now = time(NULL);
+    bool needs_refresh = !have_cache ||
+                         (now - progress->fetch_time >= KEYSLOL_REFRESH_INTERVAL);
+
+    if (!needs_refresh) {
+        /* Cache is fresh, use it */
+        double age_hours = (now - progress->fetch_time) / 3600.0;
+        printf("[+] Using cached Keys.lol data (%.1f hours old)\n", age_hours);
+        return 0;
+    }
+
+    /* Need to fetch fresh data */
+    printf("[+] Refreshing Keys.lol progress (daily update)...\n");
+
+    keyslol_progress_t fresh;
+    if (wizard_keyslol_fetch_progress(puzzle_number, &fresh) == 0) {
+        /* Save to cache */
+        save_keyslol_cache(&fresh);
+        *progress = fresh;
+        return 0;
+    }
+
+    /* Fetch failed - try to use stale cache as fallback */
+    if (have_cache) {
+        double age_hours = (now - progress->fetch_time) / 3600.0;
+        double age_days = age_hours / 24.0;
+        if (age_days > 7.0) {
+            printf("[!] Network error - using stale cache as fallback (%.1f days old, may be outdated)\n", age_days);
+        } else {
+            printf("[!] Network error - using stale cache as fallback (%.1f hours old)\n", age_hours);
+        }
+        return 0;
+    }
+
+    /* No cache available - fallback to no progress data */
+    printf("[!] No Keys.lol progress data available (source unavailable and no cache)\n");
+    printf("[i] Fallback: Will start search from beginning of range\n");
+    memset(progress, 0, sizeof(*progress));
+    return -1;
+}
+
+/* ============================================================================
  * Local Progress Tracking (Resume Capability)
  * ============================================================================ */
 
@@ -904,4 +1142,210 @@ int wizard_load_local_progress_count(int puzzle_number) {
 
     fclose(f);
     return count;
+}
+
+/* ============================================================================
+ * Multi-Source Aggregation (Combined Community Progress)
+ * ============================================================================ */
+
+int wizard_community_fetch_all_sources(int puzzle_number,
+                                        community_range_t **btc_ranges,
+                                        int *btc_count,
+                                        privatekeys_progress_t *privatekeys_progress,
+                                        keyslol_progress_t *keyslol_progress) {
+    if (!btc_ranges || !btc_count || !privatekeys_progress || !keyslol_progress) {
+        return -1;
+    }
+
+    /* Initialize all outputs */
+    *btc_ranges = NULL;
+    *btc_count = 0;
+    memset(privatekeys_progress, 0, sizeof(*privatekeys_progress));
+    memset(keyslol_progress, 0, sizeof(*keyslol_progress));
+
+    int success_count = 0;
+
+    printf("[+] Fetching community progress from all sources...\n");
+    printf("    Puzzle #%d\n\n", puzzle_number);
+
+    /* Source 1: BTCPuzzle.info (scanned ranges) */
+    printf("[1/3] BTCPuzzle.info:\n");
+    int btc_result = wizard_community_fetch(puzzle_number, btc_ranges, btc_count);
+    if (btc_result == 0) {
+        printf("      ✓ Success: %d scanned ranges\n", *btc_count);
+        success_count++;
+    } else {
+        printf("      ✗ Failed to fetch\n");
+    }
+
+    /* Source 2: privatekeys.pw */
+    printf("[2/3] Privatekeys.pw:\n");
+    int pk_result = wizard_privatekeys_get_progress(puzzle_number, privatekeys_progress);
+    if (pk_result == 0 && privatekeys_progress->percent_scanned > 0.0) {
+        printf("      ✓ Success: %.6f%% scanned", privatekeys_progress->percent_scanned);
+        if (privatekeys_progress->keys_scanned > 0) {
+            printf(" (%llu keys)", (unsigned long long)privatekeys_progress->keys_scanned);
+        }
+        printf("\n");
+        success_count++;
+    } else {
+        printf("      ✗ No data available\n");
+    }
+
+    /* Source 3: Keys.lol */
+    printf("[3/3] Keys.lol:\n");
+    int kl_result = wizard_keyslol_get_progress(puzzle_number, keyslol_progress);
+    if (kl_result == 0 && keyslol_progress->percent_scanned > 0.0) {
+        printf("      ✓ Success: %.4f%% scanned", keyslol_progress->percent_scanned);
+        if (keyslol_progress->keys_scanned > 0) {
+            printf(" (%llu keys)", (unsigned long long)keyslol_progress->keys_scanned);
+        }
+        printf("\n");
+        success_count++;
+    } else {
+        printf("      ✗ No data available\n");
+    }
+
+    printf("\n");
+
+    /* Summary */
+    if (success_count == 0) {
+        printf("[-] No community progress data available from any source\n");
+        printf("[i] All sources unavailable - using fallback mode (no progress optimization)\n");
+        printf("[i] Fallback strategy: Search will start from beginning of puzzle range\n");
+        printf("[i] Tip: Check network connection or try again later for optimized search\n");
+        return -1;
+    }
+
+    printf("[+] Successfully fetched data from %d/%d sources\n", success_count, 3);
+
+    /* Calculate combined progress (use maximum of all sources) */
+    double max_percent = 0.0;
+    const char *max_source = NULL;
+
+    if (privatekeys_progress->percent_scanned > max_percent) {
+        max_percent = privatekeys_progress->percent_scanned;
+        max_source = "privatekeys.pw";
+    }
+
+    if (keyslol_progress->percent_scanned > max_percent) {
+        max_percent = keyslol_progress->percent_scanned;
+        max_source = "Keys.lol";
+    }
+
+    if (max_percent > 0.0) {
+        printf("[+] Combined progress: %.6f%% (highest from %s)\n", max_percent, max_source);
+    }
+
+    if (*btc_count > 0) {
+        printf("[+] Additional %d specific ranges to exclude from BTCPuzzle.info\n", *btc_count);
+    }
+
+    return 0;
+}
+
+/* ============================================================================
+ * Progress Reporting (Opt-in)
+ * ============================================================================ */
+
+/**
+ * Report progress to community endpoint
+ *
+ * Sends current search progress to a community API endpoint if enabled.
+ * This is opt-in and requires report_progress_enabled = true.
+ *
+ * @param cfg Wizard configuration with progress data
+ * @return 0 on success, -1 on error, 1 if reporting disabled
+ */
+int wizard_community_report_progress(const wizard_config_t *cfg) {
+    if (!cfg) {
+        fprintf(stderr, "[-] wizard_community_report_progress: Invalid parameters\n");
+        return -1;
+    }
+
+    /* Check if progress reporting is enabled */
+    if (!cfg->report_progress_enabled) {
+        return 1;  /* Not an error, just disabled */
+    }
+
+    /* Check if URL is configured */
+    if (cfg->report_progress_url[0] == '\0') {
+        fprintf(stderr, "[-] Progress reporting enabled but no URL configured\n");
+        return -1;
+    }
+
+    /* Generate worker ID from hostname */
+    char worker_id[128] = {0};
+    if (gethostname(worker_id, sizeof(worker_id) - 1) != 0) {
+        snprintf(worker_id, sizeof(worker_id), "unknown-worker");
+    }
+
+    /* Escape worker_id for JSON */
+    char *worker_id_escaped = wizard_http_json_escape(worker_id);
+    if (!worker_id_escaped) {
+        fprintf(stderr, "[-] Failed to escape worker_id for JSON\n");
+        return -1;
+    }
+
+    /* Escape range strings for JSON */
+    char *range_start_escaped = wizard_http_json_escape(cfg->range_start);
+    char *range_end_escaped = wizard_http_json_escape(cfg->range_end);
+
+    if (!range_start_escaped || !range_end_escaped) {
+        free(worker_id_escaped);
+        if (range_start_escaped) free(range_start_escaped);
+        if (range_end_escaped) free(range_end_escaped);
+        fprintf(stderr, "[-] Failed to escape range strings for JSON\n");
+        return -1;
+    }
+
+    /* Build JSON payload */
+    char json_body[2048];
+    int json_len = snprintf(json_body, sizeof(json_body),
+                            "{\n"
+                            "  \"puzzle\": %d,\n"
+                            "  \"range_start\": \"%s\",\n"
+                            "  \"range_end\": \"%s\",\n"
+                            "  \"keys_checked\": %llu,\n"
+                            "  \"worker_id\": \"%s\",\n"
+                            "  \"timestamp\": %lld\n"
+                            "}",
+                            cfg->puzzle_number,
+                            range_start_escaped,
+                            range_end_escaped,
+                            (unsigned long long)cfg->local_completed,
+                            worker_id_escaped,
+                            (long long)time(NULL));
+
+    /* Free escaped strings */
+    free(worker_id_escaped);
+    free(range_start_escaped);
+    free(range_end_escaped);
+
+    if (json_len >= (int)sizeof(json_body)) {
+        fprintf(stderr, "[-] JSON payload too large\n");
+        return -1;
+    }
+
+    /* Send POST request */
+    char *response = NULL;
+    size_t response_len = 0;
+
+    int result = wizard_http_post_json(cfg->report_progress_url, json_body,
+                                       &response, &response_len);
+
+    if (result != 0) {
+        fprintf(stderr, "[-] Failed to report progress to %s\n", cfg->report_progress_url);
+        if (response) free(response);
+        return -1;
+    }
+
+    /* Success */
+    printf("[+] Progress reported successfully\n");
+    if (response && response_len > 0 && response_len < 500) {
+        printf("    Server response: %s\n", response);
+    }
+
+    if (response) free(response);
+    return 0;
 }

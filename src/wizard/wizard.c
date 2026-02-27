@@ -455,6 +455,96 @@ static int wizard_configure_community(wizard_config_t *cfg) {
         printf("  ✓ Local progress: %d ranges previously completed\n", local_count);
     }
 
+    /* === Webhook Notifications === */
+    printf("\n");
+    wizard_print_separator();
+    printf("\n\033[1mOptional: Webhook Notifications\033[0m\n");
+    printf("Get instant notifications when a key is found!\n\n");
+
+    /* Discord webhook */
+    bool enable_discord = wizard_ask_yesno("Configure Discord webhook?", false);
+    if (enable_discord) {
+        printf("\n\033[1;36m[i] Discord Webhook Setup\033[0m\n");
+        printf("To create a webhook:\n");
+        printf("  1. Open your Discord server settings\n");
+        printf("  2. Go to Integrations → Webhooks → New Webhook\n");
+        printf("  3. Copy the webhook URL\n\n");
+
+        wizard_ask_string(
+            "Discord webhook URL",
+            cfg->webhook_discord_url,
+            sizeof(cfg->webhook_discord_url),
+            "");
+
+        if (cfg->webhook_discord_url[0] != '\0') {
+            printf("\033[1;32m  ✓ Discord notifications enabled\033[0m\n");
+        }
+    } else {
+        cfg->webhook_discord_url[0] = '\0';
+    }
+
+    /* Telegram webhook */
+    bool enable_telegram = wizard_ask_yesno("Configure Telegram webhook?", false);
+    if (enable_telegram) {
+        printf("\n\033[1;36m[i] Telegram Webhook Setup\033[0m\n");
+        printf("To create a bot:\n");
+        printf("  1. Message @BotFather on Telegram\n");
+        printf("  2. Send /newbot and follow instructions\n");
+        printf("  3. Copy your bot token\n");
+        printf("  4. Format: https://api.telegram.org/bot<token>/sendMessage?chat_id=<chat_id>\n\n");
+
+        wizard_ask_string(
+            "Telegram bot URL",
+            cfg->webhook_telegram_url,
+            sizeof(cfg->webhook_telegram_url),
+            "");
+
+        if (cfg->webhook_telegram_url[0] != '\0') {
+            printf("\033[1;32m  ✓ Telegram notifications enabled\033[0m\n");
+        }
+    } else {
+        cfg->webhook_telegram_url[0] = '\0';
+    }
+
+    if (cfg->webhook_discord_url[0] == '\0' && cfg->webhook_telegram_url[0] == '\0') {
+        printf("\n\033[1;33m[i] Webhook notifications disabled\033[0m\n");
+        printf("    You can enable them later by editing %s\n", CONFIG_FILE);
+    }
+
+    /* === Progress Reporting Opt-in === */
+    printf("\n");
+    wizard_print_separator();
+    printf("\n\033[1mOptional: Progress Reporting\033[0m\n");
+
+    /* Display privacy warning */
+    wizard_print_privacy_warning();
+
+    /* Ask for opt-in */
+    printf("\n");
+    cfg->report_progress_enabled = wizard_ask_yesno(
+        "Enable progress reporting to community API?", false);
+
+    if (cfg->report_progress_enabled) {
+        printf("\n\033[1;32m[+] Progress reporting enabled\033[0m\n");
+
+        /* Ask for reporting URL */
+        const char *default_url = "https://btcpuzzle.info/api/report";
+        wizard_ask_string(
+            "Progress reporting API endpoint",
+            cfg->report_progress_url,
+            sizeof(cfg->report_progress_url),
+            default_url);
+
+        printf("  ✓ Reports will be sent to: %s\n", cfg->report_progress_url);
+        printf("  ✓ Data includes: puzzle number, range, keys checked, worker ID\n");
+        printf("  ✓ Frequency: Every checkpoint (%d seconds)\n",
+               cfg->checkpoint_interval_sec);
+    } else {
+        printf("\n\033[1;33m[i] Progress reporting disabled\033[0m\n");
+        printf("    You can enable it later by editing %s\n", CONFIG_FILE);
+        cfg->report_progress_url[0] = '\0';  /* Clear URL */
+    }
+
     return 0;
 }
 

@@ -12,6 +12,7 @@
  */
 
 #include "wizard.h"
+#include "wizard_webhooks.h"
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
 #include <stdio.h>
@@ -35,6 +36,102 @@ static volatile sig_atomic_t g_shutdown_requested = 0;
 static wizard_config_t *g_server_cfg = NULL;
 static dist_coordinator_t *g_server_coord = NULL;
 static volatile pid_t g_local_client_pid = 0;
+
+/* Track last result count to detect new keys found */
+static int g_last_result_count = 0;
+
+/* ============================================================================
+ * Webhook Helper Functions
+ * ============================================================================ */
+
+/**
+ * Parse Telegram webhook URL format: "token:chat_id" or "token"
+ * @param telegram_url Input URL string
+ * @param token Output buffer for bot token (can be NULL to skip)
+ * @param token_size Size of token buffer
+ * @param chat_id Output buffer for chat ID (can be NULL to skip)
+ * @param chat_id_size Size of chat_id buffer
+ * @return 0 if parsed successfully, -1 if format invalid
+ */
+static int parse_telegram_url(const char *telegram_url,
+                               char *token, size_t token_size,
+                               char *chat_id, size_t chat_id_size) {
+    if (!telegram_url || telegram_url[0] == '\0') {
+        return -1;
+    }
+
+    /* Find colon separator */
+    const char *colon = strchr(telegram_url, ':');
+    if (!colon) {
+        /* No chat_id, just token */
+        if (token) {
+            strncpy(token, telegram_url, token_size - 1);
+            token[token_size - 1] = '\0';
+        }
+        if (chat_id) {
+            chat_id[0] = '\0';
+        }
+        return 0;
+    }
+
+    /* Split token and chat_id */
+    size_t token_len = colon - telegram_url;
+    if (token && token_len > 0) {
+        size_t copy_len = (token_len < token_size - 1) ? token_len : token_size - 1;
+        strncpy(token, telegram_url, copy_len);
+        token[copy_len] = '\0';
+    }
+
+    if (chat_id && chat_id_size > 0) {
+        strncpy(chat_id, colon + 1, chat_id_size - 1);
+        chat_id[chat_id_size - 1] = '\0';
+    }
+
+    return 0;
+}
+
+/**
+ * Check for newly found keys and send webhook notifications
+ * @param coord Coordinator state
+ * @param cfg Wizard configuration
+ */
+static void check_and_notify_found_keys(dist_coordinator_t *coord, wizard_config_t *cfg) {
+    /* Check if any new keys were found since last check */
+    if (coord->result_count > g_last_result_count) {
+        /* Send notifications for each new result */
+        for (int i = g_last_result_count; i < coord->result_count; i++) {
+            dist_result_t *result = &coord->results[i];
+
+            /* Parse Telegram configuration */
+            char tg_token[256] = {0}, tg_chat_id[128] = {0};
+            if (cfg->webhook_telegram_url[0] != '\0') {
+                parse_telegram_url(cfg->webhook_telegram_url, tg_token, sizeof(tg_token),
+                                   tg_chat_id, sizeof(tg_chat_id));
+            }
+
+            /* Send webhook notifications */
+            int notified = wizard_webhook_notify_found(
+                cfg->webhook_discord_url[0] != '\0' ? cfg->webhook_discord_url : NULL,
+                tg_token[0] != '\0' ? tg_token : NULL,
+                tg_chat_id[0] != '\0' ? tg_chat_id : NULL,
+                result->private_key,
+                result->address,
+                cfg->puzzle_number
+            );
+
+            if (notified > 0) {
+                printf("[+] Sent %d webhook notification(s) for found key\n", notified);
+            }
+        }
+
+        /* Update last known count */
+        g_last_result_count = coord->result_count;
+    }
+}
+
+/* ============================================================================
+ * Signal Handler
+ * ============================================================================ */
 
 static void server_signal_handler(int sig) {
     (void)sig;
@@ -626,6 +723,9 @@ int wizard_server_run(wizard_config_t *cfg) {
     while (g_server_running) {
         /* Process coordinator events */
         int status = dist_coordinator_process(&coord, 500);
+
+        /* Check for newly found keys and send webhooks */
+        check_and_notify_found_keys(&coord, cfg);
 
         if (status == 1) {
             printf("\033[H\033[J");  /* Clear screen */

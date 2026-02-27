@@ -103,6 +103,10 @@ void wizard_config_init(wizard_config_t *cfg) {
     cfg->community_sync_interval_sec = 3600;
     strcpy(cfg->progress_file, "wizard_progress.dat");
     strcpy(cfg->exclusion_file, "wizard_excluded.dat");
+    cfg->webhook_discord_url[0] = '\0';
+    cfg->webhook_telegram_url[0] = '\0';
+    cfg->report_progress_enabled = false;  /* Opt-in, disabled by default */
+    cfg->report_progress_url[0] = '\0';
     cfg->server_also_worker = true;
     strcpy(cfg->server_host, "0.0.0.0");
 }
@@ -170,6 +174,16 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     fprintf(f, "    \"community_excluded\": %llu,\n", (unsigned long long)cfg->community_excluded);
     fprintf(f, "    \"progress_file\": \"%s\",\n", cfg->progress_file);
     fprintf(f, "    \"exclusion_file\": \"%s\"\n", cfg->exclusion_file);
+    fprintf(f, "  },\n");
+
+    fprintf(f, "  \"webhooks\": {\n");
+    fprintf(f, "    \"discord_url\": \"%s\",\n", cfg->webhook_discord_url);
+    fprintf(f, "    \"telegram_url\": \"%s\"\n", cfg->webhook_telegram_url);
+    fprintf(f, "  },\n");
+
+    fprintf(f, "  \"progress_reporting\": {\n");
+    fprintf(f, "    \"report_progress_enabled\": %s,\n", cfg->report_progress_enabled ? "true" : "false");
+    fprintf(f, "    \"report_progress_url\": \"%s\"\n", cfg->report_progress_url);
     fprintf(f, "  }\n");
 
     fprintf(f, "}\n");
@@ -304,6 +318,12 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     cfg->community_excluded = json_get_llong(json, "community_excluded", 0);
     json_get_string(json, "progress_file", cfg->progress_file, sizeof(cfg->progress_file), "wizard_progress.dat");
     json_get_string(json, "exclusion_file", cfg->exclusion_file, sizeof(cfg->exclusion_file), "wizard_excluded.dat");
+
+    json_get_string(json, "discord_url", cfg->webhook_discord_url, sizeof(cfg->webhook_discord_url), "");
+    json_get_string(json, "telegram_url", cfg->webhook_telegram_url, sizeof(cfg->webhook_telegram_url), "");
+
+    cfg->report_progress_enabled = json_get_bool(json, "report_progress_enabled", false);
+    json_get_string(json, "report_progress_url", cfg->report_progress_url, sizeof(cfg->report_progress_url), "");
 
     free(json);
     return 0;
