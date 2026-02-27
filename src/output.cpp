@@ -131,6 +131,103 @@ void output_progress(double percent, double speed_mkeys,
     }
 }
 
+void output_progress_detailed(double percent, double speed_mkeys,
+                              uint64_t keys_checked, int eta_seconds,
+                              uint64_t memory_used_mb, uint64_t memory_total_mb,
+                              double *speed_history, int speed_history_count,
+                              int active_threads) {
+    // Only show detailed progress in NORMAL and VERBOSE modes
+    if (g_output_level < OUTPUT_NORMAL) return;
+
+    // Get terminal width for responsive layout
+    int width = platform_terminal_width();
+    if (width > 80) width = 80;  /* Cap at reasonable width */
+    if (width < 60) width = 60;  /* Minimum for detailed display */
+
+    // Format ETA
+    char eta_str[32];
+    if (eta_seconds < 0 || eta_seconds > MAX_ETA_SECONDS) {
+        snprintf(eta_str, sizeof(eta_str), "N/A");
+    } else if (eta_seconds < 3600) {
+        snprintf(eta_str, sizeof(eta_str), "%dm %ds", eta_seconds/60, eta_seconds%60);
+    } else if (eta_seconds < 86400) {
+        snprintf(eta_str, sizeof(eta_str), "%dh %dm", eta_seconds/3600, (eta_seconds%3600)/60);
+    } else {
+        snprintf(eta_str, sizeof(eta_str), "%dd %dh", eta_seconds/86400, (eta_seconds%86400)/3600);
+    }
+
+    // Clear previous output and move up (assuming 9 lines for the box)
+    printf("\033[9A\033[J");
+
+    // Top border
+    printf(CLR_CYAN BOX_TL);
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf(BOX_TR CLR_RESET "\n");
+
+    // Title line
+    printf(CLR_CYAN BOX_V CLR_RESET CLR_BOLD " %-*s" CLR_RESET CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 3, "SEARCH PROGRESS");
+
+    // Separator
+    printf(CLR_CYAN "╠");
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf("╣" CLR_RESET "\n");
+
+    // Progress bar line
+    printf(CLR_CYAN BOX_V CLR_RESET " Progress: ");
+    output_progress_bar(percent, 30);
+    printf(" %.2f%% " CLR_CYAN BOX_V CLR_RESET "\n", percent);
+
+    // Speed line with graph
+    printf(CLR_CYAN BOX_V CLR_RESET " Speed:    %.2f Mkeys/s ", speed_mkeys);
+    if (speed_history && speed_history_count > 0) {
+        printf("[");
+        output_speed_graph(speed_history, speed_history_count, 3);
+        printf("]");
+    }
+    printf(" " CLR_CYAN BOX_V CLR_RESET "\n");
+
+    // Keys checked line
+    char keys_str[64];
+    if (keys_checked >= 1e12) {
+        snprintf(keys_str, sizeof(keys_str), "%.2fT keys", keys_checked / 1e12);
+    } else if (keys_checked >= 1e9) {
+        snprintf(keys_str, sizeof(keys_str), "%.2fG keys", keys_checked / 1e9);
+    } else if (keys_checked >= 1e6) {
+        snprintf(keys_str, sizeof(keys_str), "%.2fM keys", keys_checked / 1e6);
+    } else {
+        snprintf(keys_str, sizeof(keys_str), "%.2fK keys", keys_checked / 1e3);
+    }
+    printf(CLR_CYAN BOX_V CLR_RESET " Keys:     %-*s" CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 13, keys_str);
+
+    // ETA line
+    printf(CLR_CYAN BOX_V CLR_RESET " ETA:      %-*s" CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 13, eta_str);
+
+    // Memory usage line with bar
+    if (memory_total_mb > 0) {
+        printf(CLR_CYAN BOX_V CLR_RESET " Memory:   ");
+        output_memory_bar(memory_used_mb, memory_total_mb, 30);
+        printf(" %llu/%llu MB " CLR_CYAN BOX_V CLR_RESET "\n",
+               (unsigned long long)memory_used_mb, (unsigned long long)memory_total_mb);
+    } else {
+        printf(CLR_CYAN BOX_V CLR_RESET " Memory:   %-*s" CLR_CYAN BOX_V CLR_RESET "\n",
+               width - 13, "N/A");
+    }
+
+    // Threads line
+    printf(CLR_CYAN BOX_V CLR_RESET " Threads:  %-*d" CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 13, active_threads);
+
+    // Bottom border
+    printf(CLR_CYAN BOX_BL);
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf(BOX_BR CLR_RESET "\n");
+
+    fflush(stdout);
+}
+
 void output_progress_bar(double percent, int width) {
     int filled = (int)(percent / 100.0 * width);
     if (filled > width) filled = width;

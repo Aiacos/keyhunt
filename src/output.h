@@ -32,6 +32,13 @@ void output_banner(const char *version, const char *mode, int threads,
 void output_progress(double percent, double speed_mkeys,
                      uint64_t keys_checked, int eta_seconds);
 
+// Detailed progress display (multi-line box with graphs and stats)
+void output_progress_detailed(double percent, double speed_mkeys,
+                              uint64_t keys_checked, int eta_seconds,
+                              uint64_t memory_used_mb, uint64_t memory_total_mb,
+                              double *speed_history, int speed_history_count,
+                              int active_threads);
+
 // Status messages (respects verbosity)
 void output_info(const char *fmt, ...);      // [I] prefix
 void output_success(const char *fmt, ...);   // [+] prefix
