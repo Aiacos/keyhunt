@@ -778,9 +778,10 @@ TEST(bsgs_batch_compute_points_small_length) {
     bsgs_batch_ctx_t ctx;
     bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
 
-    Point startP, GSn, _2GSn;
+    Point startP, _2GSn;
+    Point GSn[16];  /* GSn must be an array of size hLength */
     /* Test with small hLength */
-    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 16);
+    bsgs_batch_compute_points(&ctx, &startP, GSn, &_2GSn, 16);
     ASSERT_TRUE(1);
 
     bsgs_batch_free(&ctx);
@@ -790,10 +791,12 @@ TEST(bsgs_batch_compute_points_typical_length) {
     bsgs_batch_ctx_t ctx;
     bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
 
-    Point startP, GSn, _2GSn;
+    Point startP, _2GSn;
     /* Test with typical hLength (CPU_GRP_SIZE/2 - 1) */
     int typical_length = 512;  /* Common value for CPU_GRP_SIZE=1024 */
-    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, typical_length);
+    Point *GSn = new Point[typical_length];  /* GSn must be an array of size hLength */
+    bsgs_batch_compute_points(&ctx, &startP, GSn, &_2GSn, typical_length);
+    delete[] GSn;
     ASSERT_TRUE(1);
 
     bsgs_batch_free(&ctx);
@@ -803,8 +806,9 @@ TEST(bsgs_batch_compute_points_large_length) {
     bsgs_batch_ctx_t ctx;
     bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
 
-    Point startP, GSn, _2GSn;
-    /* Test with large hLength */
+    Point startP, _2GSn;
+    Point GSn;  /* Single point is OK - function should reject hLength >= 512 */
+    /* Test with large hLength - should be rejected by validation */
     bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 2048);
     ASSERT_TRUE(1);
 
@@ -827,12 +831,20 @@ TEST(bsgs_batch_compute_points_multiple_calls) {
     bsgs_batch_ctx_t ctx;
     bsgs_batch_init(&ctx, BSGS_BATCH_SIZE);
 
-    Point startP, GSn, _2GSn;
+    Point startP, _2GSn;
 
     /* Multiple sequential calls should not crash */
-    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 256);
-    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 512);
-    bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, 128);
+    Point *GSn1 = new Point[256];
+    bsgs_batch_compute_points(&ctx, &startP, GSn1, &_2GSn, 256);
+    delete[] GSn1;
+
+    /* hLength=512 should be rejected (>= CPU_GRP_SIZE/2) */
+    Point GSn2;
+    bsgs_batch_compute_points(&ctx, &startP, &GSn2, &_2GSn, 512);
+
+    Point *GSn3 = new Point[128];
+    bsgs_batch_compute_points(&ctx, &startP, GSn3, &_2GSn, 128);
+    delete[] GSn3;
 
     ASSERT_TRUE(1);
 
@@ -840,15 +852,25 @@ TEST(bsgs_batch_compute_points_multiple_calls) {
 }
 
 TEST(bsgs_batch_compute_points_different_batch_sizes) {
-    Point startP, GSn, _2GSn;
+    Point startP, _2GSn;
     int batch_sizes[] = {64, 128, 256, 512, 1024};
 
     for (int i = 0; i < 5; i++) {
         bsgs_batch_ctx_t ctx;
         bsgs_batch_init(&ctx, batch_sizes[i]);
 
-        /* Test with each batch size */
-        bsgs_batch_compute_points(&ctx, &startP, &GSn, &_2GSn, batch_sizes[i] / 2 - 1);
+        int hLength = batch_sizes[i] / 2 - 1;
+
+        /* Only allocate if hLength is positive and reasonable */
+        if (hLength > 0 && hLength < 512) {
+            /* Allocate GSn array of appropriate size */
+            Point *GSn = new Point[hLength];
+
+            /* Test with each batch size */
+            bsgs_batch_compute_points(&ctx, &startP, GSn, &_2GSn, hLength);
+
+            delete[] GSn;
+        }
 
         bsgs_batch_free(&ctx);
     }
