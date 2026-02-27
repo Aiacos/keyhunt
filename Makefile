@@ -27,6 +27,12 @@ else ifneq (,$(findstring w64-mingw32,$(CXX)))
   EXE_EXT := .exe
   PLATFORM_LIBS := -lws2_32 -lbcrypt
   COMMON_FLAGS := -m64 -mssse3
+else ifneq (,$(MSYSTEM))
+  # Native MSYS2/MinGW build (MSYSTEM is set by MSYS2 shell)
+  IS_MINGW := 1
+  EXE_EXT := .exe
+  PLATFORM_LIBS := -lws2_32 -lbcrypt
+  COMMON_FLAGS ?= -m64 -march=native -mtune=native -mssse3
 else
   IS_MINGW := 0
   EXE_EXT :=
