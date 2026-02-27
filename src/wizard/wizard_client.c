@@ -608,8 +608,22 @@ static int create_target_file(const char *target_address) {
 
     snprintf(g_target_file, sizeof(g_target_file), "/tmp/wizard_target_%d.txt", getpid());
 
-    FILE *f = fopen(g_target_file, "w");
+    /* Use O_EXCL to prevent symlink/TOCTOU attacks in /tmp */
+    int tfd = open(g_target_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (tfd < 0) {
+        /* If file already exists from a previous run, unlink and retry */
+        if (errno == EEXIST) {
+            unlink(g_target_file);
+            tfd = open(g_target_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        }
+        if (tfd < 0) {
+            fprintf(stderr, "[-] Failed to create target file: %s\n", strerror(errno));
+            return -1;
+        }
+    }
+    FILE *f = fdopen(tfd, "w");
     if (!f) {
+        close(tfd);
         fprintf(stderr, "[-] Failed to create target file: %s\n", strerror(errno));
         return -1;
     }

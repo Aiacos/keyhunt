@@ -19,19 +19,19 @@ ifneq (,$(findstring mingw,$(CXX)))
   IS_MINGW := 1
   EXE_EXT := .exe
   # Windows doesn't have -ldl, and uses different socket libraries
-  PLATFORM_LIBS := -lws2_32 -lbcrypt
+  PLATFORM_LIBS := -lws2_32 -lbcrypt -lpsapi
   # Disable -march=native for cross-compilation (can't detect target CPU)
   COMMON_FLAGS := -m64 -mssse3
 else ifneq (,$(findstring w64-mingw32,$(CXX)))
   IS_MINGW := 1
   EXE_EXT := .exe
-  PLATFORM_LIBS := -lws2_32 -lbcrypt
+  PLATFORM_LIBS := -lws2_32 -lbcrypt -lpsapi
   COMMON_FLAGS := -m64 -mssse3
 else ifneq (,$(MSYSTEM))
   # Native MSYS2/MinGW build (MSYSTEM is set by MSYS2 shell)
   IS_MINGW := 1
   EXE_EXT := .exe
-  PLATFORM_LIBS := -lws2_32 -lbcrypt
+  PLATFORM_LIBS := -lws2_32 -lbcrypt -lpsapi
   COMMON_FLAGS ?= -m64 -march=native -mtune=native -mssse3
 else
   IS_MINGW := 0

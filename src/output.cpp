@@ -3,7 +3,9 @@
 #include "platform/platform.h"
 #include <stdio.h>
 #include <stdarg.h>
+#if !PLATFORM_WINDOWS
 #include <unistd.h>
+#endif
 
 static output_level_t g_output_level = OUTPUT_NORMAL;
 
@@ -156,8 +158,8 @@ void output_progress_detailed(double percent, double speed_mkeys,
         snprintf(eta_str, sizeof(eta_str), "%dd %dh", eta_seconds/86400, (eta_seconds%86400)/3600);
     }
 
-    // Clear previous output and move up (assuming 9 lines for the box)
-    printf("\033[9A\033[J");
+    // Clear previous output and move up (10 lines for the box)
+    printf("\033[10A\033[J");
 
     // Top border
     printf(CLR_CYAN BOX_TL);

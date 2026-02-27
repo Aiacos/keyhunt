@@ -309,7 +309,11 @@ void dist_federation_shutdown(dist_coordinator_t *coordinator) {
  * ============================================================================ */
 
 static bool g_openssl_initialized = false;
+#if PLATFORM_POSIX
 static platform_mutex_t g_openssl_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+#else
+static platform_mutex_t g_openssl_init_mutex;  /* Initialized dynamically via platform_mutex_init() */
+#endif
 
 /* Initialize OpenSSL library (thread-safe, called once) */
 static void tls_init_openssl(void) {
@@ -643,8 +647,14 @@ static int json_get_string(const char *json, const char *key, char *out, size_t 
     /* Must start with opening quote */
     if (*start != '"') return -1;
     start++;  /* Skip the opening quote */
-    const char *end = strchr(start, '"');
-    if (!end || end < start) return -1;  /* Also check for inverted pointers */
+    /* Scan for closing quote, skipping escaped quotes */
+    const char *end = start;
+    while (*end) {
+        if (*end == '\\' && *(end + 1) == '"') { end += 2; continue; }
+        if (*end == '"') break;
+        end++;
+    }
+    if (*end != '"') return -1;
     size_t len = (size_t)(end - start);
     if (len >= outsz) len = outsz - 1;
     memcpy(out, start, len);  /* memcpy is safer than strncpy here */

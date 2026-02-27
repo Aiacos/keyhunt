@@ -6,6 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <fcntl.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -390,8 +391,10 @@ int progress_save(const progress_state_t *state) {
 
     if (filepath[0] == '\0') return -1;
 
-    FILE *f = fopen(filepath, "w");
-    if (!f) return -1;
+    int pfd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (pfd < 0) return -1;
+    FILE *f = fdopen(pfd, "w");
+    if (!f) { close(pfd); return -1; }
 
     // Write JSON with proper escaping for string values
     fprintf(f, "{\n");

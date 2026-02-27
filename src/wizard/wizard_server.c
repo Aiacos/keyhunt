@@ -338,7 +338,7 @@ static int count_active_workers(dist_coordinator_t *coord, time_t now) {
     for (int i = 0; i < coord->worker_count; i++) {
         dist_worker_t *w = &coord->workers[i];
         if (w->connected) {
-            time_t last_seen = (time_t)w->last_heartbeat;
+            time_t last_seen = (time_t)(w->last_heartbeat / 1000);  /* Convert ms to seconds */
             /* Consider worker active if heartbeat within last 60 seconds */
             if (last_seen == 0 || (now - last_seen) < 60) {
                 active++;
