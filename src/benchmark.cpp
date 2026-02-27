@@ -222,6 +222,55 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
     }
     printf("\n");
 
+    // Detect performance regression (>10% slowdown)
+    double actual_change = 0.0;
+    int regression_status = perfdb_detect_regression(
+        db_benchmark.mode,
+        db_benchmark.hardware_hash,
+        -10.0,  // 10% slowdown threshold
+        &actual_change
+    );
+
+    if (regression_status == 1) {
+        // Regression detected - display warning
+        printf(CLR_RED);
+        print_border_line(max_width, '!');
+        printf(CLR_RESET);
+
+        const char *warning_title = "PERFORMANCE REGRESSION DETECTED";
+        int warning_len = (int)strlen(warning_title);
+        int warning_padding = (max_width - warning_len) / 2;
+        if (warning_padding < 0) warning_padding = 0;
+
+        for (int i = 0; i < warning_padding; i++) printf(" ");
+        printf(CLR_RED CLR_BOLD "%s" CLR_RESET "\n", warning_title);
+
+        printf(CLR_RED);
+        print_border_line(max_width, '!');
+        printf(CLR_RESET "\n");
+
+        printf(CLR_YELLOW "⚠" CLR_RESET " Performance has " CLR_RED "decreased by %.1f%%" CLR_RESET " compared to historical average\n", -actual_change);
+        printf("\n");
+        printf(CLR_BOLD "Possible causes:" CLR_RESET "\n");
+        printf("  • " CLR_DIM "Thermal throttling" CLR_RESET " - CPU/GPU may be overheating\n");
+        printf("  • " CLR_DIM "Background processes" CLR_RESET " - Other applications consuming resources\n");
+        printf("  • " CLR_DIM "Power saving mode" CLR_RESET " - System may be in low-power state\n");
+        printf("  • " CLR_DIM "Configuration changes" CLR_RESET " - BIOS settings or system updates\n");
+        printf("  • " CLR_DIM "Hardware degradation" CLR_RESET " - Component aging or failure\n");
+        printf("\n");
+        printf(CLR_BOLD "Recommendations:" CLR_RESET "\n");
+        printf("  1. Check system temperature (use 'sensors' or monitoring tools)\n");
+        printf("  2. Close unnecessary applications and background processes\n");
+        printf("  3. Ensure system is plugged in and not in power-saving mode\n");
+        printf("  4. Review recent BIOS/system updates or configuration changes\n");
+        printf("  5. Run the benchmark again to confirm the regression\n");
+        printf("\n");
+    } else if (regression_status == 0 && actual_change > 0.0) {
+        // Performance improved
+        printf(CLR_GREEN "✓" CLR_RESET " Performance " CLR_GREEN "improved by %.1f%%" CLR_RESET " compared to historical average\n", actual_change);
+        printf("\n");
+    }
+
     return 0;
 }
 
