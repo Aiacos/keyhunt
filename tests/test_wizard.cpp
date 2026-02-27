@@ -17,7 +17,13 @@ extern "C" {
 
 #include <string.h>
 #include <stdlib.h>
+#include "platform/platform.h"
+
+#if !PLATFORM_WINDOWS
 #include <unistd.h>
+#else
+#include <direct.h>    /* _mkdir */
+#endif
 #include <sys/stat.h>
 
 /* ============================================================================
@@ -248,7 +254,11 @@ static char g_wizard_test_dir[256] = {0};
 
 static void setup_wizard_test_dir(void) {
     snprintf(g_wizard_test_dir, sizeof(g_wizard_test_dir), "/tmp/keyhunt_wizard_test_%d", getpid());
+#if PLATFORM_WINDOWS
+    _mkdir(g_wizard_test_dir);
+#else
     mkdir(g_wizard_test_dir, 0755);
+#endif
 }
 
 static void cleanup_wizard_test_dir(void) {

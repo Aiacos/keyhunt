@@ -10,7 +10,12 @@
 #include <string.h>
 #include <time.h>
 #include <inttypes.h>   /* PRIu64, SCNu64 */
-#include <unistd.h>     /* gethostname */
+
+#if PLATFORM_WINDOWS
+#include <winsock2.h>   /* gethostname on Windows */
+#else
+#include <unistd.h>     /* gethostname on POSIX */
+#endif
 
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
