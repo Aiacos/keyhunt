@@ -23,6 +23,8 @@
 #include "../cli.h"
 
 #ifdef __cplusplus
+/* Forward declaration of Int class for C++ compilation */
+class Int;
 extern "C" {
 #endif
 
@@ -93,6 +95,15 @@ typedef struct {
     uint64_t n_value;             /* N value (baby steps count) */
     int      k_factor;            /* K multiplication factor */
     uint64_t m_value;             /* M value (sqrt of N) */
+
+    /* Extended precision parameters (for bit ranges > 64) */
+#ifdef __cplusplus
+    Int*     n_value_int;         /* N value as Int* (256-bit precision) */
+    Int*     m_value_int;         /* M value as Int* (256-bit precision) */
+#else
+    void*    n_value_int;         /* N value as Int* (opaque in C) */
+    void*    m_value_int;         /* M value as Int* (opaque in C) */
+#endif
 
     /* Bloom filter parameters */
     int      bloom_multiplier;    /* Bloom filter size multiplier */
