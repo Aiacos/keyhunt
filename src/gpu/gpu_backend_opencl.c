@@ -40,6 +40,23 @@ static gpu_backend_info_t g_info;
 // ============================================================================
 // Multi-device support infrastructure
 // ============================================================================
+//
+// OpenCL multi-device strategy (following CUDA backend patterns):
+// 1. Enumerate all OpenCL platforms (AMD, NVIDIA, Intel, etc.)
+// 2. Enumerate all GPU devices across all platforms
+// 3. Create separate context and command queue per device
+// 4. Distribute work proportionally based on device performance weights
+// 5. Track per-device statistics (throughput, keys processed)
+// 6. Support heterogeneous multi-vendor systems (AMD + NVIDIA + Intel)
+//
+// Performance weights are assigned based on:
+// - Vendor (AMD RDNA > NVIDIA via OpenCL > Intel)
+// - Compute units (more CUs = higher weight)
+// - Optimal parameters (blocks/CU, keys/work-item, work-group size)
+//
+// Work distribution: Faster devices get proportionally more work per iteration,
+// reducing overall search time on heterogeneous systems.
+// ============================================================================
 
 #define MAX_OPENCL_DEVICES 8
 #define MAX_OPENCL_PLATFORMS 4
@@ -56,6 +73,14 @@ typedef struct {
     int compressed;  // 0 = uncompressed, 2/3 = compressed prefix
     int valid;
 } FoundKey;
+
+// Device-specific optimal parameters (similar to CUDA's arch_params_t)
+typedef struct {
+    int blocks_per_cu;         // Blocks per compute unit
+    int keys_per_work_item;    // Keys processed per work-item
+    int work_group_size;       // Work-items per work-group
+    double performance_weight; // Relative performance (for load balancing)
+} opencl_device_params_t;
 
 // Per-device context
 typedef struct {
@@ -75,6 +100,9 @@ typedef struct {
     cl_ulong global_mem_size;
     cl_ulong local_mem_size;
 
+    // Device-specific optimal parameters
+    opencl_device_params_t optimal_params;
+
     // Device memory buffers
     cl_mem d_GTable;
     cl_mem d_targets;
@@ -91,6 +119,7 @@ typedef struct {
 
     // Statistics
     volatile uint64_t keys_processed;
+    double avg_throughput_mkeys;  // Moving average throughput (MKey/s)
 } opencl_device_t;
 
 static opencl_device_t g_devices[MAX_OPENCL_DEVICES];
@@ -162,6 +191,85 @@ static inline uint64_t u256_sub_sat_u64_host(const uint256_d *a, const uint256_d
 
 static char *g_opencl_kernel_source = NULL;
 static size_t g_opencl_kernel_source_len = 0;
+
+// Get optimal parameters based on device vendor and compute units
+static opencl_device_params_t get_optimal_params_opencl(const char *vendor, cl_uint compute_units) {
+    opencl_device_params_t params;
+
+    // Default conservative values
+    params.blocks_per_cu = 16;
+    params.keys_per_work_item = 1024;
+    params.work_group_size = 256;
+    params.performance_weight = 1.0;
+
+    // Vendor-specific tuning based on architecture characteristics
+    if (strstr(vendor, "AMD") || strstr(vendor, "Advanced Micro Devices")) {
+        // AMD RDNA architecture (RX 6000/7000 series)
+        if (compute_units >= 60) {
+            // High-end AMD (RX 7900 XT/XTX, RX 6900 XT)
+            params.blocks_per_cu = 32;
+            params.keys_per_work_item = 2048;
+            params.work_group_size = 256;
+            params.performance_weight = 1.2;
+        } else if (compute_units >= 40) {
+            // Mid-range AMD (RX 7800 XT, RX 6800)
+            params.blocks_per_cu = 28;
+            params.keys_per_work_item = 1536;
+            params.work_group_size = 256;
+            params.performance_weight = 1.1;
+        } else if (compute_units >= 24) {
+            // Entry-level AMD (RX 7600, RX 6700)
+            params.blocks_per_cu = 24;
+            params.keys_per_work_item = 1024;
+            params.work_group_size = 256;
+            params.performance_weight = 1.0;
+        } else {
+            // Low-end AMD
+            params.blocks_per_cu = 16;
+            params.keys_per_work_item = 512;
+            params.work_group_size = 256;
+            params.performance_weight = 0.8;
+        }
+    } else if (strstr(vendor, "NVIDIA")) {
+        // NVIDIA GPUs via OpenCL (less optimal than CUDA, but supported)
+        if (compute_units >= 80) {
+            // High-end NVIDIA (RTX 3090, RTX 4090)
+            params.blocks_per_cu = 24;
+            params.keys_per_work_item = 1536;
+            params.work_group_size = 256;
+            params.performance_weight = 1.1;
+        } else if (compute_units >= 40) {
+            // Mid-range NVIDIA (RTX 3070, RTX 4070)
+            params.blocks_per_cu = 20;
+            params.keys_per_work_item = 1024;
+            params.work_group_size = 256;
+            params.performance_weight = 1.0;
+        } else {
+            // Entry-level NVIDIA
+            params.blocks_per_cu = 16;
+            params.keys_per_work_item = 512;
+            params.work_group_size = 256;
+            params.performance_weight = 0.9;
+        }
+    } else if (strstr(vendor, "Intel")) {
+        // Intel GPUs (Arc series, integrated GPUs)
+        if (compute_units >= 32) {
+            // Intel Arc discrete GPUs
+            params.blocks_per_cu = 20;
+            params.keys_per_work_item = 1024;
+            params.work_group_size = 256;
+            params.performance_weight = 0.9;
+        } else {
+            // Intel integrated GPUs (conservative)
+            params.blocks_per_cu = 12;
+            params.keys_per_work_item = 512;
+            params.work_group_size = 128;
+            params.performance_weight = 0.6;
+        }
+    }
+
+    return params;
+}
 
 // Load OpenCL kernel source from file
 static int load_opencl_kernel_source(void) {
@@ -377,6 +485,13 @@ static int enumerate_opencl_devices(void) {
             clGetDeviceInfo(dev->device, CL_DEVICE_LOCAL_MEM_SIZE,
                            sizeof(dev->local_mem_size), &dev->local_mem_size, NULL);
 
+            // Set optimal parameters based on vendor and compute units
+            dev->optimal_params = get_optimal_params_opencl(dev->vendor_name, dev->compute_units);
+
+            // Initialize statistics
+            dev->keys_processed = 0;
+            dev->avg_throughput_mkeys = 0.0;
+
             printf("[OpenCL]   Device %d: %s\n", total_devices, dev->device_name);
             printf("[OpenCL]     Vendor: %s\n", dev->vendor_name);
             printf("[OpenCL]     Compute Units: %u\n", dev->compute_units);
@@ -385,6 +500,10 @@ static int enumerate_opencl_devices(void) {
                    (unsigned long long)(dev->global_mem_size / (1024 * 1024)));
             printf("[OpenCL]     Local Memory: %llu KB\n",
                    (unsigned long long)(dev->local_mem_size / 1024));
+            printf("[OpenCL]     Optimal config: %d blocks/CU, %d keys/work-item, WG size %d\n",
+                   dev->optimal_params.blocks_per_cu,
+                   dev->optimal_params.keys_per_work_item,
+                   dev->optimal_params.work_group_size);
 
             // Create context for this device
             dev->context = clCreateContext(NULL, 1, &dev->device, NULL, NULL, &err);
@@ -498,6 +617,52 @@ int gpu_backend_init(gpu_backend_info_t *info) {
 
 int gpu_backend_available(void) {
     return g_available;
+}
+
+// Get information about all OpenCL devices
+int gpu_backend_get_device_count(void) {
+    return g_available ? g_device_count : 0;
+}
+
+// Get information about a specific OpenCL device
+int gpu_backend_get_device_info(int device_id, gpu_backend_info_t *info) {
+    if (!g_available || device_id < 0 || device_id >= g_device_count || !info) {
+        return -1;
+    }
+
+    opencl_device_t *dev = &g_devices[device_id];
+    if (!dev->active) {
+        return -1;
+    }
+
+    memset(info, 0, sizeof(*info));
+    info->gpu_count = 1;  // Single device info
+    info->vram_mb = (uint64_t)(dev->global_mem_size / (1024 * 1024));
+    snprintf(info->name, sizeof(info->name), "%s", dev->device_name);
+    info->multiprocessors = dev->compute_units;
+    info->max_threads_per_block = (int)dev->max_work_group_size;
+    info->compute_major = 1;
+    info->compute_minor = 2;
+
+    return 0;
+}
+
+// Get multi-device statistics
+void gpu_backend_get_stats(uint64_t *total_keys, double *total_mkeys_per_sec) {
+    if (!g_available || !total_keys || !total_mkeys_per_sec) {
+        return;
+    }
+
+    *total_keys = 0;
+    *total_mkeys_per_sec = 0.0;
+
+    for (int d = 0; d < g_device_count; d++) {
+        opencl_device_t *dev = &g_devices[d];
+        if (dev->active) {
+            *total_keys += dev->keys_processed;
+            *total_mkeys_per_sec += dev->avg_throughput_mkeys;
+        }
+    }
 }
 
 void gpu_backend_shutdown(void) {
@@ -1011,13 +1176,17 @@ int gpu_full_search(const gpu_search_config_t *config) {
     uint64_t total_keys = 0;
     int total_found = 0;
 
-    // Kernel launch parameters (conservative defaults for OpenCL)
-    // These will be refined in auto-tuning subtask 2-6
-    const int keys_per_thread = 1024;
-    const int threads_per_block = 256;
+    // Calculate total performance weight for load balancing
+    double total_performance_weight = 0.0;
+    for (int d = 0; d < g_device_count; d++) {
+        if (g_devices[d].active) {
+            total_performance_weight += g_devices[d].optimal_params.performance_weight;
+        }
+    }
 
     // Timing
     uint64_t start_time_ns = platform_time_now_ns();
+    uint64_t last_report_time_ns = start_time_ns;
 
 #ifdef __cplusplus
     // C++ mode: use atomic load
@@ -1026,16 +1195,25 @@ int gpu_full_search(const gpu_search_config_t *config) {
     // C mode: use volatile read
     while (!(*config->should_stop) && u256_cmp_host(&cursor, &end_key) < 0) {
 #endif
-        // Launch kernel on all active devices
+        // Launch kernel on all active devices with proportional work distribution
         for (int d = 0; d < g_device_count; d++) {
             opencl_device_t *dev = &g_devices[d];
             if (!dev->active) continue;
 
-            // Calculate work sizes
-            size_t blocks = dev->compute_units * 16;  // 16 blocks per CU (conservative)
-            size_t global_work_size = blocks * threads_per_block;
-            size_t local_work_size = threads_per_block;
-            uint64_t keys_per_launch = global_work_size * keys_per_thread;
+            // Use device-specific optimal parameters
+            int blocks_per_cu = dev->optimal_params.blocks_per_cu;
+            int keys_per_work_item = dev->optimal_params.keys_per_work_item;
+            size_t work_group_size = dev->optimal_params.work_group_size;
+
+            // Calculate work sizes based on device capabilities
+            size_t blocks = dev->compute_units * blocks_per_cu;
+            size_t global_work_size = blocks * work_group_size;
+            size_t local_work_size = work_group_size;
+
+            // Adjust for performance weighting (distribute more work to faster devices)
+            double device_weight = dev->optimal_params.performance_weight / total_performance_weight;
+            uint64_t base_keys_per_launch = global_work_size * keys_per_work_item;
+            uint64_t keys_per_launch = (uint64_t)(base_keys_per_launch * device_weight * active_devices);
 
             // Check remaining keys
             uint64_t remaining64 = u256_sub_sat_u64_host(&end_key, &cursor);
@@ -1176,14 +1354,35 @@ int gpu_full_search(const gpu_search_config_t *config) {
         }
 
         // Progress reporting (every ~5 seconds)
-        uint64_t elapsed_ns = platform_time_now_ns() - start_time_ns;
-        if (!config->quiet && elapsed_ns > 5000000000ULL) {
-            double elapsed_sec = elapsed_ns / 1e9;
-            double mkeys_per_sec = (total_keys / 1000000.0) / elapsed_sec;
-            printf("[OpenCL] %.2f MKey/s (%.2f M keys checked)\n",
+        uint64_t current_time_ns = platform_time_now_ns();
+        uint64_t elapsed_since_report_ns = current_time_ns - last_report_time_ns;
+        if (!config->quiet && elapsed_since_report_ns > 5000000000ULL) {
+            double elapsed_sec = elapsed_since_report_ns / 1e9;
+            double mkeys_per_sec = (total_keys / 1000000.0) / (elapsed_sec);
+
+            printf("[OpenCL] %.2f MKey/s total (%.2f M keys checked)\n",
                    mkeys_per_sec, total_keys / 1000000.0);
+
+            // Update per-device statistics and show breakdown
+            for (int d = 0; d < g_device_count; d++) {
+                opencl_device_t *dev = &g_devices[d];
+                if (!dev->active) continue;
+
+                double dev_mkeys_per_sec = (dev->keys_processed / 1000000.0) / elapsed_sec;
+                // Exponential moving average for throughput
+                if (dev->avg_throughput_mkeys == 0.0) {
+                    dev->avg_throughput_mkeys = dev_mkeys_per_sec;
+                } else {
+                    dev->avg_throughput_mkeys = dev->avg_throughput_mkeys * 0.7 + dev_mkeys_per_sec * 0.3;
+                }
+
+                printf("  Device %d (%s): %.2f MKey/s (%.2f M keys)\n",
+                       d, dev->device_name, dev_mkeys_per_sec,
+                       dev->keys_processed / 1000000.0);
+            }
+
             fflush(stdout);
-            start_time_ns = platform_time_now_ns();
+            last_report_time_ns = current_time_ns;
         }
     }
 
@@ -1193,7 +1392,21 @@ int gpu_full_search(const gpu_search_config_t *config) {
         double final_elapsed_sec = final_elapsed_ns / 1e9;
         if (final_elapsed_sec > 0) {
             double final_mkeys_per_sec = (total_keys / 1000000.0) / final_elapsed_sec;
-            printf("[OpenCL] Search complete: %.2f MKey/s average\n", final_mkeys_per_sec);
+            printf("[OpenCL] Search complete: %.2f MKey/s average (%.2f M keys total)\n",
+                   final_mkeys_per_sec, total_keys / 1000000.0);
+
+            // Per-device final statistics
+            printf("[OpenCL] Per-device breakdown:\n");
+            for (int d = 0; d < g_device_count; d++) {
+                opencl_device_t *dev = &g_devices[d];
+                if (dev->keys_processed > 0) {
+                    double dev_final_mkeys_per_sec = (dev->keys_processed / 1000000.0) / final_elapsed_sec;
+                    double percentage = (total_keys > 0) ? (dev->keys_processed * 100.0 / total_keys) : 0.0;
+                    printf("  Device %d (%s): %.2f MKey/s, %.2f M keys (%.1f%%)\n",
+                           d, dev->device_name, dev_final_mkeys_per_sec,
+                           dev->keys_processed / 1000000.0, percentage);
+                }
+            }
         }
     }
 
