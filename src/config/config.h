@@ -126,6 +126,7 @@ typedef struct {
     int  enabled;                 /* 0=off, 1=on, -1=auto */
     bool full_mode;               /* Full ECC+hash+match on GPU */
     bool hybrid_mode;             /* Run GPU+CPU in parallel */
+    bool multi_gpu_enabled;       /* Enable multiple GPU devices */
 
     /* Device selection */
     int  device_ids[GPU_MAX_DEVICES];  /* Array of GPU device IDs */
