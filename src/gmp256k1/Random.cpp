@@ -3,22 +3,23 @@
 #include <string.h>
 #include <gmp.h>
 
+#include "Int.h"
+#include "../platform/platform.h"
 
 #if  defined(_WIN32) || defined(_WIN64)
     #include <Windows.h>
     #include <bcrypt.h>
     #pragma comment(lib, "bcrypt.lib")
 #elif __unix__ || __unix || __APPLE__ || __MACH__ || __CYGWIN__
-    #include <unistd.h>
     #include <fcntl.h>
     #include <sys/syscall.h>
-    #include <linux/random.h>
-    #if defined(GRND_NONBLOCK)
-        #define USE_GETRANDOM
+    #if defined(__linux__)
+        #include <linux/random.h>
+        #if defined(GRND_NONBLOCK)
+            #define USE_GETRANDOM
+        #endif
     #endif
 #endif
-
-#include "Int.h"
 
 static int r_state_mt_ready = 0;
 static gmp_randstate_t r_state_mt;

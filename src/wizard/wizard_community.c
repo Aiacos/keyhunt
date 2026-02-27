@@ -3,12 +3,15 @@
  */
 
 #include "wizard.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
+
+#if !PLATFORM_WINDOWS
 #include <sys/stat.h>
+#endif
 
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"

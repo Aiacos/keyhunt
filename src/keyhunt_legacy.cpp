@@ -29,16 +29,6 @@ email: albertobsd@gmail.com
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
-#else
-#include <unistd.h>
-#include <sys/random.h>
-#endif
-
-#ifdef __unix__
-#ifdef __CYGWIN__
-#else
-#include <linux/random.h>
-#endif
 #endif
 
 #define CRYPTO_NONE 0

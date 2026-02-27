@@ -1,13 +1,15 @@
 // src/progress.cpp
 #include "progress.h"
+#include "platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+
+#if !PLATFORM_WINDOWS
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <dirent.h>
-#include <unistd.h>
-#include <errno.h>
+#endif
 
 // Simple hash function for generating unique filenames
 static unsigned int simple_hash(const char *str) {
@@ -53,7 +55,7 @@ static int get_progress_dir(char *path, size_t path_size) {
 }
 
 // Recursive mkdir (like mkdir -p)
-static int mkdirp(const char *path, mode_t mode) {
+static int mkdirp(const char *path) {
     if (!path) return -1;
 
     char tmp[512];
@@ -73,14 +75,14 @@ static int mkdirp(const char *path, mode_t mode) {
     for (p = tmp + 1; *p; p++) {
         if (*p == '/') {
             *p = '\0';
-            if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
-                return -1;
-            }
+            /* Ignore error if directory already exists */
+            platform_dir_create(tmp);
             *p = '/';
         }
     }
 
-    if (mkdir(tmp, mode) != 0 && errno != EEXIST) {
+    /* Final directory creation */
+    if (platform_dir_create(tmp) != 0 && !platform_dir_exists(tmp)) {
         return -1;
     }
 
@@ -93,7 +95,7 @@ int progress_init(void) {
     if (get_progress_dir(dir, sizeof(dir)) != 0) {
         return -1;
     }
-    return mkdirp(dir, 0755);
+    return mkdirp(dir);
 }
 
 // Get progress file path for given parameters

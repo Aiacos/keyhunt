@@ -6,11 +6,11 @@
 
 #include "wizard.h"
 #include "../core/sysinfo.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #define PUZZLES_CACHE_FILE "puzzles_cache.txt"
 #define CONFIG_FILE "keyhunt_wizard.json"

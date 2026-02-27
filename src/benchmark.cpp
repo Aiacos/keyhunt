@@ -1,12 +1,12 @@
 // src/benchmark.cpp
 #include "benchmark.h"
 #include "core/sysinfo.h"
+#include "platform/platform.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include <unistd.h>
 
 // ANSI color codes
 #define CLR_RESET   "\033[0m"

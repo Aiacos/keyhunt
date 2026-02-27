@@ -3,12 +3,15 @@
  */
 
 #include "wizard.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <unistd.h>
+
+#if !PLATFORM_WINDOWS
 #include <sys/ioctl.h>
+#endif
 
 /* ANSI color codes */
 #define RESET       "\033[0m"

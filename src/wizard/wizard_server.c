@@ -14,15 +14,18 @@
 #include "wizard.h"
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <unistd.h>
 #include <time.h>
 #include <errno.h>
+
+#if !PLATFORM_WINDOWS
 #include <sys/wait.h>
 #include <linux/limits.h>  /* PATH_MAX */
+#endif
 
 /* Fallback if PATH_MAX not defined */
 #ifndef PATH_MAX
