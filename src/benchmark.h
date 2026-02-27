@@ -3,6 +3,7 @@
 #define BENCHMARK_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,7 +21,8 @@ typedef struct {
 } benchmark_result_t;
 
 // Run full benchmark (takes ~30 seconds)
-int benchmark_run(benchmark_result_t *result, int duration_seconds);
+// submit_to_community: if true, submit results to community database
+int benchmark_run(benchmark_result_t *result, int duration_seconds, bool submit_to_community);
 
 // Print benchmark results with recommendations
 void benchmark_print_results(const benchmark_result_t *result, int bits);

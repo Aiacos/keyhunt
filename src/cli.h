@@ -109,6 +109,7 @@ typedef struct {
     // Special modes
     bool run_wizard;
     bool run_benchmark;
+    bool submit_benchmark;
     bool show_perf_history;
     char wizard_client[128];
 

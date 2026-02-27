@@ -135,6 +135,10 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
             args->run_benchmark = true;
             return 0;
         }
+        if (strcmp(argv[i], "--submit-benchmark") == 0) {
+            args->submit_benchmark = true;
+            // Don't return here - this flag modifies --benchmark behavior
+        }
         if (strcmp(argv[i], "--perf-history") == 0) {
             args->show_perf_history = true;
             printf("Performance History\n");

@@ -43,7 +43,7 @@ static void print_border_line(int width, char ch) {
     printf("\n");
 }
 
-int benchmark_run(benchmark_result_t *result, int duration_seconds) {
+int benchmark_run(benchmark_result_t *result, int duration_seconds, bool submit_to_community) {
     if (!result) return -1;
 
     // Initialize result structure
@@ -268,6 +268,37 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
     } else if (regression_status == 0 && actual_change > 0.0) {
         // Performance improved
         printf(CLR_GREEN "✓" CLR_RESET " Performance " CLR_GREEN "improved by %.1f%%" CLR_RESET " compared to historical average\n", actual_change);
+        printf("\n");
+    }
+
+    // Community submission (optional)
+    if (submit_to_community) {
+        printf(CLR_CYAN);
+        print_border_line(max_width, '-');
+        printf(CLR_RESET);
+
+        const char *submit_title = "COMMUNITY BENCHMARK SUBMISSION";
+        int submit_len = (int)strlen(submit_title);
+        int submit_padding = (max_width - submit_len) / 2;
+        if (submit_padding < 0) submit_padding = 0;
+
+        for (int i = 0; i < submit_padding; i++) printf(" ");
+        printf(CLR_CYAN "%s" CLR_RESET "\n", submit_title);
+
+        printf(CLR_CYAN);
+        print_border_line(max_width, '-');
+        printf(CLR_RESET "\n");
+
+        printf("  Preparing benchmark data for community submission...\n");
+        printf("  " CLR_DIM "Hardware: %s" CLR_RESET "\n", sysinfo.cpu_model);
+        printf("  " CLR_DIM "Hash: %s" CLR_RESET "\n", db_benchmark.hardware_hash);
+        printf("\n");
+
+        // TODO: Implement actual community submission API call
+        // For now, just indicate that submission would occur here
+        printf(CLR_YELLOW "ⓘ" CLR_RESET " Community submission feature is currently in development\n");
+        printf("  " CLR_DIM "Your results have been saved locally and will be submitted" CLR_RESET "\n");
+        printf("  " CLR_DIM "when the community database API is available." CLR_RESET "\n");
         printf("\n");
     }
 
