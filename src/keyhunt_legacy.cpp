@@ -26,6 +26,7 @@ email: albertobsd@gmail.com
 #include "gmp256k1/Random.h"
 
 #include "platform/platform.h"
+#include "secure_file.h"
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
@@ -2612,7 +2613,7 @@ void *thread_process_minikeys(void *vargp)	{
 								secp->GetPublicKeyHex(false,publickey[k],public_key_uncompressed_hex);
 								platform_mutex_lock(&write_keys);
 							
-								keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+								keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								rmd160toaddress_dst(publickeyhashrmd160_uncompress[k],address[k]);
 								minikeys[k][22] = '\0';
 								if(keys != NULL)	{
@@ -4015,7 +4016,7 @@ pn.y.ModAdd(&GSn[i].y);
 								printf("[+] Publickey %s\n",aux_c);
 								platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -4254,7 +4255,7 @@ pn.y.ModAdd(&GSn[i].y);
 								printf("[+] Publickey %s\n",aux_c);
 								platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -4489,7 +4490,7 @@ void *thread_pub2rmd(void *vargp)	{
 					if(r)	{
 						temphex = tohex((char*)&pub,33);
 						printf("\nHit: Publickey found %s\n",temphex);
-						fd = fopen("KEYFOUNDKEYFOUND.txt","a+");
+						fd = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 						if(fd != NULL)	{
 							platform_mutex_lock(&write_keys);
 							platform_mutex_lock(&write_keys);
@@ -4513,7 +4514,7 @@ void *thread_pub2rmd(void *vargp)	{
 					if(r)  {
 						temphex = tohex((char*)&pub,33);
 						printf("\nHit: Publickey found %s\n",temphex);
-						fd = fopen("KEYFOUNDKEYFOUND.txt","a+");
+						fd = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 						if(fd != NULL)	{
 							platform_mutex_lock(&write_keys);
 							fprintf(fd,"Publickey found %s\n",temphex);
@@ -5124,7 +5125,7 @@ pn.y.ModAdd(&GSn[i].y);
 								printf("[+] Publickey %s\n",aux_c);
 								platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -5366,7 +5367,7 @@ pn.y.ModAdd(&GSn[i].y);
 								printf("[+] Publickey %s\n",aux_c);
 								platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -5633,7 +5634,7 @@ pn.y.ModAdd(&GSn[i].y);
 								printf("[+] Publickey %s\n",aux_c);
 								platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -5881,7 +5882,7 @@ void writevanitykey(bool compressed,Int *key)	{
 	rmd160toaddress_dst(rmdhash,address);
 	
 	platform_mutex_lock(&write_keys);
-	keys = fopen("VANITYKEYFOUND.txt","a+");
+	keys = fopen_secure_append("VANITYKEYFOUND.txt");
 	if(keys != NULL)	{
 		fprintf(keys,"Vanity Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 		fclose(keys);
@@ -6060,7 +6061,7 @@ void writekey(bool compressed,Int *key)	{
 	rmd160toaddress_dst(rmdhash,address);
 
 	platform_mutex_lock(&write_keys);
-	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL)	{
 		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 		fclose(keys);
@@ -6084,7 +6085,7 @@ void writekeyeth(Int *key)	{
 	tohex_dst(hash,20,address+2);
 
 	platform_mutex_lock(&write_keys);
-	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL)	{
 		fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address);
 		fclose(keys);

@@ -58,6 +58,7 @@ multi_gpu_scheduler_t* multi_gpu_init(const multi_gpu_config_t *config) {
     /* Detect GPUs */
     gpu_backend_info_t info;
     if (gpu_backend_init(&info) != 0 || info.gpu_count == 0) {
+        platform_mutex_destroy(&sched->lock);
         free(sched);
         return NULL;
     }

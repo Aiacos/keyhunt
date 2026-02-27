@@ -28,6 +28,7 @@
 #include "../io/io.h"
 #include "../core/util.h"
 #include "../base58/libbase58.h"
+#include "../secure_file.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -722,7 +723,7 @@ void writevanitykey(bool compressed,Int *key)	{
 	rmd160toaddress_dst(rmdhash,address);
 
 platform_mutex_lock(&write_keys);
-	keys = fopen("VANITYKEYFOUND.txt","a+");
+	keys = fopen_secure_append("VANITYKEYFOUND.txt");
 	if(keys != NULL)	{
 		fprintf(keys,"Vanity Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 		fclose(keys);

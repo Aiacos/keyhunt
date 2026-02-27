@@ -10,6 +10,7 @@
 #include "../core/util.h"
 #include "../hash/sha256.h"
 #include "../base58/libbase58.h"
+#include "../secure_file.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,7 +54,7 @@ void writekey(bool compressed, Int *key) {
 	rmd160toaddress_dst(rmdhash, address);
 
 	platform_mutex_lock(&write_keys);
-	keys = fopen("KEYFOUNDKEYFOUND.txt", "a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys == NULL) {
 		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
 		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
@@ -92,7 +93,7 @@ void writekeyeth(Int *key) {
 	tohex_dst(hash, 20, address+2);
 
 	platform_mutex_lock(&write_keys);
-	keys = fopen("KEYFOUNDKEYFOUND.txt", "a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys == NULL) {
 		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
 		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);

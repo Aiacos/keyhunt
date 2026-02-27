@@ -189,7 +189,9 @@ int hexchr2bin(const char hex, char *out)	{
 }
 
 void addItemList(char *data, List *l)	{
-	l->data = (char**) realloc(l->data,sizeof(char*)* (l->n +1));
+	char **new_data = (char**) realloc(l->data,sizeof(char*)* (l->n +1));
+	if (!new_data) return;
+	l->data = new_data;
 	l->data[l->n] = data;
 	l->n++;
 }

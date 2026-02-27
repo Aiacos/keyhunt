@@ -48,6 +48,7 @@
 #include "../output.h"
 #include "../core/util.h"
 #include "../sort/sort.h"
+#include "../secure_file.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -298,7 +299,7 @@ void *thread_process_minikeys(void *vargp) {
 								secp->GetPublicKeyHex(false, publickey[k], public_key_uncompressed_hex);
 								platform_mutex_lock(&write_keys);
 
-								keys = fopen("KEYFOUNDKEYFOUND.txt", "a+");
+								keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								rmd160toaddress_dst(publickeyhashrmd160_uncompress[k], address[k]);
 								minikeys[k][22] = '\0';
 								if (keys != NULL) {

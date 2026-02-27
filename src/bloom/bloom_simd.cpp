@@ -295,6 +295,13 @@ void bloom_simd_check_rmd160_batch(
         h1_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
         h2_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
         sector_arr = (uint64_t*)malloc(count * sizeof(uint64_t));
+        if (!h1_arr || !h2_arr || !sector_arr) {
+            free(h1_arr);
+            free(h2_arr);
+            free(sector_arr);
+            memset(results, 0, count);
+            return;
+        }
     }
 
     // Phase 1: Compute all hash values

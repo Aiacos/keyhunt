@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
+#include "../secure_file.h"
 
 /* ------------------------------------------------------------------ */
 /*  Additional extern globals used by BSGS threads                     */
@@ -198,7 +199,7 @@ platform_mutex_unlock(&bsgs_thread);
 								output_success("Publickey %s\n",aux_c);
 platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -361,7 +362,7 @@ platform_mutex_unlock(&bsgs_thread);
 								output_success("Publickey %s\n",aux_c);
 platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -858,7 +859,7 @@ platform_mutex_unlock(&bsgs_thread);
 								output_success("Publickey %s\n",aux_c);
 platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -1033,7 +1034,7 @@ platform_mutex_unlock(&bsgs_thread);
 								output_success("Publickey %s\n",aux_c);
 platform_mutex_lock(&write_keys);
 
-								filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+								filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
@@ -1235,7 +1236,7 @@ platform_mutex_unlock(&bsgs_thread);
 									output_success("Publickey %s\n",aux_c);
 platform_mutex_lock(&write_keys);
 
-									filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+									filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 									if(filekey != NULL)	{
 										fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 										fclose(filekey);

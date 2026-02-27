@@ -1457,6 +1457,7 @@ static int handle_worker_msg(dist_coordinator_t *coord, int worker_idx, const ch
                         privkey, address, worker->id, (unsigned long long)time_ms());
                 fclose(backup);
             } else {
+                if (bak_fd >= 0) close(bak_fd);
                 printf(LOG_SERVER LOG_WARN "Failed to write backup key file KEYFOUNDKEYFOUND.txt\n");
             }
         }
@@ -1680,15 +1681,23 @@ int dist_coordinator_process(dist_coordinator_t *coord, int timeout_ms) {
                         coord->worker_count++;
 
                         /* Send welcome with job config */
+                        char esc_target[128], esc_mode[64], esc_keytype[64];
+                        if (json_escape(coord->job_target_address, esc_target, sizeof(esc_target)) != 0)
+                            esc_target[0] = '\0';
+                        if (json_escape(coord->job_mode, esc_mode, sizeof(esc_mode)) != 0)
+                            esc_mode[0] = '\0';
+                        if (json_escape(coord->job_key_type, esc_keytype, sizeof(esc_keytype)) != 0)
+                            esc_keytype[0] = '\0';
+
                         char welcome[DIST_MAX_MSG_SIZE];
                         snprintf(welcome, sizeof(welcome),
                                  "{\"type\":\"welcome\",\"worker_id\":%d,\"work_units\":%d,"
                                  "\"target_address\":\"%s\",\"mode\":\"%s\",\"key_type\":\"%s\","
                                  "\"puzzle_number\":%d,\"bits\":%d,\"heartbeat_interval\":%d,\"tls\":%s}",
                                  worker->id, coord->work_unit_count,
-                                 coord->job_target_address,
-                                 coord->job_mode,
-                                 coord->job_key_type,
+                                 esc_target,
+                                 esc_mode,
+                                 esc_keytype,
                                  coord->job_puzzle_number,
                                  coord->job_bits,
                                  coord->heartbeat_interval_sec > 0 ? coord->heartbeat_interval_sec : 30,

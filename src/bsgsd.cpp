@@ -25,6 +25,7 @@ email: albertobsd@gmail.com
 #include "hash/sha256.h"
 #include "hash/ripemd160.h"
 #include "platform/platform.h"
+#include "secure_file.h"
 
 #include "bsgs/bsgs_sort.h"
 
@@ -1504,7 +1505,7 @@ void *thread_process_bsgs(void *vargp)	{
 			
 			platform_mutex_lock(&write_keys);
 
-			filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+			filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 			if(filekey != NULL)	{
 				fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 				fclose(filekey);
@@ -1626,7 +1627,7 @@ pn.y.ModAdd(&GSn[i].y);
 							printf("[+] Publickey %s\n",aux_c);
 							platform_mutex_lock(&write_keys);
 
-							filekey = fopen("KEYFOUNDKEYFOUND.txt","a");
+							filekey = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 							if(filekey != NULL)	{
 								fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 								fclose(filekey);
@@ -2157,7 +2158,7 @@ void writekey(bool compressed,Int *key)	{
 	rmd160toaddress_dst(rmdhash,address);
 
 	platform_mutex_lock(&write_keys);
-	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL)	{
 		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 		fclose(keys);
