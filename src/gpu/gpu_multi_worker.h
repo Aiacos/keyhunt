@@ -37,15 +37,15 @@ typedef struct {
     uint64_t work_units_completed;
     uint64_t error_count;
     char last_error[256];
-} worker_stats_t;
+} gpu_worker_stats_t;
 
 /* Aggregate multi-worker statistics */
 typedef struct {
     int active_workers;
     uint64_t total_keys_processed;
     double combined_throughput;  /* Mkeys/s across all workers */
-    worker_stats_t workers[MULTI_GPU_MAX_DEVICES];
-} multi_worker_stats_t;
+    gpu_worker_stats_t workers[MULTI_GPU_MAX_DEVICES];
+} multi_gpu_worker_stats_t;
 
 /* Worker configuration */
 typedef struct {
@@ -99,7 +99,7 @@ bool gpu_worker_stop(gpu_multi_worker_t *worker, uint64_t timeout_ms);
  * Thread-safe snapshot of current worker states and performance metrics.
  */
 void gpu_worker_get_stats(const gpu_multi_worker_t *worker,
-                          multi_worker_stats_t *stats);
+                          multi_gpu_worker_stats_t *stats);
 
 /**
  * Get statistics for a specific worker
@@ -110,7 +110,7 @@ void gpu_worker_get_stats(const gpu_multi_worker_t *worker,
  */
 bool gpu_worker_get_device_stats(const gpu_multi_worker_t *worker,
                                  int device_id,
-                                 worker_stats_t *stats);
+                                 gpu_worker_stats_t *stats);
 
 /**
  * Pause all workers (suspend work fetching)

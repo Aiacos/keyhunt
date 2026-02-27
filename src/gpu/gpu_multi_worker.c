@@ -16,7 +16,7 @@
 typedef struct {
     int device_id;
     platform_thread_t thread;
-    worker_stats_t stats;
+    gpu_worker_stats_t stats;
     gpu_multi_worker_t *manager;  /* Back-reference to manager */
     bool thread_started;
 } worker_context_t;

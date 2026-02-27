@@ -45,6 +45,7 @@
 #include "core/sysinfo.h"
 #include "core/parameter_validator.h"
 #include "gpu/gpu_backend.h"
+#include "gpu/gpu_multi_worker.h"
 #include "core/config.h"
 #include "config/config.h"
 #include "hybrid/adaptive_scheduler.h"
@@ -3913,8 +3914,22 @@ int main(int argc, char **argv)	{
 				}
 #endif
 
-				// Run GPU search
-				int gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
+				// Run GPU search - use multi-GPU if enabled, otherwise single GPU
+				int gpu_result = -1;
+				if (config.gpu.multi_gpu_enabled && config.gpu.device_count > 1) {
+					// Multi-GPU mode: use worker thread system with scheduler
+					output_success("Running multi-GPU search with %d devices...\n", config.gpu.device_count);
+					// TODO: Initialize scheduler and worker threads
+					// This will be implemented in subtask-4-2
+					output_warning("Multi-GPU worker initialization not yet implemented\n");
+					gpu_result = -1;
+				} else {
+					// Single GPU mode: use existing path
+					if (config.gpu.multi_gpu_enabled && config.gpu.device_count == 1) {
+						output_info("Multi-GPU enabled but only 1 device specified, using single GPU mode\n");
+					}
+					gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
+				}
 
 #ifndef _WIN64
 				gpu_stats_stop.store(1, std::memory_order_release);
