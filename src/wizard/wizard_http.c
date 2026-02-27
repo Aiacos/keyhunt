@@ -3,6 +3,7 @@
  */
 
 #include "wizard_http.h"
+#include "../error/enhanced_error.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,7 +73,9 @@ int wizard_http_get(const char *url, char **response, size_t *response_len) {
     *response = malloc(capacity);
     if (!*response) {
         pclose(fp);
-        fprintf(stderr, "[-] wizard_http_get: Memory allocation failed\n");
+        error_report_t report;
+        error_oom("HTTP response buffer allocation", &report);
+        error_print(&report);
         return -1;
     }
 
@@ -87,7 +90,15 @@ int wizard_http_get(const char *url, char **response, size_t *response_len) {
                 if (!newbuf) {
                     free(*response);
                     pclose(fp);
-                    fprintf(stderr, "[-] wizard_http_get: Memory reallocation failed\n");
+                    error_report_t report;
+                    error_context_t ctx = ERROR_CONTEXT_VALUES(
+                        ERROR_CAT_MEMORY, ERROR_SEV_ERROR,
+                        "HTTP response buffer expansion",
+                        "Failed to reallocate buffer for growing HTTP response",
+                        capacity, capacity / 2
+                    );
+                    error_report(&ctx, &report);
+                    error_print(&report);
                     return -1;
                 }
                 *response = newbuf;
@@ -195,7 +206,9 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
     if (!*response) {
         pclose(fp);
         if (tmp_file[0]) unlink(tmp_file);
-        fprintf(stderr, "[-] wizard_http_post: Memory allocation failed\n");
+        error_report_t report;
+        error_oom("HTTP POST response buffer allocation", &report);
+        error_print(&report);
         return -1;
     }
 
@@ -211,7 +224,15 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
                     free(*response);
                     pclose(fp);
                     if (tmp_file[0]) unlink(tmp_file);
-                    fprintf(stderr, "[-] wizard_http_post: Memory reallocation failed\n");
+                    error_report_t report;
+                    error_context_t ctx = ERROR_CONTEXT_VALUES(
+                        ERROR_CAT_MEMORY, ERROR_SEV_ERROR,
+                        "HTTP POST response buffer expansion",
+                        "Failed to reallocate buffer for growing HTTP response",
+                        capacity, capacity / 2
+                    );
+                    error_report(&ctx, &report);
+                    error_print(&report);
                     return -1;
                 }
                 *response = newbuf;
@@ -251,7 +272,9 @@ char* wizard_http_json_escape(const char *str) {
     size_t max_len = len * 6 + 1;  /* Worst case: \uXXXX for each char */
     char *escaped = malloc(max_len);
     if (!escaped) {
-        fprintf(stderr, "[-] wizard_http_json_escape: Memory allocation failed\n");
+        error_report_t report;
+        error_oom("JSON escape buffer allocation", &report);
+        error_print(&report);
         return NULL;
     }
 

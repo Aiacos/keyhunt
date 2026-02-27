@@ -44,6 +44,7 @@
 #include "core/workqueue.h"
 #include "core/sysinfo.h"
 #include "core/parameter_validator.h"
+#include "error/enhanced_error.h"
 #include "gpu/gpu_backend.h"
 #include "core/config.h"
 #include "config/config.h"
@@ -241,7 +242,19 @@ static inline void profile_init_threads(int nthreads) {
 	if (!g_profile_enabled || nthreads <= 0 || g_profile_counters) return;
 	g_profile_counters = (profile_counters_t *)calloc((size_t)nthreads, sizeof(profile_counters_t));
 	if (!g_profile_counters) {
-		output_warning("Profiling requested but allocation failed\n");
+		error_report_t report;
+		size_t required_bytes = (size_t)nthreads * sizeof(profile_counters_t);
+		error_context_t ctx = ERROR_CONTEXT_VALUES(
+			ERROR_CAT_MEMORY,
+			ERROR_SEV_WARNING,
+			"profiling allocation",
+			"Failed to allocate memory for profiling counters",
+			required_bytes / (1024 * 1024),  // Convert to MB
+			0  // We don't have available memory here
+		);
+		error_report(&ctx, &report);
+		error_print(&report);
+		output_warning("Profiling disabled due to memory allocation failure\n");
 		g_profile_enabled = false;
 		return;
 	}
