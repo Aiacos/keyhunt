@@ -780,3 +780,67 @@ void benchmark_show_community_stats(void) {
     printf(CLR_DIM "Tip: Run " CLR_RESET CLR_CYAN "./keyhunt --benchmark" CLR_RESET CLR_DIM " to see how your system compares!\n" CLR_RESET);
     printf("\n");
 }
+
+// Display historical performance data from database
+void benchmark_show_performance_history(void) {
+    printf("\n");
+    printf(CLR_CYAN "╔══════════════════════════════════════════════════════════════════════╗\n");
+    printf("║                    KEYHUNT PERFORMANCE HISTORY                       ║\n");
+    printf("╚══════════════════════════════════════════════════════════════════════╝" CLR_RESET "\n\n");
+
+    // Get system info for hardware hash
+    system_info_t sysinfo;
+    sysinfo_init(&sysinfo);
+
+    char hardware_hash[65];
+    perfdb_compute_hardware_hash(&sysinfo, hardware_hash, sizeof(hardware_hash));
+
+    // Query recent benchmarks (last 10 runs)
+    perfdb_result_t results[10];
+    int count = perfdb_query_recent(results, 10, NULL);  // NULL = all modes
+
+    if (count == 0) {
+        printf(CLR_DIM "No benchmark history found.\n" CLR_RESET);
+        printf("\nRun " CLR_CYAN "./keyhunt --benchmark" CLR_RESET " to create your first benchmark.\n\n");
+        return;
+    }
+
+    // Display table header
+    printf(CLR_BOLD "Recent Benchmarks (Last %d Runs):" CLR_RESET "\n", count);
+    printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+    printf("%-19s %-10s %12s %12s %12s\n",
+           "Date", "Mode", "CPU (Mk/s)", "GPU (Mk/s)", "Hybrid (Mk/s)");
+    printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+
+    // Display each benchmark
+    for (int i = 0; i < count; i++) {
+        char date_str[32];
+        strftime(date_str, sizeof(date_str), "%Y-%m-%d %H:%M", localtime(&results[i].timestamp));
+
+        printf("%-19s %-10s %12.2f %12.2f %12.2f\n",
+               date_str,
+               results[i].mode,
+               results[i].cpu_speed_mkeys,
+               results[i].gpu_speed_mkeys,
+               results[i].hybrid_speed_mkeys);
+    }
+
+    // Get trend analysis
+    statistics_trend_t trend;
+    if (statistics_get_trend(&trend, NULL, hardware_hash, 10) == 0) {
+        printf("\n" CLR_BOLD "Trend Analysis:" CLR_RESET "\n");
+        printf(CLR_DIM "────────────────────────────────────────────────────────────────────" CLR_RESET "\n");
+        printf("  Average CPU Speed:  %.2f Mkeys/s\n", trend.avg_cpu_speed);
+        printf("  Min/Max:            %.2f / %.2f Mkeys/s\n",
+               trend.min_cpu_speed, trend.max_cpu_speed);
+        printf("  Trend:              %s%.1f%%%s (%s)\n",
+               trend.cpu_trend_percent > 0 ? CLR_GREEN : CLR_RED,
+               trend.cpu_trend_percent,
+               CLR_RESET,
+               trend.is_improving ? "improving" : "degrading");
+
+        statistics_free_trend(&trend);
+    }
+
+    printf("\n");
+}

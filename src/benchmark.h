@@ -33,6 +33,9 @@ int benchmark_quick(double *cpu_speed, double *gpu_speed);
 // Display community performance statistics for comparison
 void benchmark_show_community_stats(void);
 
+// Display historical performance data from database
+void benchmark_show_performance_history(void);
+
 #ifdef __cplusplus
 }
 #endif

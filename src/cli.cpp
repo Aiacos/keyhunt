@@ -141,9 +141,8 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
         }
         if (strcmp(argv[i], "--perf-history") == 0) {
             args->show_perf_history = true;
-            printf("Performance History\n");
-            printf("===================\n");
-            printf("Historical performance data will be displayed here.\n");
+            extern void benchmark_show_performance_history(void);
+            benchmark_show_performance_history();
             return 0;
         }
         if (strcmp(argv[i], "--perf-compare") == 0) {
