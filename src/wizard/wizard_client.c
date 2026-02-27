@@ -1338,6 +1338,7 @@ int wizard_client_run(wizard_config_t *cfg) {
             /* Save locally (restricted permissions — sensitive data) */
             int key_fd = open("FOUND_KEY.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
             FILE *f = key_fd >= 0 ? fdopen(key_fd, "w") : NULL;
+            if (!f && key_fd >= 0) { close(key_fd); }
             if (f) {
                 time_t now = time(NULL);
                 fprintf(f, "PRIVATE KEY FOUND!\n");
@@ -1346,9 +1347,11 @@ int wizard_client_run(wizard_config_t *cfg) {
                 fprintf(f, "Private Key: %s\n", found_key);
                 fprintf(f, "Address: %s\n", found_addr);
                 fclose(f);
+                printf("\n[+] Key saved to FOUND_KEY.txt\n");
+            } else {
+                fprintf(stderr, "\n[!] WARNING: Failed to save key to FOUND_KEY.txt\n");
+                fprintf(stderr, "[!] PRIVATE KEY (save this!): %s\n", found_key);
             }
-
-            printf("\n[+] Key saved to FOUND_KEY.txt\n");
 
             /* Send webhook notifications if configured */
             char tg_token[256] = {0}, tg_chat_id[128] = {0};

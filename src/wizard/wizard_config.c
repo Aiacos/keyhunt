@@ -13,6 +13,8 @@
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
+#include <fcntl.h>     /* open(), O_* flags */
+#include <unistd.h>    /* ftruncate(), close() */
 
 #if !PLATFORM_WINDOWS
 #include <sys/file.h>  /* flock() - POSIX only */
@@ -144,17 +146,26 @@ static void fprintf_json_string(FILE *f, const char *key, const char *val, int t
 }
 
 int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
-    FILE *f = fopen(filepath, "w");
-    if (!f) {
-        fprintf(stderr, "[-] Cannot save config to %s: %s\n", filepath, strerror(errno));
+    /* Open and lock BEFORE truncation to prevent race conditions */
+    int fd = open(filepath, O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) {
+        fprintf(stderr, "[-] Cannot open config %s: %s\n", filepath, strerror(errno));
         return -1;
     }
-
-    /* Acquire exclusive lock for writing */
-    int fd = fileno(f);
     if (flock(fd, LOCK_EX) != 0) {
         fprintf(stderr, "[-] Cannot lock config file %s: %s\n", filepath, strerror(errno));
-        fclose(f);
+        close(fd);
+        return -1;
+    }
+    /* Truncate after lock is acquired */
+    if (ftruncate(fd, 0) != 0) {
+        fprintf(stderr, "[-] Cannot truncate config %s: %s\n", filepath, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    FILE *f = fdopen(fd, "w");
+    if (!f) {
+        close(fd);
         return -1;
     }
 
@@ -362,31 +373,29 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
  * ============================================================================ */
 
 int wizard_save_puzzles_cache(const puzzle_def_t *puzzles, int count, const char *filepath) {
-    FILE *f = fopen(filepath, "w");
-    if (!f) return -1;
-
-    /* Acquire exclusive lock for writing */
-    int fd = fileno(f);
-    if (flock(fd, LOCK_EX) != 0) {
-        fclose(f);
-        return -1;
-    }
+    /* Open and lock BEFORE truncation to prevent race conditions */
+    int fd = open(filepath, O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX) != 0) { close(fd); return -1; }
+    if (ftruncate(fd, 0) != 0) { close(fd); return -1; }
+    FILE *f = fdopen(fd, "w");
+    if (!f) { close(fd); return -1; }
 
     fprintf(f, "[\n");
     for (int i = 0; i < count; i++) {
         const puzzle_def_t *p = &puzzles[i];
         fprintf(f, "  {\n");
         fprintf(f, "    \"number\": %d,\n", p->number);
-        fprintf(f, "    \"target_address\": \"%s\",\n", p->target_address);
-        fprintf(f, "    \"range_start\": \"%s\",\n", p->range_start);
-        fprintf(f, "    \"range_end\": \"%s\",\n", p->range_end);
+        fprintf_json_string(f, "target_address", p->target_address, 1);
+        fprintf_json_string(f, "range_start", p->range_start, 1);
+        fprintf_json_string(f, "range_end", p->range_end, 1);
         fprintf(f, "    \"bits\": %d,\n", p->bits);
         fprintf(f, "    \"reward_btc\": %.2f,\n", p->reward_btc);
         fprintf(f, "    \"has_public_key\": %s,\n", p->has_public_key ? "true" : "false");
-        fprintf(f, "    \"public_key\": \"%s\",\n", p->public_key);
+        fprintf_json_string(f, "public_key", p->public_key, 1);
         fprintf(f, "    \"solved\": %s,\n", p->solved ? "true" : "false");
-        fprintf(f, "    \"solved_date\": \"%s\",\n", p->solved_date);
-        fprintf(f, "    \"solver\": \"%s\"\n", p->solver);
+        fprintf_json_string(f, "solved_date", p->solved_date, 1);
+        fprintf_json_string(f, "solver", p->solver, 0);
         fprintf(f, "  }%s\n", (i < count - 1) ? "," : "");
     }
     fprintf(f, "]\n");

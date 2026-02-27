@@ -2568,9 +2568,15 @@ int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
     fprintf(f, "  \"save_time\": %llu,\n", (unsigned long long)time(NULL));
 
     /* Job configuration - for validation on load */
-    fprintf(f, "  \"job_target_address\": \"%s\",\n", coordinator->job_target_address);
-    fprintf(f, "  \"job_mode\": \"%s\",\n", coordinator->job_mode);
-    fprintf(f, "  \"job_key_type\": \"%s\",\n", coordinator->job_key_type);
+    {
+        char esc_buf[256];
+        if (json_escape(coordinator->job_target_address, esc_buf, sizeof(esc_buf)) == 0)
+            fprintf(f, "  \"job_target_address\": \"%s\",\n", esc_buf);
+        if (json_escape(coordinator->job_mode, esc_buf, sizeof(esc_buf)) == 0)
+            fprintf(f, "  \"job_mode\": \"%s\",\n", esc_buf);
+        if (json_escape(coordinator->job_key_type, esc_buf, sizeof(esc_buf)) == 0)
+            fprintf(f, "  \"job_key_type\": \"%s\",\n", esc_buf);
+    }
     fprintf(f, "  \"job_puzzle_number\": %d,\n", coordinator->job_puzzle_number);
     fprintf(f, "  \"job_bits\": %d,\n", coordinator->job_bits);
 
@@ -2615,9 +2621,14 @@ int dist_coordinator_save_state(const dist_coordinator_t *coordinator,
     for (int i = 0; i < coordinator->result_count; i++) {
         const dist_result_t *result = &coordinator->results[i];
         if (i > 0) fprintf(f, ",\n");
+        char esc_pk[256], esc_addr[128];
+        if (json_escape(result->private_key, esc_pk, sizeof(esc_pk)) != 0 ||
+            json_escape(result->address, esc_addr, sizeof(esc_addr)) != 0) {
+            continue;
+        }
         fprintf(f, "    {\"private_key\": \"%s\", \"address\": \"%s\", "
                    "\"worker_id\": %d, \"found_time\": %llu}",
-                result->private_key, result->address,
+                esc_pk, esc_addr,
                 result->worker_id, (unsigned long long)result->found_time);
     }
     fprintf(f, "\n  ]\n");
