@@ -84,6 +84,15 @@ ifneq ($(HAVE_NVCC),)
   LDLIBS += -lcudart
 endif
 
+# Optional OpenCL backend (auto-detected if OpenCL library is available)
+# OpenCL provides GPU acceleration for AMD and other GPUs
+HAVE_OPENCL := $(shell echo '\#include <CL/cl.h>' | $(CXX) -E - >/dev/null 2>&1 && echo 1 || echo 0)
+ifeq ($(HAVE_OPENCL),1)
+  CFLAGS += -DHAVE_OPENCL=1
+  CXXFLAGS += -DHAVE_OPENCL=1
+  LDLIBS += -lOpenCL
+endif
+
 # Optional TLS support with OpenSSL
 # Usage: make ENABLE_TLS=1
 ifdef ENABLE_TLS
