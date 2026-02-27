@@ -140,6 +140,9 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
             args->wizard_client[sizeof(args->wizard_client) - 1] = '\0';
             return 0;
         }
+        if (strcmp(argv[i], "--visual") == 0) {
+            args->visual_mode = true;
+        }
     }
 
     // Reset getopt state

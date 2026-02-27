@@ -105,6 +105,7 @@ typedef struct {
     bool skip_checksum;
     bool matrix_mode;
     bool show_progress_bar;
+    bool visual_mode;
 
     // Special modes
     bool run_wizard;

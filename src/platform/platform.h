@@ -28,6 +28,9 @@
 /* Directory operations */
 #include "platform_dir.h"
 
+/* Memory operations */
+#include "platform_memory.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

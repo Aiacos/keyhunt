@@ -12,6 +12,20 @@ extern "C" {
 
 #define PROGRESS_DIR "~/.keyhunt/progress"
 #define PROGRESS_AUTOSAVE_INTERVAL 60  // seconds
+#define SPEED_HISTORY_MAX_SAMPLES 60  // Track last 60 samples (1 per second = 1 minute of history)
+
+// Speed sample for history tracking
+typedef struct {
+    time_t timestamp;         // When the sample was taken
+    double keys_per_second;   // Speed at that moment
+} speed_sample_t;
+
+// Speed history tracking (circular buffer)
+typedef struct {
+    speed_sample_t samples[SPEED_HISTORY_MAX_SAMPLES];
+    int count;          // Current number of samples (0 to MAX_SAMPLES)
+    int write_index;    // Next position to write (circular buffer index)
+} speed_history_t;
 
 // Progress state structure
 typedef struct {
@@ -39,6 +53,9 @@ typedef struct {
     // For random mode: track checked ranges
     int ranges_completed;
     int ranges_total;
+
+    // Speed tracking
+    speed_history_t speed_history;
 } progress_state_t;
 
 // Initialize progress system (creates directory if needed)
@@ -78,6 +95,22 @@ int progress_delete(const char *mode, const char *target_file, int bits);
 
 // Delete all progress files
 int progress_clear_all(void);
+
+// Speed history functions
+// Initialize speed history
+void speed_history_init(speed_history_t *history);
+
+// Add a speed sample to history
+void speed_history_add_sample(speed_history_t *history, double keys_per_second);
+
+// Get average speed over all samples
+double speed_history_get_average(const speed_history_t *history);
+
+// Get average speed over recent N samples (or all if fewer)
+double speed_history_get_recent_average(const speed_history_t *history, int sample_count);
+
+// Get speed trend (-1 = decreasing, 0 = stable, 1 = increasing)
+int speed_history_get_trend(const speed_history_t *history);
 
 #ifdef __cplusplus
 }

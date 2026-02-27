@@ -131,6 +131,103 @@ void output_progress(double percent, double speed_mkeys,
     }
 }
 
+void output_progress_detailed(double percent, double speed_mkeys,
+                              uint64_t keys_checked, int eta_seconds,
+                              uint64_t memory_used_mb, uint64_t memory_total_mb,
+                              double *speed_history, int speed_history_count,
+                              int active_threads) {
+    // Only show detailed progress in NORMAL and VERBOSE modes
+    if (g_output_level < OUTPUT_NORMAL) return;
+
+    // Get terminal width for responsive layout
+    int width = platform_terminal_width();
+    if (width > 80) width = 80;  /* Cap at reasonable width */
+    if (width < 60) width = 60;  /* Minimum for detailed display */
+
+    // Format ETA
+    char eta_str[32];
+    if (eta_seconds < 0 || eta_seconds > MAX_ETA_SECONDS) {
+        snprintf(eta_str, sizeof(eta_str), "N/A");
+    } else if (eta_seconds < 3600) {
+        snprintf(eta_str, sizeof(eta_str), "%dm %ds", eta_seconds/60, eta_seconds%60);
+    } else if (eta_seconds < 86400) {
+        snprintf(eta_str, sizeof(eta_str), "%dh %dm", eta_seconds/3600, (eta_seconds%3600)/60);
+    } else {
+        snprintf(eta_str, sizeof(eta_str), "%dd %dh", eta_seconds/86400, (eta_seconds%86400)/3600);
+    }
+
+    // Clear previous output and move up (assuming 9 lines for the box)
+    printf("\033[9A\033[J");
+
+    // Top border
+    printf(CLR_CYAN BOX_TL);
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf(BOX_TR CLR_RESET "\n");
+
+    // Title line
+    printf(CLR_CYAN BOX_V CLR_RESET CLR_BOLD " %-*s" CLR_RESET CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 3, "SEARCH PROGRESS");
+
+    // Separator
+    printf(CLR_CYAN "╠");
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf("╣" CLR_RESET "\n");
+
+    // Progress bar line
+    printf(CLR_CYAN BOX_V CLR_RESET " Progress: ");
+    output_progress_bar(percent, 30);
+    printf(" %.2f%% " CLR_CYAN BOX_V CLR_RESET "\n", percent);
+
+    // Speed line with graph
+    printf(CLR_CYAN BOX_V CLR_RESET " Speed:    %.2f Mkeys/s ", speed_mkeys);
+    if (speed_history && speed_history_count > 0) {
+        printf("[");
+        output_speed_graph(speed_history, speed_history_count, 3);
+        printf("]");
+    }
+    printf(" " CLR_CYAN BOX_V CLR_RESET "\n");
+
+    // Keys checked line
+    char keys_str[64];
+    if (keys_checked >= 1e12) {
+        snprintf(keys_str, sizeof(keys_str), "%.2fT keys", keys_checked / 1e12);
+    } else if (keys_checked >= 1e9) {
+        snprintf(keys_str, sizeof(keys_str), "%.2fG keys", keys_checked / 1e9);
+    } else if (keys_checked >= 1e6) {
+        snprintf(keys_str, sizeof(keys_str), "%.2fM keys", keys_checked / 1e6);
+    } else {
+        snprintf(keys_str, sizeof(keys_str), "%.2fK keys", keys_checked / 1e3);
+    }
+    printf(CLR_CYAN BOX_V CLR_RESET " Keys:     %-*s" CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 13, keys_str);
+
+    // ETA line
+    printf(CLR_CYAN BOX_V CLR_RESET " ETA:      %-*s" CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 13, eta_str);
+
+    // Memory usage line with bar
+    if (memory_total_mb > 0) {
+        printf(CLR_CYAN BOX_V CLR_RESET " Memory:   ");
+        output_memory_bar(memory_used_mb, memory_total_mb, 30);
+        printf(" %llu/%llu MB " CLR_CYAN BOX_V CLR_RESET "\n",
+               (unsigned long long)memory_used_mb, (unsigned long long)memory_total_mb);
+    } else {
+        printf(CLR_CYAN BOX_V CLR_RESET " Memory:   %-*s" CLR_CYAN BOX_V CLR_RESET "\n",
+               width - 13, "N/A");
+    }
+
+    // Threads line
+    printf(CLR_CYAN BOX_V CLR_RESET " Threads:  %-*d" CLR_CYAN BOX_V CLR_RESET "\n",
+           width - 13, active_threads);
+
+    // Bottom border
+    printf(CLR_CYAN BOX_BL);
+    for (int i = 0; i < width - 2; i++) printf(BOX_H);
+    printf(BOX_BR CLR_RESET "\n");
+
+    fflush(stdout);
+}
+
 void output_progress_bar(double percent, int width) {
     int filled = (int)(percent / 100.0 * width);
     if (filled > width) filled = width;
@@ -141,6 +238,72 @@ void output_progress_bar(double percent, int width) {
     printf(CLR_DIM);
     for (int i = filled; i < width; i++) printf("░");
     printf(CLR_RESET);
+}
+
+void output_memory_bar(uint64_t used_mb, uint64_t total_mb, int width) {
+    // Validate inputs
+    if (total_mb == 0) return;
+    if (width < 5) width = 5;
+    if (width > 60) width = 60;
+
+    // Calculate percentage
+    double percent = (double)used_mb / (double)total_mb * 100.0;
+    int filled = (int)(percent / 100.0 * width);
+    if (filled > width) filled = width;
+    if (filled < 0) filled = 0;
+
+    // Choose color based on usage level
+    const char *color;
+    if (percent < 60.0) {
+        color = CLR_GREEN;      // Safe: < 60%
+    } else if (percent < 80.0) {
+        color = CLR_YELLOW;     // Warning: 60-80%
+    } else {
+        color = CLR_RED;        // Danger: > 80%
+    }
+
+    // Render bar
+    printf("%s", color);
+    for (int i = 0; i < filled; i++) printf("█");
+    printf(CLR_DIM);
+    for (int i = filled; i < width; i++) printf("░");
+    printf(CLR_RESET);
+}
+
+void output_speed_graph(double *values, int count, int height) {
+    // Validate inputs
+    if (!values || count <= 0) return;
+    if (height < 3) height = 3;
+    if (height > 5) height = 5;
+
+    // Find min/max for scaling
+    double min_val = values[0];
+    double max_val = values[0];
+    for (int i = 1; i < count; i++) {
+        if (values[i] < min_val) min_val = values[i];
+        if (values[i] > max_val) max_val = values[i];
+    }
+
+    // Avoid division by zero
+    double range = max_val - min_val;
+    if (range < 0.001) range = 0.001;
+
+    // Block characters for 8 levels of height (1/8 to 8/8)
+    const char *blocks[] = {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+
+    // Render graph from top to bottom
+    printf(CLR_CYAN);
+    for (int i = 0; i < count; i++) {
+        // Normalize value to 0-8 range
+        double normalized = ((values[i] - min_val) / range) * 8.0;
+        int level = (int)(normalized + 0.5);  // Round to nearest
+        if (level < 0) level = 0;
+        if (level > 8) level = 8;
+
+        printf("%s", blocks[level]);
+    }
+    printf(CLR_RESET);
+    fflush(stdout);
 }
 
 void output_info(const char *fmt, ...) {
