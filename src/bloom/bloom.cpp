@@ -9,22 +9,24 @@
  * Refer to bloom.h for documentation on the public interfaces.
  */
 
+#include "bloom.h"
+#include "../xxhash/xxhash.h"
+#include "../util/mempool.h"
+#include "../platform/platform.h"
+
 #include <assert.h>
-#include <fcntl.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <inttypes.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <pthread.h>
 
-#include "bloom.h"
-#include "../xxhash/xxhash.h"
-#include "../util/mempool.h"
+#if !PLATFORM_WINDOWS
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
 
 /* Cache line size for optimal memory alignment */
 #define CACHE_LINE 64

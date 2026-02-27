@@ -22,6 +22,12 @@
 /* Core platform types */
 #include "platform_types.h"
 
+/* POSIX compatibility layer */
+#include "platform_compat.h"
+
+/* Directory operations */
+#include "platform_dir.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -123,6 +129,55 @@ uint64_t platform_time_now_ns(void);
  * Suitable for responsive output formatting that adapts to terminal size.
  */
 int platform_terminal_width(void);
+
+/* ============================================================================
+ * Directory operations
+ * ============================================================================ */
+
+/**
+ * @brief Create a directory.
+ * @param path Path to the directory to create.
+ * @return 0 on success, -1 on failure.
+ */
+int platform_dir_create(const char *path);
+
+/**
+ * @brief Remove a directory.
+ * @param path Path to the directory to remove (must be empty).
+ * @return 0 on success, -1 on failure.
+ */
+int platform_dir_remove(const char *path);
+
+/**
+ * @brief Check if a directory exists.
+ * @param path Path to check.
+ * @return 1 if directory exists, 0 otherwise.
+ */
+int platform_dir_exists(const char *path);
+
+/**
+ * @brief Open a directory for iteration.
+ * @param path Path to the directory to open.
+ * @return Directory handle on success, NULL on failure.
+ *
+ * Must be closed with platform_dir_close() after use.
+ */
+platform_dir_handle_t platform_dir_open(const char *path);
+
+/**
+ * @brief Read next directory entry.
+ * @param handle Directory handle from platform_dir_open().
+ * @param entry Output pointer receiving directory entry information.
+ * @return 1 if entry was read, 0 if end of directory, -1 on error.
+ */
+int platform_dir_read(platform_dir_handle_t handle, platform_dir_entry_t *entry);
+
+/**
+ * @brief Close directory handle.
+ * @param handle Directory handle to close.
+ * @return 0 on success, -1 on failure.
+ */
+int platform_dir_close(platform_dir_handle_t handle);
 
 #ifdef __cplusplus
 }

@@ -15,23 +15,23 @@
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
 #include "../gpu/gpu_backend.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <unistd.h>
 #include <time.h>
+#include <errno.h>
+#include <ctype.h>      /* isalnum() */
+
+#if !PLATFORM_WINDOWS
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <errno.h>
-#include <pthread.h>
-#include <ctype.h>      /* isalnum() */
-#include <fcntl.h>      /* open(), O_WRONLY */
-
-/* PATH_MAX with fallback */
-#ifdef __linux__
+#include <fcntl.h>
 #include <linux/limits.h>
 #endif
+
+/* PATH_MAX with fallback */
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif

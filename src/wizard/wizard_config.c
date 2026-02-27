@@ -1,15 +1,22 @@
 /*
  * wizard_config.c - Configuration and puzzle database
+ *
+ * Note: Uses platform abstraction layer (platform.h) for cross-platform
+ *       file operations. Directory operations (platform_dir_*) available
+ *       for configuration file management.
  */
 
 #include "wizard.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
-#include <sys/file.h>  /* flock() */
-#include <unistd.h>    /* close() */
+
+#if !PLATFORM_WINDOWS
+#include <sys/file.h>  /* flock() - POSIX only */
+#endif
 
 /* ============================================================================
  * Built-in Puzzle Database (fallback when offline)

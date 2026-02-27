@@ -2,17 +2,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <ctype.h>
-#include <dirent.h>
-#include <strings.h>
+#include "../platform/platform.h"
 
-#ifdef __linux__
-#include <sys/sysinfo.h>
-#include <dlfcn.h>
+#if PLATFORM_WINDOWS
+    /* Windows-specific headers for system information */
+    #include <windows.h>
+    #include <psapi.h>
+    #include <intrin.h>  /* For __cpuid and __cpuidex intrinsics */
+#else
+    /* POSIX headers */
+    #include <unistd.h>
+    #include <dirent.h>
+    #include <strings.h>
+    #ifdef __linux__
+        #include <sys/sysinfo.h>
+        #include <dlfcn.h>
+    #endif
 #endif
 
-// Helper function to read integer from file
+#if PLATFORM_POSIX
+// Helper function to read integer from file (POSIX only)
 static long read_long_from_file(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
@@ -25,7 +35,7 @@ static long read_long_from_file(const char *path) {
     return value;
 }
 
-// Helper function to read string from file
+// Helper function to read string from file (POSIX only)
 static int read_string_from_file(const char *path, char *buffer, size_t size) {
     FILE *f = fopen(path, "r");
     if (!f) return 0;
@@ -43,12 +53,34 @@ static int read_string_from_file(const char *path, char *buffer, size_t size) {
     }
     return 1;
 }
+#endif
 
 // Detect physical CPU cores (without hyperthreading)
 static int detect_physical_cores(void) {
     int physical_cores = 0;
 
-#ifdef __linux__
+#if PLATFORM_WINDOWS
+    // Use GetLogicalProcessorInformation to count physical cores
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformation(NULL, &buffer_size);
+
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION *buffer =
+            (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)malloc(buffer_size);
+
+        if (buffer && GetLogicalProcessorInformation(buffer, &buffer_size)) {
+            DWORD count = buffer_size / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+
+            for (DWORD i = 0; i < count; i++) {
+                if (buffer[i].Relationship == RelationProcessorCore) {
+                    physical_cores++;
+                }
+            }
+
+            free(buffer);
+        }
+    }
+#elif defined(__linux__)
     // Method 1: Read from /sys/devices/system/cpu/cpu*/topology/thread_siblings_list
     // to count unique physical cores
     DIR *dir = opendir("/sys/devices/system/cpu");
@@ -106,7 +138,8 @@ static int detect_physical_cores(void) {
     }
 #endif
 
-    // Final fallback
+#if PLATFORM_POSIX
+    // Final fallback for POSIX systems
     if (physical_cores == 0) {
         physical_cores = sysconf(_SC_NPROCESSORS_ONLN);
         // Assume hyperthreading (divide by 2)
@@ -114,14 +147,21 @@ static int detect_physical_cores(void) {
             physical_cores = (physical_cores + 1) / 2;
         }
     }
+#endif
 
     return physical_cores > 0 ? physical_cores : 1;
 }
 
 // Detect logical CPU cores
 static int detect_logical_cores(void) {
+#if PLATFORM_WINDOWS
+    SYSTEM_INFO sys_info;
+    GetSystemInfo(&sys_info);
+    return (int)sys_info.dwNumberOfProcessors;
+#else
     long cores = sysconf(_SC_NPROCESSORS_ONLN);
     return cores > 0 ? (int)cores : 1;
+#endif
 }
 
 // Detect cache sizes
@@ -130,7 +170,38 @@ static void detect_cache_sizes(system_info_t *info) {
     info->cache_l2_size = 0;
     info->cache_l3_size = 0;
 
-#ifdef __linux__
+#if PLATFORM_WINDOWS
+    // Use GetLogicalProcessorInformation to get cache info
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformation(NULL, &buffer_size);
+
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION *buffer =
+            (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)malloc(buffer_size);
+
+        if (buffer && GetLogicalProcessorInformation(buffer, &buffer_size)) {
+            DWORD count = buffer_size / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+
+            for (DWORD i = 0; i < count; i++) {
+                if (buffer[i].Relationship == RelationCache) {
+                    CACHE_DESCRIPTOR cache = buffer[i].Cache;
+                    // Convert bytes to KB
+                    uint64_t size_kb = cache.Size / 1024;
+
+                    if (cache.Level == 1 && cache.Type == CacheData) {
+                        info->cache_l1_size = size_kb;
+                    } else if (cache.Level == 2) {
+                        info->cache_l2_size = size_kb;
+                    } else if (cache.Level == 3) {
+                        info->cache_l3_size = size_kb;
+                    }
+                }
+            }
+
+            free(buffer);
+        }
+    }
+#elif defined(__linux__)
     // Parse size strings from sysfs (they might have K suffix)
     char buf[64];
     if (read_string_from_file("/sys/devices/system/cpu/cpu0/cache/index0/size", buf, sizeof(buf))) {
@@ -144,6 +215,7 @@ static void detect_cache_sizes(system_info_t *info) {
     }
 #endif
 
+#if PLATFORM_POSIX
     // Fallback to sysconf
     if (info->cache_l1_size == 0) {
         long l1 = sysconf(_SC_LEVEL1_DCACHE_SIZE);
@@ -157,6 +229,7 @@ static void detect_cache_sizes(system_info_t *info) {
         long l3 = sysconf(_SC_LEVEL3_CACHE_SIZE);
         if (l3 > 0) info->cache_l3_size = l3 / 1024;
     }
+#endif
 
     // Reasonable defaults if detection failed
     if (info->cache_l1_size == 0) info->cache_l1_size = 32;   // 32 KB
@@ -170,7 +243,18 @@ static void detect_memory(system_info_t *info) {
     info->ram_available = 0;
     info->ram_free = 0;
 
-#ifdef __linux__
+#if PLATFORM_WINDOWS
+    // Use GlobalMemoryStatusEx for Windows
+    MEMORYSTATUSEX memstat;
+    memstat.dwLength = sizeof(MEMORYSTATUSEX);
+
+    if (GlobalMemoryStatusEx(&memstat)) {
+        // Convert bytes to MB
+        info->ram_total = (uint64_t)(memstat.ullTotalPhys / (1024 * 1024));
+        info->ram_available = (uint64_t)(memstat.ullAvailPhys / (1024 * 1024));
+        info->ram_free = info->ram_available;  // Windows doesn't distinguish available vs free
+    }
+#elif defined(__linux__)
     struct sysinfo si;
     if (sysinfo(&si) == 0) {
         info->ram_total = (si.totalram * si.mem_unit) / (1024 * 1024);  // Convert to MB
@@ -194,7 +278,8 @@ static void detect_memory(system_info_t *info) {
     }
 #endif
 
-    // Fallback
+#if PLATFORM_POSIX
+    // Fallback for POSIX systems
     if (info->ram_total == 0) {
         long pages = sysconf(_SC_PHYS_PAGES);
         long page_size = sysconf(_SC_PAGE_SIZE);
@@ -202,6 +287,7 @@ static void detect_memory(system_info_t *info) {
             info->ram_total = (pages * page_size) / (1024 * 1024);
         }
     }
+#endif
 
     if (info->ram_available == 0) {
         info->ram_available = info->ram_free;
@@ -232,7 +318,54 @@ static void detect_cpu_features(system_info_t *info) {
     info->has_sha_ni = false;
     info->numa_nodes = 1;
 
-#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#if PLATFORM_WINDOWS && (defined(_M_X64) || defined(_M_IX86))
+    /* Windows CPU feature detection using __cpuid intrinsics */
+    int cpu_info[4];  /* EAX, EBX, ECX, EDX */
+
+    /* Check CPUID support and get max function ID */
+    __cpuid(cpu_info, 0);
+    int max_func_id = cpu_info[0];
+
+    if (max_func_id >= 1) {
+        /* Get basic CPU features (function 1) */
+        __cpuid(cpu_info, 1);
+        int ecx_feat = cpu_info[2];  /* ECX register */
+
+        /* Check if OSXSAVE is enabled (bit 27) - required for AVX/AVX-512 */
+        bool osxsave = (ecx_feat & (1 << 27)) != 0;
+
+        if (osxsave) {
+            /* Use _xgetbv to check OS support for AVX/AVX-512 */
+            unsigned long long xcr0 = _xgetbv(0);
+            bool avx_supported = (xcr0 & 0x6) == 0x6;  /* XMM and YMM state */
+            bool avx512_supported = (xcr0 & 0xE6) == 0xE6;  /* opmask+ZMM state */
+
+            /* Get extended features (function 7, sub-function 0) */
+            if (max_func_id >= 7) {
+                __cpuidex(cpu_info, 7, 0);
+                int ebx_feat = cpu_info[1];  /* EBX register */
+
+                /* Check feature bits in EBX */
+                if (avx_supported) {
+                    info->has_avx2 = (ebx_feat & (1 << 5)) != 0;  /* AVX2 (bit 5) */
+                }
+
+                if (avx512_supported) {
+                    info->has_avx512f = (ebx_feat & (1 << 16)) != 0;  /* AVX-512F (bit 16) */
+                    info->has_avx512dq = (ebx_feat & (1 << 17)) != 0;  /* AVX-512DQ (bit 17) */
+                    info->has_avx512bw = (ebx_feat & (1 << 30)) != 0;  /* AVX-512BW (bit 30) */
+                    info->has_avx512vl = (ebx_feat & (1 << 31)) != 0;  /* AVX-512VL (bit 31) */
+                    info->has_avx512 = info->has_avx512f;
+                }
+
+                /* SHA extensions (bit 29 in EBX) */
+                info->has_sha_ni = (ebx_feat & (1 << 29)) != 0;
+            }
+        }
+    }
+    bool used_builtin = false;
+
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
     /* Prefer compiler-provided runtime detection on x86: it accounts for OS
      * support (XSAVE/XGETBV) and avoids false positives that can crash when
      * executing AVX/AVX-512 instructions. */

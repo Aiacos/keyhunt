@@ -4,12 +4,11 @@
 
 #include "wizard.h"
 #include "wizard_http.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
-#include <sys/stat.h>
 
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
@@ -544,10 +543,9 @@ static int get_cache_dir(char *path, size_t size) {
 
     snprintf(path, size, "%s/.keyhunt", home);
 
-    /* Create directory if it doesn't exist */
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        if (mkdir(path, 0755) != 0) {
+    /* Create directory if it doesn't exist - use platform abstraction */
+    if (!platform_dir_exists(path)) {
+        if (platform_dir_create(path) != 0) {
             return -1;
         }
     }

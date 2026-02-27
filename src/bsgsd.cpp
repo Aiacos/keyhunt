@@ -28,13 +28,11 @@ email: albertobsd@gmail.com
 
 #include "bsgs/bsgs_sort.h"
 
-#include <unistd.h>
-#include <sys/random.h>
-#include <linux/random.h>
-
+#if !PLATFORM_WINDOWS
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h> // for inet_addr()
+#include <arpa/inet.h>
+#endif
 
 #define PORT 8080
 #define BUFFER_SIZE 1024

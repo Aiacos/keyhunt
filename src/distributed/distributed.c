@@ -3,12 +3,14 @@
  */
 
 #include "distributed.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
 #include <time.h>
+
+#if !PLATFORM_WINDOWS
 #include <sys/socket.h>
 #include <poll.h>
 #include <netinet/in.h>
@@ -16,6 +18,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <fcntl.h>
+#endif
 
 /* ============================================================================
  * TLS/SSL Support (Optional - requires OpenSSL)

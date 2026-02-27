@@ -6,11 +6,10 @@
 
 #include "multi_gpu_scheduler.h"
 #include "gpu_backend.h"
+#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
-#include <sys/time.h>
 
 /* Internal scheduler structure */
 struct multi_gpu_scheduler_s {
@@ -24,15 +23,13 @@ struct multi_gpu_scheduler_s {
     uint64_t base_chunk_size;
 
     /* Synchronization */
-    pthread_mutex_t lock;
+    platform_mutex_t lock;
     int running;
 };
 
 /* Get current time in milliseconds */
 static uint64_t get_time_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+    return platform_time_now_ns() / 1000000ULL;
 }
 
 int multi_gpu_available(void) {
@@ -47,7 +44,7 @@ multi_gpu_scheduler_t* multi_gpu_init(const multi_gpu_config_t *config) {
     multi_gpu_scheduler_t *sched = (multi_gpu_scheduler_t*)calloc(1, sizeof(*sched));
     if (!sched) return NULL;
 
-    pthread_mutex_init(&sched->lock, NULL);
+    platform_mutex_init(&sched->lock);
 
     /* Copy or default config */
     if (config) {
@@ -90,28 +87,28 @@ multi_gpu_scheduler_t* multi_gpu_init(const multi_gpu_config_t *config) {
 
 void multi_gpu_get_state(const multi_gpu_scheduler_t *sched, multi_gpu_state_t *state) {
     if (!sched || !state) return;
-    pthread_mutex_lock((pthread_mutex_t*)&((multi_gpu_scheduler_t*)sched)->lock);
+    platform_mutex_lock((platform_mutex_t*)&((multi_gpu_scheduler_t*)sched)->lock);
     *state = sched->state;
-    pthread_mutex_unlock((pthread_mutex_t*)&((multi_gpu_scheduler_t*)sched)->lock);
+    platform_mutex_unlock((platform_mutex_t*)&((multi_gpu_scheduler_t*)sched)->lock);
 }
 
 void multi_gpu_set_range(multi_gpu_scheduler_t *sched, uint64_t total_start, uint64_t total_end) {
     if (!sched) return;
-    pthread_mutex_lock(&sched->lock);
+    platform_mutex_lock(&sched->lock);
     sched->total_start = total_start;
     sched->total_end = total_end;
     sched->next_chunk_start = total_start;
-    pthread_mutex_unlock(&sched->lock);
+    platform_mutex_unlock(&sched->lock);
 }
 
 bool multi_gpu_get_work(multi_gpu_scheduler_t *sched, int device_id,
                         uint64_t *range_start, uint64_t *range_end) {
     if (!sched || !range_start || !range_end) return false;
 
-    pthread_mutex_lock(&sched->lock);
+    platform_mutex_lock(&sched->lock);
 
     if (sched->next_chunk_start >= sched->total_end || !sched->running) {
-        pthread_mutex_unlock(&sched->lock);
+        platform_mutex_unlock(&sched->lock);
         return false;
     }
 
@@ -133,7 +130,7 @@ bool multi_gpu_get_work(multi_gpu_scheduler_t *sched, int device_id,
 
     sched->next_chunk_start = *range_end;
 
-    pthread_mutex_unlock(&sched->lock);
+    platform_mutex_unlock(&sched->lock);
     return true;
 }
 
@@ -141,7 +138,7 @@ void multi_gpu_report_work(multi_gpu_scheduler_t *sched, int device_id,
                            uint64_t keys_processed, uint64_t elapsed_ms) {
     if (!sched || elapsed_ms == 0) return;
 
-    pthread_mutex_lock(&sched->lock);
+    platform_mutex_lock(&sched->lock);
 
     double mkeys = (double)keys_processed / 1000000.0;
     double throughput = mkeys / ((double)elapsed_ms / 1000.0);
@@ -173,25 +170,25 @@ void multi_gpu_report_work(multi_gpu_scheduler_t *sched, int device_id,
         }
     }
 
-    pthread_mutex_unlock(&sched->lock);
+    platform_mutex_unlock(&sched->lock);
 }
 
 void multi_gpu_rebalance(multi_gpu_scheduler_t *sched) {
     if (!sched) return;
     /* Rebalancing happens automatically in report_work when adaptive */
-    pthread_mutex_lock(&sched->lock);
+    platform_mutex_lock(&sched->lock);
     sched->state.last_rebalance_time = get_time_ms();
-    pthread_mutex_unlock(&sched->lock);
+    platform_mutex_unlock(&sched->lock);
 }
 
 void multi_gpu_shutdown(multi_gpu_scheduler_t *sched) {
     if (!sched) return;
 
-    pthread_mutex_lock(&sched->lock);
+    platform_mutex_lock(&sched->lock);
     sched->running = 0;
-    pthread_mutex_unlock(&sched->lock);
+    platform_mutex_unlock(&sched->lock);
 
-    pthread_mutex_destroy(&sched->lock);
+    platform_mutex_destroy(&sched->lock);
     free(sched);
 
     printf("[Multi-GPU] Scheduler shutdown\n");
