@@ -327,6 +327,219 @@ uint64_t kh_bsgs_calc_memory(uint64_t n, int k, uint64_t *bloom_out, uint64_t *t
     return bloom_bytes + table_bytes;
 }
 
+#ifdef __cplusplus
+/* ============================================================================
+ * Integer Square Root Helper (for Int class)
+ * ============================================================================ */
+
+/**
+ * Calculate integer square root using Newton's method
+ *
+ * Algorithm: x_{n+1} = (x_n + N/x_n) / 2
+ * Converges when x_{n+1} >= x_n
+ *
+ * @param n Input value (must be positive)
+ * @param result Output: sqrt(n) rounded down
+ */
+static void int_sqrt(Int *n, Int *result) {
+    if (!n || !result) return;
+
+    /* Handle edge cases */
+    if (n->IsZero()) {
+        result->SetInt64(0);
+        return;
+    }
+
+    Int one((uint64_t)1);
+    if (n->IsEqual(&one)) {
+        result->Set(&one);
+        return;
+    }
+
+    /* Initial guess: x = N >> (bitlen/2) */
+    Int x;
+    x.Set(n);
+    int bitlen = n->GetBitLength();
+    if (bitlen > 1) {
+        x.ShiftR(bitlen / 2);
+    }
+    if (x.IsZero()) {
+        x.Set(&one);
+    }
+
+    /* Newton's method: iterate until convergence */
+    Int x_old;
+    Int quotient;
+    Int sum;
+    Int two((uint64_t)2);
+
+    for (int iter = 0; iter < 512; iter++) {  /* Max iterations for 256-bit */
+        x_old.Set(&x);
+
+        /* quotient = N / x */
+        quotient.Set(n);
+        quotient.Div(&x);
+
+        /* sum = x + quotient */
+        sum.Set(&x);
+        sum.Add(&quotient);
+
+        /* x = sum / 2 */
+        x.Set(&sum);
+        x.ShiftR(1);  /* Divide by 2 using right shift */
+
+        /* Check convergence: if x >= x_old, we're done */
+        if (x.IsGreaterOrEqual(&x_old)) {
+            /* Use the smaller value */
+            if (x.IsGreater(&x_old)) {
+                result->Set(&x_old);
+            } else {
+                result->Set(&x);
+            }
+            return;
+        }
+    }
+
+    /* Fallback: return current x */
+    result->Set(&x);
+}
+
+/* ============================================================================
+ * BSGS Memory Calculation (Int version)
+ * ============================================================================ */
+
+uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *bloom_out, uint64_t *table_out) {
+    /*
+     * BSGS Memory Formula (same as kh_bsgs_calc_memory but with Int arithmetic):
+     *   M = sqrt(N)
+     *   Total RAM = (M * K * 3.5) + (M * K * 3.5 / 32) + (M * K * 3.5 / 1024) + (M / 32 * K * 16)
+     *
+     * Where:
+     *   - First term: Main bloom filter (bloom1) = M * K * 3.5 bytes
+     *   - Second term: Secondary bloom (bloom2) = bloom1 / 32
+     *   - Third term: Tertiary bloom (bloom3) = bloom1 / 1024
+     *   - Fourth term: bP table = (M / 32) * K * 16 bytes
+     */
+    if (!n_int || k <= 0) {
+        if (m_int_out) *m_int_out = NULL;
+        if (bloom_out) *bloom_out = 0;
+        if (table_out) *table_out = 0;
+        return 0;
+    }
+
+    if (n_int->IsZero()) {
+        if (m_int_out) *m_int_out = NULL;
+        if (bloom_out) *bloom_out = 0;
+        if (table_out) *table_out = 0;
+        return 0;
+    }
+
+    /* Calculate M = sqrt(N) */
+    Int m;
+    int_sqrt(n_int, &m);
+
+    /* Save M if requested */
+    if (m_int_out) {
+        *m_int_out = new Int(&m);
+    }
+
+    /* Calculate M * K */
+    Int mk;
+    mk.Set(&m);
+    mk.Mult((uint64_t)k);
+
+    /* Check if M*K fits in uint64_t for memory calculation */
+    /* If M*K > 2^64, the memory requirements are impossibly large */
+    bool mk_fits_64 = true;
+    for (int i = 1; i < NB64BLOCK; i++) {
+        if (mk.bits64[i] != 0) {
+            mk_fits_64 = false;
+            break;
+        }
+    }
+
+    if (!mk_fits_64) {
+        /* Memory requirements exceed addressable space */
+        if (bloom_out) *bloom_out = UINT64_MAX;
+        if (table_out) *table_out = UINT64_MAX;
+        return UINT64_MAX;
+    }
+
+    uint64_t mk_u64 = mk.bits64[0];
+
+    /* Calculate bloom filter sizes (3.5 bytes per element) */
+    /* bloom1 = M * K * 3.5 = M * K * 7 / 2 */
+    uint64_t bloom1_x2 = mk_u64 * 7;  /* This is bloom1 * 2 */
+    if (bloom1_x2 < mk_u64) {
+        /* Overflow occurred */
+        if (bloom_out) *bloom_out = UINT64_MAX;
+        if (table_out) *table_out = UINT64_MAX;
+        return UINT64_MAX;
+    }
+    uint64_t bloom1 = bloom1_x2 / 2;
+
+    /* bloom2 = bloom1 / 32 */
+    uint64_t bloom2 = bloom1 / 32;
+
+    /* bloom3 = bloom1 / 1024 */
+    uint64_t bloom3 = bloom1 / 1024;
+
+    uint64_t total_bloom = bloom1 + bloom2 + bloom3;
+
+    /* Calculate bP table size: (M / 32) * K * 16 */
+    /* First calculate M / 32 */
+    Int m_div_32;
+    m_div_32.Set(&m);
+    m_div_32.ShiftR(5);  /* Divide by 32 = right shift by 5 */
+
+    /* Check if (M/32) fits in uint64_t */
+    bool m32_fits_64 = true;
+    for (int i = 1; i < NB64BLOCK; i++) {
+        if (m_div_32.bits64[i] != 0) {
+            m32_fits_64 = false;
+            break;
+        }
+    }
+
+    uint64_t table_bytes = 0;
+    if (m32_fits_64) {
+        uint64_t m32_u64 = m_div_32.bits64[0];
+        /* table = (M/32) * K * 16 */
+        uint64_t temp = m32_u64 * k;
+        if (temp / k != m32_u64) {
+            /* Overflow */
+            table_bytes = UINT64_MAX;
+        } else {
+            table_bytes = temp * 16;
+            if (table_bytes / 16 != temp) {
+                /* Overflow */
+                table_bytes = UINT64_MAX;
+            }
+        }
+    } else {
+        /* (M/32) doesn't fit in uint64_t */
+        table_bytes = UINT64_MAX;
+    }
+
+    /* Check for overflow in total */
+    uint64_t total_bytes = 0;
+    if (total_bloom == UINT64_MAX || table_bytes == UINT64_MAX) {
+        total_bytes = UINT64_MAX;
+    } else {
+        total_bytes = total_bloom + table_bytes;
+        if (total_bytes < total_bloom) {
+            /* Overflow */
+            total_bytes = UINT64_MAX;
+        }
+    }
+
+    if (bloom_out) *bloom_out = total_bloom;
+    if (table_out) *table_out = table_bytes;
+
+    return total_bytes;
+}
+#endif /* __cplusplus */
+
 /* ============================================================================
  * BSGS Memory Validation
  * ============================================================================ */

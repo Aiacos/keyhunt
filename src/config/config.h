@@ -404,6 +404,23 @@ const char* kh_bsgs_mode_name(bsgs_mode_t mode);
  */
 uint64_t kh_bsgs_calc_memory(uint64_t n, int k, uint64_t *bloom_out, uint64_t *table_out);
 
+#ifdef __cplusplus
+/**
+ * Calculate BSGS memory requirements using Int (256-bit) arithmetic
+ *
+ * This version supports N values beyond uint64_t range by using Int arithmetic.
+ * Calculates M = sqrt(N) and total memory = bloom + bP table.
+ *
+ * @param n_int Pointer to Int representing N value
+ * @param k K factor (multiplication factor)
+ * @param m_int_out Optional output pointer to store calculated M value (caller must free)
+ * @param bloom_out Optional output pointer for bloom filter bytes
+ * @param table_out Optional output pointer for bP table bytes
+ * @return Total bytes needed (UINT64_MAX if overflow occurs)
+ */
+uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *bloom_out, uint64_t *table_out);
+#endif
+
 /**
  * Apply autotune settings to main config
  *
