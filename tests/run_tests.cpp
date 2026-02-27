@@ -41,6 +41,7 @@ int run_intgroup_tests(void);
 int run_sha512_simd_tests(void);
 int run_search_xpoint_tests(void);
 int run_search_rmd160_tests(void);
+int run_fused_hash_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -76,6 +77,7 @@ static void print_usage(const char *prog) {
     printf("  sha512       Run SHA512 SIMD tests\n");
     printf("  search_xpoint Run XPOINT search mode tests\n");
     printf("  search_rmd160 Run RMD160 search mode tests\n");
+    printf("  fused        Run fused hash pipeline tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -164,6 +166,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "search_rmd160") == 0) {
         printf(CLR_BOLD "\n>>> Running RMD160 Search Mode Tests\n" CLR_RESET);
         total_failures += run_search_rmd160_tests();
+    }
+
+    if (module == NULL || strcmp(module, "fused") == 0) {
+        printf(CLR_BOLD "\n>>> Running Fused Hash Pipeline Tests\n" CLR_RESET);
+        total_failures += run_fused_hash_tests();
     }
 
     /* Final summary */

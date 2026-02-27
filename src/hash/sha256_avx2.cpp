@@ -531,3 +531,363 @@ void sha256avx2_checksum(
   *((uint32_t *)d6) = __builtin_bswap32(temp[1]);
   *((uint32_t *)d7) = __builtin_bswap32(temp[0]);
 }
+
+// RIPEMD-160 AVX2 implementation (inline to avoid separate file dependency)
+namespace _ripemd160avx2_fused {
+
+#ifdef WIN64
+  static const __declspec(align(32)) uint32_t _rmd_init[] = {
+#else
+  static const uint32_t _rmd_init[] __attribute__ ((aligned (32))) = {
+#endif
+    0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,0x67452301ul,
+    0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,0xEFCDAB89ul,
+    0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,0x98BADCFEul,
+    0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,0x10325476ul,
+    0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul,0xC3D2E1F0ul
+  };
+
+// RIPEMD-160 macros (reuse existing names with RMD prefix to avoid conflicts)
+#define RMD_ROL(x,n) _mm256_or_si256(_mm256_slli_epi32(x, n), _mm256_srli_epi32(x, 32 - n))
+
+#ifdef WIN64
+#define rmd_not(x) _mm256_andnot_si256(x, _mm256_cmpeq_epi32(_mm256_setzero_si256(), _mm256_setzero_si256()))
+#define rmd_f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
+#define rmd_f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))
+#define rmd_f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x,rmd_not(y)),z)
+#define rmd_f4(x,y,z) _mm256_or_si256(_mm256_and_si256(x,z),_mm256_andnot_si256(z,y))
+#define rmd_f5(x,y,z) _mm256_xor_si256(x,_mm256_or_si256(y,rmd_not(z)))
+#else
+#define rmd_f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
+#define rmd_f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))
+#define rmd_f3(x,y,z) _mm256_xor_si256(_mm256_or_si256(x,~(y)),z)
+#define rmd_f4(x,y,z) _mm256_or_si256(_mm256_and_si256(x,z),_mm256_andnot_si256(z,y))
+#define rmd_f5(x,y,z) _mm256_xor_si256(x,_mm256_or_si256(y,~(z)))
+#endif
+
+#define rmd_add3(x0, x1, x2) _mm256_add_epi32(_mm256_add_epi32(x0, x1), x2)
+
+#define RMD_Round(a,b,c,d,e,f,x,k,r) \
+  u = add4(a,f,x,_mm256_set1_epi32(k)); \
+  a = _mm256_add_epi32(RMD_ROL(u, r),e); \
+  c = RMD_ROL(c, 10);
+
+#define RMD_R11(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f1(b, c, d), x, 0, r)
+#define RMD_R21(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f2(b, c, d), x, 0x5A827999ul, r)
+#define RMD_R31(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f3(b, c, d), x, 0x6ED9EBA1ul, r)
+#define RMD_R41(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f4(b, c, d), x, 0x8F1BBCDCul, r)
+#define RMD_R51(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f5(b, c, d), x, 0xA953FD4Eul, r)
+#define RMD_R12(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f5(b, c, d), x, 0x50A28BE6ul, r)
+#define RMD_R22(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f4(b, c, d), x, 0x5C4DD124ul, r)
+#define RMD_R32(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f3(b, c, d), x, 0x6D703EF3ul, r)
+#define RMD_R42(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f2(b, c, d), x, 0x7A6D76E9ul, r)
+#define RMD_R52(a,b,c,d,e,x,r) RMD_Round(a, b, c, d, e, rmd_f1(b, c, d), x, 0, r)
+
+  // Transform RIPEMD-160 with SHA256 output directly in registers
+  // sha256_state[8] contains the 8 32-bit words of SHA256 output (in big-endian AVX2 format)
+  void Transform_from_sha256(__m256i *rmd_state, __m256i *sha256_state) {
+    __m256i a1, b1, c1, d1, e1;
+    __m256i a2, b2, c2, d2, e2;
+    __m256i u;
+    __m256i w[16];
+
+    // Initialize RIPEMD-160 state
+    a1 = _mm256_load_si256((__m256i*)&_rmd_init[0]);
+    b1 = _mm256_load_si256((__m256i*)&_rmd_init[8]);
+    c1 = _mm256_load_si256((__m256i*)&_rmd_init[16]);
+    d1 = _mm256_load_si256((__m256i*)&_rmd_init[24]);
+    e1 = _mm256_load_si256((__m256i*)&_rmd_init[32]);
+
+    a2 = a1;
+    b2 = b1;
+    c2 = c1;
+    d2 = d1;
+    e2 = e1;
+
+    // Load SHA256 output (32 bytes) into w[0..7]
+    // SHA256 output is in big-endian format, need to byte-swap for RIPEMD160
+    for (int i = 0; i < 8; i++) {
+      alignas(32) uint32_t temp[8];
+      _mm256_store_si256((__m256i*)temp, sha256_state[i]);
+      // Byte swap from big-endian to little-endian
+      w[i] = _mm256_set_epi32(
+        __builtin_bswap32(temp[7]),
+        __builtin_bswap32(temp[6]),
+        __builtin_bswap32(temp[5]),
+        __builtin_bswap32(temp[4]),
+        __builtin_bswap32(temp[3]),
+        __builtin_bswap32(temp[2]),
+        __builtin_bswap32(temp[1]),
+        __builtin_bswap32(temp[0])
+      );
+    }
+
+    // Padding for 32-byte input (RIPEMD-160 block)
+    const __m256i pad80 = _mm256_set1_epi32(0x00000080u);
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i bitlen = _mm256_set1_epi32(32 << 3);  // 256 bits
+
+    w[8] = pad80;
+    w[9] = zero;
+    w[10] = zero;
+    w[11] = zero;
+    w[12] = zero;
+    w[13] = zero;
+    w[14] = bitlen;
+    w[15] = zero;
+
+    // RIPEMD-160 rounds (left and right lines)
+    // Round 1
+    RMD_R11(a1, b1, c1, d1, e1, w[0], 11);
+    RMD_R12(a2, b2, c2, d2, e2, w[5], 8);
+    RMD_R11(e1, a1, b1, c1, d1, w[1], 14);
+    RMD_R12(e2, a2, b2, c2, d2, w[14], 9);
+    RMD_R11(d1, e1, a1, b1, c1, w[2], 15);
+    RMD_R12(d2, e2, a2, b2, c2, w[7], 9);
+    RMD_R11(c1, d1, e1, a1, b1, w[3], 12);
+    RMD_R12(c2, d2, e2, a2, b2, w[0], 11);
+    RMD_R11(b1, c1, d1, e1, a1, w[4], 5);
+    RMD_R12(b2, c2, d2, e2, a2, w[9], 13);
+    RMD_R11(a1, b1, c1, d1, e1, w[5], 8);
+    RMD_R12(a2, b2, c2, d2, e2, w[2], 15);
+    RMD_R11(e1, a1, b1, c1, d1, w[6], 7);
+    RMD_R12(e2, a2, b2, c2, d2, w[11], 15);
+    RMD_R11(d1, e1, a1, b1, c1, w[7], 9);
+    RMD_R12(d2, e2, a2, b2, c2, w[4], 5);
+    RMD_R11(c1, d1, e1, a1, b1, w[8], 11);
+    RMD_R12(c2, d2, e2, a2, b2, w[13], 7);
+    RMD_R11(b1, c1, d1, e1, a1, w[9], 13);
+    RMD_R12(b2, c2, d2, e2, a2, w[6], 7);
+    RMD_R11(a1, b1, c1, d1, e1, w[10], 14);
+    RMD_R12(a2, b2, c2, d2, e2, w[15], 8);
+    RMD_R11(e1, a1, b1, c1, d1, w[11], 15);
+    RMD_R12(e2, a2, b2, c2, d2, w[8], 11);
+    RMD_R11(d1, e1, a1, b1, c1, w[12], 6);
+    RMD_R12(d2, e2, a2, b2, c2, w[1], 14);
+    RMD_R11(c1, d1, e1, a1, b1, w[13], 7);
+    RMD_R12(c2, d2, e2, a2, b2, w[10], 14);
+    RMD_R11(b1, c1, d1, e1, a1, w[14], 9);
+    RMD_R12(b2, c2, d2, e2, a2, w[3], 12);
+    RMD_R11(a1, b1, c1, d1, e1, w[15], 8);
+    RMD_R12(a2, b2, c2, d2, e2, w[12], 6);
+
+    // Round 2
+    RMD_R21(e1, a1, b1, c1, d1, w[7], 7);
+    RMD_R22(e2, a2, b2, c2, d2, w[6], 9);
+    RMD_R21(d1, e1, a1, b1, c1, w[4], 6);
+    RMD_R22(d2, e2, a2, b2, c2, w[11], 13);
+    RMD_R21(c1, d1, e1, a1, b1, w[13], 8);
+    RMD_R22(c2, d2, e2, a2, b2, w[3], 15);
+    RMD_R21(b1, c1, d1, e1, a1, w[1], 13);
+    RMD_R22(b2, c2, d2, e2, a2, w[7], 7);
+    RMD_R21(a1, b1, c1, d1, e1, w[10], 11);
+    RMD_R22(a2, b2, c2, d2, e2, w[0], 12);
+    RMD_R21(e1, a1, b1, c1, d1, w[6], 9);
+    RMD_R22(e2, a2, b2, c2, d2, w[13], 8);
+    RMD_R21(d1, e1, a1, b1, c1, w[15], 7);
+    RMD_R22(d2, e2, a2, b2, c2, w[5], 9);
+    RMD_R21(c1, d1, e1, a1, b1, w[3], 15);
+    RMD_R22(c2, d2, e2, a2, b2, w[10], 11);
+    RMD_R21(b1, c1, d1, e1, a1, w[12], 7);
+    RMD_R22(b2, c2, d2, e2, a2, w[14], 7);
+    RMD_R21(a1, b1, c1, d1, e1, w[0], 12);
+    RMD_R22(a2, b2, c2, d2, e2, w[15], 7);
+    RMD_R21(e1, a1, b1, c1, d1, w[9], 15);
+    RMD_R22(e2, a2, b2, c2, d2, w[8], 12);
+    RMD_R21(d1, e1, a1, b1, c1, w[5], 9);
+    RMD_R22(d2, e2, a2, b2, c2, w[12], 7);
+    RMD_R21(c1, d1, e1, a1, b1, w[2], 11);
+    RMD_R22(c2, d2, e2, a2, b2, w[4], 6);
+    RMD_R21(b1, c1, d1, e1, a1, w[14], 7);
+    RMD_R22(b2, c2, d2, e2, a2, w[9], 15);
+    RMD_R21(a1, b1, c1, d1, e1, w[11], 13);
+    RMD_R22(a2, b2, c2, d2, e2, w[1], 13);
+    RMD_R21(e1, a1, b1, c1, d1, w[8], 12);
+    RMD_R22(e2, a2, b2, c2, d2, w[2], 11);
+
+    // Round 3
+    RMD_R31(d1, e1, a1, b1, c1, w[3], 11);
+    RMD_R32(d2, e2, a2, b2, c2, w[15], 9);
+    RMD_R31(c1, d1, e1, a1, b1, w[10], 13);
+    RMD_R32(c2, d2, e2, a2, b2, w[5], 7);
+    RMD_R31(b1, c1, d1, e1, a1, w[14], 6);
+    RMD_R32(b2, c2, d2, e2, a2, w[1], 15);
+    RMD_R31(a1, b1, c1, d1, e1, w[4], 7);
+    RMD_R32(a2, b2, c2, d2, e2, w[3], 11);
+    RMD_R31(e1, a1, b1, c1, d1, w[9], 14);
+    RMD_R32(e2, a2, b2, c2, d2, w[7], 8);
+    RMD_R31(d1, e1, a1, b1, c1, w[15], 9);
+    RMD_R32(d2, e2, a2, b2, c2, w[14], 6);
+    RMD_R31(c1, d1, e1, a1, b1, w[8], 13);
+    RMD_R32(c2, d2, e2, a2, b2, w[6], 6);
+    RMD_R31(b1, c1, d1, e1, a1, w[1], 15);
+    RMD_R32(b2, c2, d2, e2, a2, w[9], 14);
+    RMD_R31(a1, b1, c1, d1, e1, w[2], 14);
+    RMD_R32(a2, b2, c2, d2, e2, w[11], 12);
+    RMD_R31(e1, a1, b1, c1, d1, w[7], 8);
+    RMD_R32(e2, a2, b2, c2, d2, w[8], 13);
+    RMD_R31(d1, e1, a1, b1, c1, w[0], 13);
+    RMD_R32(d2, e2, a2, b2, c2, w[12], 5);
+    RMD_R31(c1, d1, e1, a1, b1, w[6], 6);
+    RMD_R32(c2, d2, e2, a2, b2, w[2], 14);
+    RMD_R31(b1, c1, d1, e1, a1, w[13], 5);
+    RMD_R32(b2, c2, d2, e2, a2, w[10], 13);
+    RMD_R31(a1, b1, c1, d1, e1, w[11], 12);
+    RMD_R32(a2, b2, c2, d2, e2, w[0], 13);
+    RMD_R31(e1, a1, b1, c1, d1, w[5], 7);
+    RMD_R32(e2, a2, b2, c2, d2, w[4], 7);
+    RMD_R31(d1, e1, a1, b1, c1, w[12], 5);
+    RMD_R32(d2, e2, a2, b2, c2, w[13], 5);
+
+    // Round 4
+    RMD_R41(c1, d1, e1, a1, b1, w[1], 11);
+    RMD_R42(c2, d2, e2, a2, b2, w[8], 15);
+    RMD_R41(b1, c1, d1, e1, a1, w[9], 12);
+    RMD_R42(b2, c2, d2, e2, a2, w[6], 5);
+    RMD_R41(a1, b1, c1, d1, e1, w[11], 14);
+    RMD_R42(a2, b2, c2, d2, e2, w[4], 8);
+    RMD_R41(e1, a1, b1, c1, d1, w[10], 15);
+    RMD_R42(e2, a2, b2, c2, d2, w[1], 11);
+    RMD_R41(d1, e1, a1, b1, c1, w[0], 14);
+    RMD_R42(d2, e2, a2, b2, c2, w[3], 14);
+    RMD_R41(c1, d1, e1, a1, b1, w[8], 15);
+    RMD_R42(c2, d2, e2, a2, b2, w[11], 14);
+    RMD_R41(b1, c1, d1, e1, a1, w[12], 9);
+    RMD_R42(b2, c2, d2, e2, a2, w[15], 6);
+    RMD_R41(a1, b1, c1, d1, e1, w[4], 8);
+    RMD_R42(a2, b2, c2, d2, e2, w[0], 14);
+    RMD_R41(e1, a1, b1, c1, d1, w[13], 9);
+    RMD_R42(e2, a2, b2, c2, d2, w[5], 6);
+    RMD_R41(d1, e1, a1, b1, c1, w[3], 14);
+    RMD_R42(d2, e2, a2, b2, c2, w[12], 9);
+    RMD_R41(c1, d1, e1, a1, b1, w[7], 5);
+    RMD_R42(c2, d2, e2, a2, b2, w[2], 12);
+    RMD_R41(b1, c1, d1, e1, a1, w[15], 6);
+    RMD_R42(b2, c2, d2, e2, a2, w[13], 9);
+    RMD_R41(a1, b1, c1, d1, e1, w[14], 8);
+    RMD_R42(a2, b2, c2, d2, e2, w[9], 12);
+    RMD_R41(e1, a1, b1, c1, d1, w[5], 6);
+    RMD_R42(e2, a2, b2, c2, d2, w[7], 5);
+    RMD_R41(d1, e1, a1, b1, c1, w[6], 5);
+    RMD_R42(d2, e2, a2, b2, c2, w[10], 15);
+    RMD_R41(c1, d1, e1, a1, b1, w[2], 12);
+    RMD_R42(c2, d2, e2, a2, b2, w[14], 8);
+
+    // Round 5
+    RMD_R51(b1, c1, d1, e1, a1, w[4], 9);
+    RMD_R52(b2, c2, d2, e2, a2, w[12], 8);
+    RMD_R51(a1, b1, c1, d1, e1, w[0], 15);
+    RMD_R52(a2, b2, c2, d2, e2, w[15], 5);
+    RMD_R51(e1, a1, b1, c1, d1, w[5], 5);
+    RMD_R52(e2, a2, b2, c2, d2, w[10], 12);
+    RMD_R51(d1, e1, a1, b1, c1, w[9], 11);
+    RMD_R52(d2, e2, a2, b2, c2, w[4], 9);
+    RMD_R51(c1, d1, e1, a1, b1, w[7], 6);
+    RMD_R52(c2, d2, e2, a2, b2, w[1], 12);
+    RMD_R51(b1, c1, d1, e1, a1, w[12], 8);
+    RMD_R52(b2, c2, d2, e2, a2, w[5], 5);
+    RMD_R51(a1, b1, c1, d1, e1, w[2], 13);
+    RMD_R52(a2, b2, c2, d2, e2, w[8], 14);
+    RMD_R51(e1, a1, b1, c1, d1, w[10], 12);
+    RMD_R52(e2, a2, b2, c2, d2, w[7], 6);
+    RMD_R51(d1, e1, a1, b1, c1, w[14], 5);
+    RMD_R52(d2, e2, a2, b2, c2, w[6], 8);
+    RMD_R51(c1, d1, e1, a1, b1, w[1], 12);
+    RMD_R52(c2, d2, e2, a2, b2, w[2], 13);
+    RMD_R51(b1, c1, d1, e1, a1, w[3], 13);
+    RMD_R52(b2, c2, d2, e2, a2, w[13], 6);
+    RMD_R51(a1, b1, c1, d1, e1, w[8], 14);
+    RMD_R52(a2, b2, c2, d2, e2, w[14], 5);
+    RMD_R51(e1, a1, b1, c1, d1, w[11], 11);
+    RMD_R52(e2, a2, b2, c2, d2, w[0], 15);
+    RMD_R51(d1, e1, a1, b1, c1, w[6], 8);
+    RMD_R52(d2, e2, a2, b2, c2, w[3], 13);
+    RMD_R51(c1, d1, e1, a1, b1, w[15], 5);
+    RMD_R52(c2, d2, e2, a2, b2, w[9], 11);
+    RMD_R51(b1, c1, d1, e1, a1, w[13], 6);
+    RMD_R52(b2, c2, d2, e2, a2, w[11], 11);
+
+    // Update state (RIPEMD-160 final combination)
+    __m256i init0 = _mm256_load_si256((__m256i*)&_rmd_init[0]);
+    __m256i init1 = _mm256_load_si256((__m256i*)&_rmd_init[8]);
+    __m256i init2 = _mm256_load_si256((__m256i*)&_rmd_init[16]);
+    __m256i init3 = _mm256_load_si256((__m256i*)&_rmd_init[24]);
+    __m256i init4 = _mm256_load_si256((__m256i*)&_rmd_init[32]);
+
+    __m256i t = init0;
+    rmd_state[0] = rmd_add3(init1, c1, d2);
+    rmd_state[1] = rmd_add3(init2, d1, e2);
+    rmd_state[2] = rmd_add3(init3, e1, a2);
+    rmd_state[3] = rmd_add3(init4, a1, b2);
+    rmd_state[4] = rmd_add3(t, b1, c2);
+  }
+
+} // namespace _ripemd160avx2_fused
+
+// Fused SHA256→RIPEMD160 for compressed keys (1-block SHA256)
+// Eliminates intermediate 32-byte buffer writes by keeping SHA256 output in registers
+void sha256_ripemd160_avx2_1B(
+    uint32_t *i0, uint32_t *i1, uint32_t *i2, uint32_t *i3,
+    uint32_t *i4, uint32_t *i5, uint32_t *i6, uint32_t *i7,
+    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
+    uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7) {
+
+  // Step 1: Perform SHA256 (keep output in registers)
+  __m256i sha256_state[8] __attribute__ ((aligned (32)));
+  _sha256avx2::Initialize(sha256_state);
+  _sha256avx2::Transform(sha256_state, i0, i1, i2, i3, i4, i5, i6, i7);
+
+  // Step 2: Feed SHA256 output directly to RIPEMD160 (no intermediate buffer)
+  __m256i rmd_state[5] __attribute__ ((aligned (32)));
+  _ripemd160avx2_fused::Transform_from_sha256(rmd_state, sha256_state);
+
+  // Step 3: Extract and store RIPEMD160 results
+  alignas(32) uint32_t temp[8];
+
+  for (int i = 0; i < 5; i++) {
+    _mm256_store_si256((__m256i*)temp, rmd_state[i]);
+    ((uint32_t*)d0)[i] = temp[7];
+    ((uint32_t*)d1)[i] = temp[6];
+    ((uint32_t*)d2)[i] = temp[5];
+    ((uint32_t*)d3)[i] = temp[4];
+    ((uint32_t*)d4)[i] = temp[3];
+    ((uint32_t*)d5)[i] = temp[2];
+    ((uint32_t*)d6)[i] = temp[1];
+    ((uint32_t*)d7)[i] = temp[0];
+  }
+}
+
+// Fused SHA256→RIPEMD160 for uncompressed keys (2-block SHA256)
+// Eliminates intermediate 32-byte buffer writes by keeping SHA256 output in registers
+void sha256_ripemd160_avx2_2B(
+    uint32_t *i0, uint32_t *i1, uint32_t *i2, uint32_t *i3,
+    uint32_t *i4, uint32_t *i5, uint32_t *i6, uint32_t *i7,
+    uint8_t *d0, uint8_t *d1, uint8_t *d2, uint8_t *d3,
+    uint8_t *d4, uint8_t *d5, uint8_t *d6, uint8_t *d7) {
+
+  // Step 1: Perform 2-block SHA256 (keep output in registers)
+  __m256i sha256_state[8] __attribute__ ((aligned (32)));
+  _sha256avx2::Initialize(sha256_state);
+  _sha256avx2::Transform(sha256_state, i0, i1, i2, i3, i4, i5, i6, i7);
+  _sha256avx2::Transform(sha256_state, i0 + 16, i1 + 16, i2 + 16, i3 + 16,
+                            i4 + 16, i5 + 16, i6 + 16, i7 + 16);
+
+  // Step 2: Feed SHA256 output directly to RIPEMD160 (no intermediate buffer)
+  __m256i rmd_state[5] __attribute__ ((aligned (32)));
+  _ripemd160avx2_fused::Transform_from_sha256(rmd_state, sha256_state);
+
+  // Step 3: Extract and store RIPEMD160 results
+  alignas(32) uint32_t temp[8];
+
+  for (int i = 0; i < 5; i++) {
+    _mm256_store_si256((__m256i*)temp, rmd_state[i]);
+    ((uint32_t*)d0)[i] = temp[7];
+    ((uint32_t*)d1)[i] = temp[6];
+    ((uint32_t*)d2)[i] = temp[5];
+    ((uint32_t*)d3)[i] = temp[4];
+    ((uint32_t*)d4)[i] = temp[3];
+    ((uint32_t*)d5)[i] = temp[2];
+    ((uint32_t*)d6)[i] = temp[1];
+    ((uint32_t*)d7)[i] = temp[0];
+  }
+}
