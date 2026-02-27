@@ -16,6 +16,7 @@
 
 #include "wizard.h"
 #include "../platform/platform_types.h"  /* PLATFORM_WINDOWS macro */
+#include <stdio.h>                       /* fprintf, stderr */
 
 #if PLATFORM_WINDOWS
 

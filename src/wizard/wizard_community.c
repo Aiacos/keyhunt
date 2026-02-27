@@ -9,14 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-#if PLATFORM_WINDOWS
-#include <winsock2.h>   /* gethostname on Windows */
-#define popen _popen
-#define pclose _pclose
-#else
-#include <unistd.h>     /* gethostname on POSIX */
-#endif
+#include <inttypes.h>   /* PRIu64, SCNu64 */
+#include <unistd.h>     /* gethostname */
 
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
@@ -1026,7 +1020,7 @@ int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progres
             while (*val_start == ' ' || *val_start == '\t' || *val_start == '"') val_start++;
 
             uint64_t val = 0;
-            if (sscanf(val_start, "%lu", &val) == 1 && val > 0) {
+            if (sscanf(val_start, "%" SCNu64, &val) == 1 && val > 0) {
                 keys_scanned = val;
             }
         }

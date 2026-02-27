@@ -3,50 +3,10 @@
  */
 
 #include "wizard_http.h"
-#include "../platform/platform_types.h"   /* PLATFORM_WINDOWS macro */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-#if PLATFORM_WINDOWS
-#include <io.h>          /* _write, _close, _unlink, _open */
-#include <fcntl.h>       /* _O_WRONLY, _O_CREAT, _O_EXCL */
-#include <process.h>     /* _getpid */
-#define write _write
-#define close _close
-#define unlink _unlink
-#define popen _popen
-#define pclose _pclose
-#define ssize_t int
-
-/* Windows mkstemp replacement: generates unique temp file and opens it */
-static int mkstemp(char *tmpl) {
-    /* Find the XXXXXX suffix */
-    size_t len = strlen(tmpl);
-    if (len < 6) return -1;
-    char *suffix = tmpl + len - 6;
-    /* Replace with pseudo-random characters */
-    unsigned int seed = (unsigned int)time(NULL) ^ (unsigned int)_getpid();
-    static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
-    for (int i = 0; i < 6; i++) {
-        seed = seed * 1103515245 + 12345;
-        suffix[i] = chars[(seed >> 16) % (sizeof(chars) - 1)];
-    }
-    /* Also fix the /tmp/ path for Windows */
-    char *temp_dir = getenv("TEMP");
-    if (!temp_dir) temp_dir = getenv("TMP");
-    if (temp_dir) {
-        char fixed[256];
-        snprintf(fixed, sizeof(fixed), "%s\\%s", temp_dir, suffix);
-        strncpy(tmpl, fixed, len);
-        tmpl[len - 1] = '\0';
-    }
-    return _open(tmpl, _O_CREAT | _O_EXCL | _O_WRONLY, 0600);
-}
-#else
 #include <unistd.h>
-#endif
 
 /* ============================================================================
  * URL Validation (shell injection prevention)

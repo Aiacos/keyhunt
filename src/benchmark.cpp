@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <inttypes.h>
 
 // ANSI color codes
 #define CLR_RESET   "\033[0m"
@@ -84,7 +85,7 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
            sysinfo.has_avx2 ? CLR_GREEN "yes" CLR_RESET : CLR_RED "no" CLR_RESET,
            sysinfo.has_avx512 ? CLR_GREEN "yes" CLR_RESET : CLR_RED "no" CLR_RESET,
            sysinfo.has_sha_ni ? CLR_GREEN "yes" CLR_RESET : CLR_RED "no" CLR_RESET);
-    printf("  RAM: %lu MB available\n", sysinfo.ram_available);
+    printf("  RAM: %" PRIu64 " MB available\n", sysinfo.ram_available);
     if (sysinfo.has_cuda) {
         printf("  GPU: %s (%llu MB VRAM)\n",
                sysinfo.gpu_name[0] ? sysinfo.gpu_name : "NVIDIA GPU",

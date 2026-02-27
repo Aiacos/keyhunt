@@ -19,14 +19,14 @@
 #include <unistd.h>    /* ftruncate(), close() */
 #include <sys/file.h>  /* flock() - POSIX only */
 #else
-#include <io.h>        /* _close, _open on Windows */
-#define close _close
+#include <io.h>        /* _chsize, _open on Windows */
+/* close() is already provided by platform_compat.h via platform.h */
 #define open _open
 #define ftruncate(fd, sz) _chsize(fd, sz)
 /* No flock on Windows - use no-op (configuration race conditions are acceptable) */
 #define LOCK_EX 0
 #define LOCK_SH 0
-#define flock(fd, op) (0)
+#define flock(fd, op) ((void)(fd), 0)
 #endif
 
 /* ============================================================================
