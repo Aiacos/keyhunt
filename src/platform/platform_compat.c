@@ -91,4 +91,72 @@ int platform_usleep(unsigned int usec)
     return 0;
 }
 
+/**
+ * @brief Get the platform-specific path separator character (Windows implementation).
+ *
+ * Returns backslash for Windows.
+ */
+char platform_get_path_separator(void)
+{
+    return '\\';
+}
+
+/**
+ * @brief Normalize path separators for Windows.
+ *
+ * Converts all forward slashes to backslashes for Windows compatibility.
+ * Modifies the path in-place.
+ */
+char* platform_normalize_path(char *path)
+{
+    if (path == NULL) {
+        return NULL;
+    }
+
+    char *current = path;
+    while (*current) {
+        if (*current == '/') {
+            *current = '\\';
+        }
+        current++;
+    }
+
+    return path;
+}
+
+#else /* PLATFORM_POSIX */
+
+/**
+ * @brief Get the platform-specific path separator character (POSIX implementation).
+ *
+ * Returns forward slash for POSIX systems (Linux, macOS).
+ */
+char platform_get_path_separator(void)
+{
+    return '/';
+}
+
+/**
+ * @brief Normalize path separators for POSIX.
+ *
+ * Converts all backslashes to forward slashes for POSIX compatibility.
+ * Modifies the path in-place.
+ */
+char* platform_normalize_path(char *path)
+{
+    if (path == NULL) {
+        return NULL;
+    }
+
+    char *current = path;
+    while (*current) {
+        if (*current == '\\') {
+            *current = '/';
+        }
+        current++;
+    }
+
+    return path;
+}
+
 #endif /* PLATFORM_WINDOWS */

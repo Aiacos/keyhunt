@@ -100,6 +100,27 @@ extern "C" {
     #include <unistd.h>  /* usleep on POSIX */
 #endif
 
+/**
+ * @brief Get the platform-specific path separator character.
+ *
+ * Returns the path separator used by the current platform.
+ * @return '\\' on Windows, '/' on POSIX systems.
+ */
+char platform_get_path_separator(void);
+
+/**
+ * @brief Normalize path separators for the current platform.
+ *
+ * Converts all path separators in the given path to the platform-specific format.
+ * On Windows: converts '/' to '\\'
+ * On POSIX: converts '\\' to '/'
+ * Modifies the path in-place.
+ *
+ * @param path Path string to normalize (modified in-place).
+ * @return Pointer to the normalized path (same as input).
+ */
+char* platform_normalize_path(char *path);
+
 #ifdef __cplusplus
 }
 #endif
