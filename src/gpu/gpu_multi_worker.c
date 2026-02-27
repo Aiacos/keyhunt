@@ -440,3 +440,10 @@ void gpu_worker_shutdown(gpu_multi_worker_t *worker) {
 
     printf("[Worker] Worker manager shutdown complete\n");
 }
+
+bool gpu_worker_has_result(const gpu_multi_worker_t *worker) {
+    if (!worker) {
+        return false;
+    }
+    return worker->has_result;
+}

@@ -3919,10 +3919,80 @@ int main(int argc, char **argv)	{
 				if (config.gpu.multi_gpu_enabled && config.gpu.device_count > 1) {
 					// Multi-GPU mode: use worker thread system with scheduler
 					output_success("Running multi-GPU search with %d devices...\n", config.gpu.device_count);
-					// TODO: Initialize scheduler and worker threads
-					// This will be implemented in subtask-4-2
-					output_warning("Multi-GPU worker initialization not yet implemented\n");
-					gpu_result = -1;
+
+					// Initialize scheduler
+					multi_gpu_config_t sched_config;
+					sched_config.device_count = config.gpu.device_count;
+					for (int i = 0; i < config.gpu.device_count; i++) {
+						sched_config.device_ids[i] = config.gpu.device_ids[i];
+					}
+					sched_config.adaptive_balancing = true;
+					sched_config.rebalance_interval_keys = 100000000; // Rebalance every 100M keys
+
+					multi_gpu_scheduler_t *scheduler = multi_gpu_init(&sched_config);
+					if (!scheduler) {
+						output_error("Failed to initialize multi-GPU scheduler\n");
+						gpu_result = -1;
+					} else {
+						// Set the work range
+						uint64_t range_start = n_range_start.GetInt64();
+						uint64_t range_end = n_range_end.GetInt64();
+						multi_gpu_set_range(scheduler, range_start, range_end);
+
+						output_info("Multi-GPU scheduler initialized (range: %016" PRIx64 " - %016" PRIx64 ")\n",
+						            range_start, range_end);
+
+						// Initialize workers
+						worker_config_t worker_cfg = gpu_worker_default_config(scheduler, config.gpu.device_count);
+						for (int i = 0; i < config.gpu.device_count; i++) {
+							worker_cfg.device_ids[i] = config.gpu.device_ids[i];
+						}
+						worker_cfg.batch_size = THREADBPWORKLOAD;
+
+						gpu_multi_worker_t *workers = gpu_worker_init(&worker_cfg);
+						if (!workers) {
+							output_error("Failed to initialize multi-GPU workers\n");
+							multi_gpu_shutdown(scheduler);
+							gpu_result = -1;
+						} else {
+							// Start worker threads
+							if (!gpu_worker_start(workers)) {
+								output_error("Failed to start multi-GPU workers\n");
+								gpu_worker_shutdown(workers);
+								multi_gpu_shutdown(scheduler);
+								gpu_result = -1;
+							} else {
+								output_success("Multi-GPU workers started successfully\n");
+
+								// Wait for workers to complete (workers will run until no more work or key found)
+								// Check periodically if workers have found a result or completed
+								while (!gpu_worker_has_result(workers)) {
+									sleep_ms(1000);
+
+									// Check if we should stop (Ctrl+C, etc)
+									if (g_gpu_should_stop.load(std::memory_order_acquire)) {
+										break;
+									}
+								}
+
+								// Stop workers gracefully
+								gpu_worker_stop(workers, 10000); // 10 second timeout
+
+								// Get result (0 = key found, -1 = no key found)
+								gpu_result = gpu_worker_has_result(workers) ? 0 : -1;
+
+								// Cleanup
+								gpu_worker_shutdown(workers);
+								multi_gpu_shutdown(scheduler);
+
+								if (gpu_result == 0) {
+									output_success("Multi-GPU search completed: key found!\n");
+								} else {
+									output_info("Multi-GPU search completed: no key found\n");
+								}
+							}
+						}
+					}
 				} else {
 					// Single GPU mode: use existing path
 					if (config.gpu.multi_gpu_enabled && config.gpu.device_count == 1) {
