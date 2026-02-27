@@ -4398,6 +4398,30 @@ int main(int argc, char **argv)	{
 						fflush(stdout);
 						THREADOUTPUT = 0;
 
+						// Display per-GPU statistics if multi-GPU mode is active
+						if (g_multi_gpu_workers != NULL) {
+							multi_gpu_worker_stats_t gpu_stats;
+							gpu_worker_get_stats(g_multi_gpu_workers, &gpu_stats);
+
+							if (gpu_stats.active_workers > 0) {
+								int device_ids[MULTI_GPU_MAX_DEVICES];
+								uint64_t keys_processed[MULTI_GPU_MAX_DEVICES];
+								double throughput_mkeys[MULTI_GPU_MAX_DEVICES];
+								const char *device_names[MULTI_GPU_MAX_DEVICES];
+
+								// Extract per-device data from worker stats
+								for (int i = 0; i < gpu_stats.active_workers; i++) {
+									device_ids[i] = gpu_stats.workers[i].device_id;
+									keys_processed[i] = gpu_stats.workers[i].keys_processed;
+									throughput_mkeys[i] = gpu_stats.workers[i].current_throughput;
+									device_names[i] = NULL;  // Device names not available from worker stats
+								}
+
+								output_gpu_stats(gpu_stats.active_workers, device_ids,
+								                 keys_processed, throughput_mkeys, device_names);
+							}
+						}
+
 						// Show visual progress bar if range progress is enabled
 						if (g_rangeProgressEnabled) {
 							int permille = 0;
@@ -4504,6 +4528,30 @@ int main(int argc, char **argv)	{
 						printf("%s",buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
+
+						// Display per-GPU statistics if multi-GPU mode is active
+						if (g_multi_gpu_workers != NULL) {
+							multi_gpu_worker_stats_t gpu_stats;
+							gpu_worker_get_stats(g_multi_gpu_workers, &gpu_stats);
+
+							if (gpu_stats.active_workers > 0) {
+								int device_ids[MULTI_GPU_MAX_DEVICES];
+								uint64_t keys_processed[MULTI_GPU_MAX_DEVICES];
+								double throughput_mkeys[MULTI_GPU_MAX_DEVICES];
+								const char *device_names[MULTI_GPU_MAX_DEVICES];
+
+								// Extract per-device data from worker stats
+								for (int i = 0; i < gpu_stats.active_workers; i++) {
+									device_ids[i] = gpu_stats.workers[i].device_id;
+									keys_processed[i] = gpu_stats.workers[i].keys_processed;
+									throughput_mkeys[i] = gpu_stats.workers[i].current_throughput;
+									device_names[i] = NULL;  // Device names not available from worker stats
+								}
+
+								output_gpu_stats(gpu_stats.active_workers, device_ids,
+								                 keys_processed, throughput_mkeys, device_names);
+							}
+						}
 
 						// Show visual progress bar if range progress is enabled
 						if (g_rangeProgressEnabled) {
