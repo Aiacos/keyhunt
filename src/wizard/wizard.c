@@ -2,6 +2,10 @@
  * wizard.c - Main wizard entry point
  *
  * Usage: ./keyhunt --wizard  or  ./keyhunt -W
+ *
+ * Note: Uses platform abstraction layer for cross-platform compatibility.
+ *       Directory operations (platform_dir_*) are available via platform.h
+ *       for cache and configuration file handling.
  */
 
 #include "wizard.h"

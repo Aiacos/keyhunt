@@ -9,10 +9,6 @@
 #include <string.h>
 #include <time.h>
 
-#if !PLATFORM_WINDOWS
-#include <sys/stat.h>
-#endif
-
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
 #define PRIVATEKEYS_CLOUD_URL "https://privatekeys.pw/cloud-search"
@@ -545,10 +541,9 @@ static int get_cache_dir(char *path, size_t size) {
 
     snprintf(path, size, "%s/.keyhunt", home);
 
-    /* Create directory if it doesn't exist */
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        if (mkdir(path, 0755) != 0) {
+    /* Create directory if it doesn't exist - use platform abstraction */
+    if (!platform_dir_exists(path)) {
+        if (platform_dir_create(path) != 0) {
             return -1;
         }
     }

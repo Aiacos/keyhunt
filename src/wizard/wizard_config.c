@@ -1,5 +1,9 @@
 /*
  * wizard_config.c - Configuration and puzzle database
+ *
+ * Note: Uses platform abstraction layer (platform.h) for cross-platform
+ *       file operations. Directory operations (platform_dir_*) available
+ *       for configuration file management.
  */
 
 #include "wizard.h"
