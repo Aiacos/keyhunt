@@ -135,6 +135,13 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
             args->run_benchmark = true;
             return 0;
         }
+        if (strcmp(argv[i], "--perf-history") == 0) {
+            args->show_perf_history = true;
+            printf("Performance History\n");
+            printf("===================\n");
+            printf("Historical performance data will be displayed here.\n");
+            return 0;
+        }
         if (strcmp(argv[i], "--wizard-client") == 0 && i + 1 < argc) {
             strncpy(args->wizard_client, argv[i + 1], sizeof(args->wizard_client) - 1);
             args->wizard_client[sizeof(args->wizard_client) - 1] = '\0';
