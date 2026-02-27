@@ -90,6 +90,88 @@ static size_t g_bloom_size = 0;
 static int g_bloom_hashes = 0;
 
 // ============================================================================
+// OpenCL kernel source (to be populated in subtasks 2-3, 2-4, 2-5)
+// ============================================================================
+
+// Placeholder kernel source - will be filled with actual implementations
+static const char *g_opencl_kernel_source =
+"// OpenCL kernels for keyhunt\n"
+"// secp256k1 ECC + SHA256 + RIPEMD160 + bloom/matching\n"
+"\n"
+"// Placeholder - actual kernel implementations in subtasks 2-3, 2-4, 2-5\n"
+"__kernel void placeholder_kernel(__global uchar *data) {\n"
+"    int gid = get_global_id(0);\n"
+"    data[gid] = 0;\n"
+"}\n";
+
+// ============================================================================
+// Kernel compilation and loading
+// ============================================================================
+
+// Compile OpenCL kernels for a specific device
+static int compile_kernels_for_device(opencl_device_t *dev) {
+    cl_int err;
+
+    if (!dev || !dev->active) {
+        return -1;
+    }
+
+    printf("[OpenCL] Compiling kernels for device %d: %s\n",
+           dev->device_id, dev->device_name);
+
+    // Create program from source
+    size_t source_len = strlen(g_opencl_kernel_source);
+    dev->program = clCreateProgramWithSource(dev->context, 1,
+                                             &g_opencl_kernel_source,
+                                             &source_len, &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to create program for device %d: %s (%d)\n",
+                dev->device_id, clGetErrorString(err), err);
+        return -1;
+    }
+
+    // Build program with optimizations
+    // Note: -cl-fast-relaxed-math for aggressive optimizations (like CUDA's -use_fast_math)
+    const char *build_options = "-cl-fast-relaxed-math -cl-mad-enable -Werror";
+    err = clBuildProgram(dev->program, 1, &dev->device, build_options, NULL, NULL);
+
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[OpenCL] Failed to build program for device %d: %s (%d)\n",
+                dev->device_id, clGetErrorString(err), err);
+
+        // Get build log for debugging
+        size_t log_size = 0;
+        clGetProgramBuildInfo(dev->program, dev->device, CL_PROGRAM_BUILD_LOG,
+                             0, NULL, &log_size);
+
+        if (log_size > 1) {
+            char *build_log = (char*)malloc(log_size + 1);
+            if (build_log) {
+                clGetProgramBuildInfo(dev->program, dev->device, CL_PROGRAM_BUILD_LOG,
+                                     log_size, build_log, NULL);
+                build_log[log_size] = '\0';
+                fprintf(stderr, "[OpenCL] Build log:\n%s\n", build_log);
+                free(build_log);
+            }
+        }
+
+        clReleaseProgram(dev->program);
+        dev->program = NULL;
+        return -1;
+    }
+
+    printf("[OpenCL] Kernels compiled successfully for device %d\n", dev->device_id);
+
+    // Create kernel objects (will be populated in later subtasks)
+    // For now, we'll create them as placeholders and set to NULL
+    // They will be created with clCreateKernel in subtasks 2-3, 2-4, 2-5
+    dev->kernel_hash160 = NULL;
+    dev->kernel_full_search = NULL;
+
+    return 0;
+}
+
+// ============================================================================
 // Device enumeration and initialization
 // ============================================================================
 
@@ -199,6 +281,16 @@ static int enumerate_opencl_devices(void) {
             if (err != CL_SUCCESS) {
                 fprintf(stderr, "[OpenCL] Failed to create command queue for device %d: %s (%d)\n",
                        total_devices, clGetErrorString(err), err);
+                clReleaseContext(dev->context);
+                dev->active = 0;
+                continue;
+            }
+
+            // Compile kernels for this device
+            if (compile_kernels_for_device(dev) != 0) {
+                fprintf(stderr, "[OpenCL] Failed to compile kernels for device %d\n",
+                       total_devices);
+                clReleaseCommandQueue(dev->queue);
                 clReleaseContext(dev->context);
                 dev->active = 0;
                 continue;
