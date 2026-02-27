@@ -2,17 +2,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <ctype.h>
-#include <dirent.h>
-#include <strings.h>
+#include "../platform/platform.h"
 
-#ifdef __linux__
-#include <sys/sysinfo.h>
-#include <dlfcn.h>
+#if PLATFORM_WINDOWS
+    /* Windows-specific headers for system information */
+    #include <windows.h>
+    #include <psapi.h>
+#else
+    /* POSIX headers */
+    #include <unistd.h>
+    #include <dirent.h>
+    #include <strings.h>
+    #ifdef __linux__
+        #include <sys/sysinfo.h>
+        #include <dlfcn.h>
+    #endif
 #endif
 
-// Helper function to read integer from file
+#if PLATFORM_POSIX
+// Helper function to read integer from file (POSIX only)
 static long read_long_from_file(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
@@ -25,7 +34,7 @@ static long read_long_from_file(const char *path) {
     return value;
 }
 
-// Helper function to read string from file
+// Helper function to read string from file (POSIX only)
 static int read_string_from_file(const char *path, char *buffer, size_t size) {
     FILE *f = fopen(path, "r");
     if (!f) return 0;
@@ -43,12 +52,34 @@ static int read_string_from_file(const char *path, char *buffer, size_t size) {
     }
     return 1;
 }
+#endif
 
 // Detect physical CPU cores (without hyperthreading)
 static int detect_physical_cores(void) {
     int physical_cores = 0;
 
-#ifdef __linux__
+#if PLATFORM_WINDOWS
+    // Use GetLogicalProcessorInformation to count physical cores
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformation(NULL, &buffer_size);
+
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION *buffer =
+            (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)malloc(buffer_size);
+
+        if (buffer && GetLogicalProcessorInformation(buffer, &buffer_size)) {
+            DWORD count = buffer_size / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+
+            for (DWORD i = 0; i < count; i++) {
+                if (buffer[i].Relationship == RelationProcessorCore) {
+                    physical_cores++;
+                }
+            }
+
+            free(buffer);
+        }
+    }
+#elif defined(__linux__)
     // Method 1: Read from /sys/devices/system/cpu/cpu*/topology/thread_siblings_list
     // to count unique physical cores
     DIR *dir = opendir("/sys/devices/system/cpu");
@@ -106,7 +137,8 @@ static int detect_physical_cores(void) {
     }
 #endif
 
-    // Final fallback
+#if PLATFORM_POSIX
+    // Final fallback for POSIX systems
     if (physical_cores == 0) {
         physical_cores = sysconf(_SC_NPROCESSORS_ONLN);
         // Assume hyperthreading (divide by 2)
@@ -114,14 +146,21 @@ static int detect_physical_cores(void) {
             physical_cores = (physical_cores + 1) / 2;
         }
     }
+#endif
 
     return physical_cores > 0 ? physical_cores : 1;
 }
 
 // Detect logical CPU cores
 static int detect_logical_cores(void) {
+#if PLATFORM_WINDOWS
+    SYSTEM_INFO sys_info;
+    GetSystemInfo(&sys_info);
+    return (int)sys_info.dwNumberOfProcessors;
+#else
     long cores = sysconf(_SC_NPROCESSORS_ONLN);
     return cores > 0 ? (int)cores : 1;
+#endif
 }
 
 // Detect cache sizes
@@ -130,7 +169,38 @@ static void detect_cache_sizes(system_info_t *info) {
     info->cache_l2_size = 0;
     info->cache_l3_size = 0;
 
-#ifdef __linux__
+#if PLATFORM_WINDOWS
+    // Use GetLogicalProcessorInformation to get cache info
+    DWORD buffer_size = 0;
+    GetLogicalProcessorInformation(NULL, &buffer_size);
+
+    if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION *buffer =
+            (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)malloc(buffer_size);
+
+        if (buffer && GetLogicalProcessorInformation(buffer, &buffer_size)) {
+            DWORD count = buffer_size / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+
+            for (DWORD i = 0; i < count; i++) {
+                if (buffer[i].Relationship == RelationCache) {
+                    CACHE_DESCRIPTOR cache = buffer[i].Cache;
+                    // Convert bytes to KB
+                    uint64_t size_kb = cache.Size / 1024;
+
+                    if (cache.Level == 1 && cache.Type == CacheData) {
+                        info->cache_l1_size = size_kb;
+                    } else if (cache.Level == 2) {
+                        info->cache_l2_size = size_kb;
+                    } else if (cache.Level == 3) {
+                        info->cache_l3_size = size_kb;
+                    }
+                }
+            }
+
+            free(buffer);
+        }
+    }
+#elif defined(__linux__)
     // Parse size strings from sysfs (they might have K suffix)
     char buf[64];
     if (read_string_from_file("/sys/devices/system/cpu/cpu0/cache/index0/size", buf, sizeof(buf))) {
@@ -144,6 +214,7 @@ static void detect_cache_sizes(system_info_t *info) {
     }
 #endif
 
+#if PLATFORM_POSIX
     // Fallback to sysconf
     if (info->cache_l1_size == 0) {
         long l1 = sysconf(_SC_LEVEL1_DCACHE_SIZE);
@@ -157,6 +228,7 @@ static void detect_cache_sizes(system_info_t *info) {
         long l3 = sysconf(_SC_LEVEL3_CACHE_SIZE);
         if (l3 > 0) info->cache_l3_size = l3 / 1024;
     }
+#endif
 
     // Reasonable defaults if detection failed
     if (info->cache_l1_size == 0) info->cache_l1_size = 32;   // 32 KB
