@@ -49,6 +49,15 @@ int main(void) {
     uint64_t elapsed_ns = platform_time_now_ns() - start;
     double elapsed_sec = elapsed_ns / 1e9;
 
+    /* Directory example */
+    if (!platform_dir_exists("output")) {
+        platform_dir_create("output");
+    }
+
+    /* POSIX compatibility example */
+    char path[] = "output/data/file.txt";
+    platform_normalize_path(path);  /* Converts to platform format */
+
     return 0;
 }
 ```
@@ -104,7 +113,9 @@ src/platform/
 ├── platform_types.h        # Opaque type definitions, platform detection
 ├── platform_thread.h/c     # Thread operations (create, join, detach)
 ├── platform_mutex.h/c      # Mutex operations (init, lock, unlock, destroy)
-└── platform_time.h/c       # High-resolution monotonic time
+├── platform_time.h/c       # High-resolution monotonic time
+├── platform_dir.h/c        # Directory operations (create, remove, iterate)
+└── platform_compat.h/c     # POSIX compatibility (strcasecmp, usleep, paths)
 ```
 
 ### Platform Detection (platform_types.h)
@@ -131,6 +142,7 @@ Platform-specific handles are wrapped in unified types:
 | `platform_mutex_t` | `HANDLE` (mutex object) | `pthread_mutex_t` |
 | `platform_thread_func_t` | `DWORD (WINAPI *)(void*)` | `void* (*)(void*)` |
 | `platform_thread_return_t` | `DWORD` | `void*` |
+| `platform_dir_handle_t` | `struct { HANDLE, WIN32_FIND_DATAA }` | `DIR*` |
 
 ## API Reference
 
@@ -335,6 +347,275 @@ double elapsed_sec = elapsed_ns / 1e9;
 printf("Operation took: %.3f ms (%.6f sec)\n", elapsed_ms, elapsed_sec);
 ```
 
+### Directory Operations
+
+#### `platform_dir_create`
+
+Create a new directory.
+
+```c
+int platform_dir_create(const char *path);
+```
+
+**Returns:** 0 on success, -1 on failure (directory already exists or permission denied).
+
+**Implementation:**
+- **Windows:** `CreateDirectoryA` with NULL security attributes
+- **POSIX:** `mkdir` with mode 0755 (rwxr-xr-x)
+
+**Note:** Creates a single directory, not recursive (parent must exist).
+
+**Example:**
+```c
+if (platform_dir_create("output") != 0) {
+    fprintf(stderr, "Failed to create directory\n");
+    return 1;
+}
+```
+
+#### `platform_dir_remove`
+
+Remove an empty directory.
+
+```c
+int platform_dir_remove(const char *path);
+```
+
+**Returns:** 0 on success, -1 on failure (directory not empty or does not exist).
+
+**Implementation:**
+- **Windows:** `RemoveDirectoryA`
+- **POSIX:** `rmdir`
+
+**Important:** Directory must be empty before removal.
+
+#### `platform_dir_exists`
+
+Check if a directory exists.
+
+```c
+int platform_dir_exists(const char *path);
+```
+
+**Returns:** 1 if directory exists, 0 if not exists or is a file.
+
+**Implementation:**
+- **Windows:** `GetFileAttributesA` with `FILE_ATTRIBUTE_DIRECTORY` check
+- **POSIX:** `stat` with `S_ISDIR` macro
+
+**Example:**
+```c
+if (!platform_dir_exists("data")) {
+    platform_dir_create("data");
+}
+```
+
+#### `platform_dir_open`
+
+Open a directory for iteration.
+
+```c
+platform_dir_handle_t platform_dir_open(const char *path);
+```
+
+**Returns:** Directory handle on success, NULL on failure.
+
+**Implementation:**
+- **Windows:** `FindFirstFileA` with "path\\*" pattern
+- **POSIX:** `opendir`
+
+**Must be closed with `platform_dir_close()` after use.**
+
+#### `platform_dir_read`
+
+Read the next directory entry.
+
+```c
+int platform_dir_read(
+    platform_dir_handle_t handle,
+    platform_dir_entry_t *entry
+);
+```
+
+**Returns:** 1 if entry was read, 0 if end of directory, -1 on error.
+
+**Implementation:**
+- **Windows:** First call uses cached `FindFirstFileA` result, subsequent calls use `FindNextFileA`
+- **POSIX:** `readdir`
+
+**Automatically skips "." and ".." entries.**
+
+**Entry structure:**
+```c
+typedef struct {
+    char name[256];      /* Entry name (file or directory) */
+    int is_directory;    /* 1 if directory, 0 if file */
+} platform_dir_entry_t;
+```
+
+**Example:**
+```c
+platform_dir_handle_t dir = platform_dir_open("data");
+if (dir == NULL) {
+    fprintf(stderr, "Failed to open directory\n");
+    return 1;
+}
+
+platform_dir_entry_t entry;
+while (platform_dir_read(dir, &entry) == 1) {
+    printf("%s %s\n",
+           entry.is_directory ? "[DIR]" : "[FILE]",
+           entry.name);
+}
+
+platform_dir_close(dir);
+```
+
+#### `platform_dir_close`
+
+Close a directory handle.
+
+```c
+int platform_dir_close(platform_dir_handle_t handle);
+```
+
+**Returns:** 0 on success, -1 on failure.
+
+**Implementation:**
+- **Windows:** `FindClose` and frees handle structure
+- **POSIX:** `closedir`
+
+### POSIX Compatibility Functions
+
+The platform compatibility layer provides Windows implementations of common POSIX functions, enabling clean cross-platform code without scattered `#ifdef` blocks.
+
+#### `strcasecmp` / `strncasecmp`
+
+Case-insensitive string comparison.
+
+```c
+int strcasecmp(const char *s1, const char *s2);
+int strncasecmp(const char *s1, const char *s2, size_t n);
+```
+
+**Returns:** Integer less than, equal to, or greater than zero if s1 is found to be less than, to match, or be greater than s2.
+
+**Implementation:**
+- **Windows:** Custom implementation using `_stricmp` / `_strnicmp`
+- **POSIX:** Native `strcasecmp` / `strncasecmp` from `<strings.h>`
+
+**Example:**
+```c
+if (strcasecmp(mode, "BSGS") == 0) {
+    /* Mode is bsgs (case-insensitive) */
+}
+
+if (strncasecmp(prefix, "0x", 2) == 0) {
+    /* String starts with hex prefix */
+}
+```
+
+#### `close`
+
+Close a file descriptor.
+
+```c
+int close(int fd);  /* Aliased to platform_close on Windows */
+```
+
+**Returns:** 0 on success, -1 on error.
+
+**Implementation:**
+- **Windows:** `_close` from CRT
+- **POSIX:** Native `close` from `<unistd.h>`
+
+**Note:** On Windows, this is provided via macro to `platform_close`.
+
+#### `getpid`
+
+Get process ID.
+
+```c
+int getpid(void);  /* Aliased to platform_getpid on Windows */
+```
+
+**Returns:** Process ID of the calling process.
+
+**Implementation:**
+- **Windows:** `GetCurrentProcessId`
+- **POSIX:** Native `getpid` from `<unistd.h>`
+
+**Example:**
+```c
+printf("Current process ID: %d\n", getpid());
+```
+
+#### `usleep`
+
+Suspend execution for microsecond intervals.
+
+```c
+int usleep(unsigned int usec);  /* Aliased to platform_usleep on Windows */
+```
+
+**Returns:** 0 on success, -1 on error.
+
+**Implementation:**
+- **Windows:** `Sleep(usec / 1000)` with millisecond rounding
+- **POSIX:** Native `usleep` from `<unistd.h>`
+
+**Note:** Windows implementation has millisecond resolution (rounds up).
+
+**Example:**
+```c
+/* Sleep for 100 microseconds */
+usleep(100);
+
+/* Sleep for 1 millisecond */
+usleep(1000);
+```
+
+#### `platform_get_path_separator`
+
+Get the platform-specific path separator character.
+
+```c
+char platform_get_path_separator(void);
+```
+
+**Returns:** '\\' on Windows, '/' on POSIX systems.
+
+**Example:**
+```c
+char sep = platform_get_path_separator();
+sprintf(path, "data%cconfig.txt", sep);
+/* Windows: "data\config.txt" */
+/* POSIX: "data/config.txt" */
+```
+
+#### `platform_normalize_path`
+
+Normalize path separators for the current platform.
+
+```c
+char* platform_normalize_path(char *path);
+```
+
+**Returns:** Pointer to the normalized path (same as input).
+
+**Behavior:**
+- **Windows:** Converts '/' to '\\'
+- **POSIX:** Converts '\\' to '/'
+- Modifies the path in-place
+
+**Example:**
+```c
+char path[] = "data/subdir\\file.txt";
+platform_normalize_path(path);
+/* Windows: "data\subdir\file.txt" */
+/* POSIX: "data/subdir/file.txt" */
+```
+
 ## Advanced Usage
 
 ### Producer-Consumer Pattern
@@ -479,6 +760,139 @@ int main(void) {
 }
 ```
 
+### Directory Traversal Pattern
+
+```c
+#include "platform/platform.h"
+#include <stdio.h>
+#include <string.h>
+
+void process_directory(const char *path) {
+    platform_dir_handle_t dir = platform_dir_open(path);
+    if (dir == NULL) {
+        fprintf(stderr, "Failed to open directory: %s\n", path);
+        return;
+    }
+
+    platform_dir_entry_t entry;
+    int count_files = 0, count_dirs = 0;
+
+    while (platform_dir_read(dir, &entry) == 1) {
+        if (entry.is_directory) {
+            printf("[DIR]  %s\n", entry.name);
+            count_dirs++;
+        } else {
+            printf("[FILE] %s\n", entry.name);
+            count_files++;
+        }
+    }
+
+    platform_dir_close(dir);
+    printf("Total: %d files, %d directories\n", count_files, count_dirs);
+}
+
+int main(void) {
+    /* Ensure directory exists */
+    if (!platform_dir_exists("output")) {
+        if (platform_dir_create("output") != 0) {
+            fprintf(stderr, "Failed to create output directory\n");
+            return 1;
+        }
+    }
+
+    /* Process directory contents */
+    process_directory("output");
+
+    return 0;
+}
+```
+
+### Cross-Platform Path Handling
+
+```c
+#include "platform/platform.h"
+#include <stdio.h>
+#include <string.h>
+
+void build_cross_platform_path(void) {
+    char sep = platform_get_path_separator();
+
+    /* Build path using platform separator */
+    char path[256];
+    snprintf(path, sizeof(path), "data%cconfig%csettings.ini", sep, sep);
+    printf("Platform-specific path: %s\n", path);
+    /* Windows: "data\config\settings.ini" */
+    /* POSIX: "data/config/settings.ini" */
+
+    /* Normalize mixed separators */
+    char mixed[] = "data/logs\\2024/errors.log";
+    platform_normalize_path(mixed);
+    printf("Normalized path: %s\n", mixed);
+    /* Windows: "data\logs\2024\errors.log" */
+    /* POSIX: "data/logs/2024/errors.log" */
+}
+
+int main(void) {
+    build_cross_platform_path();
+    return 0;
+}
+```
+
+### Safe Directory Creation with Parents
+
+```c
+#include "platform/platform.h"
+#include <stdio.h>
+#include <string.h>
+
+int create_directory_recursive(const char *path) {
+    char temp[256];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(temp, sizeof(temp), "%s", path);
+    platform_normalize_path(temp);
+    len = strlen(temp);
+
+    /* Remove trailing separator */
+    if (temp[len - 1] == platform_get_path_separator()) {
+        temp[len - 1] = '\0';
+    }
+
+    /* Create each parent directory */
+    for (p = temp + 1; *p; p++) {
+        if (*p == platform_get_path_separator()) {
+            *p = '\0';
+            if (!platform_dir_exists(temp)) {
+                if (platform_dir_create(temp) != 0) {
+                    return -1;
+                }
+            }
+            *p = platform_get_path_separator();
+        }
+    }
+
+    /* Create final directory */
+    if (!platform_dir_exists(temp)) {
+        return platform_dir_create(temp);
+    }
+
+    return 0;
+}
+
+int main(void) {
+    /* Create nested directory structure */
+    if (create_directory_recursive("output/data/2024/logs") == 0) {
+        printf("Successfully created directory structure\n");
+    } else {
+        fprintf(stderr, "Failed to create directories\n");
+        return 1;
+    }
+
+    return 0;
+}
+```
+
 ## Design Principles
 
 ### 1. Single Include Point
@@ -567,6 +981,10 @@ The platform abstraction layer eliminates the need for direct platform API usage
 | `pthread_join(...)` | `platform_thread_join(...)` |
 | `pthread_mutex_lock(...)` | `platform_mutex_lock(...)` |
 | `clock_gettime(...)` | `platform_time_now_ns()` |
+| `mkdir(...) / CreateDirectory(...)` | `platform_dir_create(...)` |
+| `opendir(...) / FindFirstFile(...)` | `platform_dir_open(...)` |
+| `strcasecmp(...) / _stricmp(...)` | `strcasecmp(...)` (auto-aliased) |
+| `usleep(...) / Sleep(...)` | `usleep(...)` (auto-aliased) |
 | `#ifdef _WIN32 ... #endif` | (No conditional compilation needed) |
 
 ### Thread Safety
@@ -800,7 +1218,7 @@ Potential additions to the platform abstraction layer:
 
 6. **File I/O Abstraction:**
    - `platform_file_open()`, `platform_file_read()`, `platform_file_write()`
-   - Unified file path handling (Windows `\` vs POSIX `/`)
+   - ✅ **Partially implemented:** Path handling via `platform_normalize_path()` and `platform_get_path_separator()`
 
 7. **Network Sockets:**
    - `platform_socket_create()`, `platform_socket_connect()`
