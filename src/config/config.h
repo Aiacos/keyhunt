@@ -119,7 +119,7 @@ typedef struct {
  * GpuConfig - GPU acceleration settings
  * ============================================================================ */
 
-#define GPU_MAX_DEVICES 8
+#define GPU_MAX_DEVICES 16
 
 typedef struct {
     /* GPU enable flags */
