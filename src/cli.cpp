@@ -115,6 +115,56 @@ static int parse_gpu_mode(const char *str) {
     return -1;
 }
 
+static int parse_gpu_device_list(const char *str, int *device_ids, int max_devices) {
+    if (str == NULL || device_ids == NULL || max_devices <= 0) return -1;
+
+    // Make a copy since strtok modifies the string
+    char buffer[256];
+    strncpy(buffer, str, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    int count = 0;
+    char *token = strtok(buffer, ",");
+
+    while (token != NULL && count < max_devices) {
+        // Trim leading/trailing whitespace
+        while (*token == ' ' || *token == '\t') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && (*end == ' ' || *end == '\t')) {
+            *end = '\0';
+            end--;
+        }
+
+        // Parse the device ID
+        char *endptr;
+        long val = strtol(token, &endptr, 10);
+
+        // Validate: must be a valid number, in range 0-15
+        if (endptr == token || *endptr != '\0' || val < 0 || val > 15) {
+            fprintf(stderr, "[E] Invalid GPU device ID: %s (must be 0-15)\n", token);
+            return -1;
+        }
+
+        // Check for duplicate IDs
+        for (int i = 0; i < count; i++) {
+            if (device_ids[i] == (int)val) {
+                fprintf(stderr, "[E] Duplicate GPU device ID: %d\n", (int)val);
+                return -1;
+            }
+        }
+
+        device_ids[count++] = (int)val;
+        token = strtok(NULL, ",");
+    }
+
+    if (count == 0) {
+        fprintf(stderr, "[E] No valid GPU device IDs found\n");
+        return -1;
+    }
+
+    return count;
+}
+
 int cli_parse(int argc, char **argv, cli_args_t *args) {
     if (args == NULL) return -1;
 
