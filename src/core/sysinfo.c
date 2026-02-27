@@ -242,7 +242,18 @@ static void detect_memory(system_info_t *info) {
     info->ram_available = 0;
     info->ram_free = 0;
 
-#ifdef __linux__
+#if PLATFORM_WINDOWS
+    // Use GlobalMemoryStatusEx for Windows
+    MEMORYSTATUSEX memstat;
+    memstat.dwLength = sizeof(MEMORYSTATUSEX);
+
+    if (GlobalMemoryStatusEx(&memstat)) {
+        // Convert bytes to MB
+        info->ram_total = (uint64_t)(memstat.ullTotalPhys / (1024 * 1024));
+        info->ram_available = (uint64_t)(memstat.ullAvailPhys / (1024 * 1024));
+        info->ram_free = info->ram_available;  // Windows doesn't distinguish available vs free
+    }
+#elif defined(__linux__)
     struct sysinfo si;
     if (sysinfo(&si) == 0) {
         info->ram_total = (si.totalram * si.mem_unit) / (1024 * 1024);  // Convert to MB
@@ -266,7 +277,8 @@ static void detect_memory(system_info_t *info) {
     }
 #endif
 
-    // Fallback
+#if PLATFORM_POSIX
+    // Fallback for POSIX systems
     if (info->ram_total == 0) {
         long pages = sysconf(_SC_PHYS_PAGES);
         long page_size = sysconf(_SC_PAGE_SIZE);
@@ -274,6 +286,7 @@ static void detect_memory(system_info_t *info) {
             info->ram_total = (pages * page_size) / (1024 * 1024);
         }
     }
+#endif
 
     if (info->ram_available == 0) {
         info->ram_available = info->ram_free;
