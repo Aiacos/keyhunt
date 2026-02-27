@@ -144,6 +144,17 @@ int cli_populate_config(const cli_args_t *args, void *cfg);
 
 #ifdef __cplusplus
 }
+
+// C++ only functions (requires Int class from secp256k1)
+#include "secp256k1/Int.h"
+
+// Parse extended N value from hex string (with optional 0x prefix)
+// Supports 256-bit values using Int::SetBase16()
+// value_str: Input hex string (e.g., "0x1000...000" or "1000...000")
+// result: Output Int object to store the parsed value
+// Returns: 0 on success, -1 on error
+int parse_n_value_extended(const char *value_str, Int *result);
+
 #endif
 
 #endif // CLI_H
