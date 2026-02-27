@@ -636,6 +636,130 @@ TEST(worker_has_result_no_match) {
 #endif
 }
 
+TEST(worker_work_distribution_and_load_balancing) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched) {
+        int gpu_count = multi_gpu_available();
+
+        if (gpu_count >= 2) {
+            /* Test with 2 GPUs for load balancing */
+            worker_config_t config = gpu_worker_default_config(sched, 2);
+            config.device_ids[0] = 0;
+            config.device_ids[1] = 1;
+            config.batch_size = 2048;  /* Small batches for better distribution */
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            ASSERT_NOT_NULL(worker);
+
+            /* Set a work range that's large enough to distribute */
+            multi_gpu_set_range(sched, 0, 200000);
+
+            /* Start all workers */
+            bool started = gpu_worker_start(worker);
+            ASSERT_TRUE(started);
+
+            /* Let workers run long enough to process multiple batches */
+            usleep(200000);  /* 200ms */
+
+            /* Get aggregate statistics */
+            multi_gpu_worker_stats_t stats;
+            gpu_worker_get_stats(worker, &stats);
+
+            /* Verify multiple workers are active */
+            ASSERT_TRUE(stats.active_workers >= 2);
+
+            /* Get per-device statistics */
+            gpu_worker_stats_t dev0_stats, dev1_stats;
+            bool got_dev0 = gpu_worker_get_device_stats(worker, 0, &dev0_stats);
+            bool got_dev1 = gpu_worker_get_device_stats(worker, 1, &dev1_stats);
+
+            ASSERT_TRUE(got_dev0);
+            ASSERT_TRUE(got_dev1);
+
+            /* Verify both workers are running */
+            ASSERT_EQ(WORKER_RUNNING, dev0_stats.status);
+            ASSERT_EQ(WORKER_RUNNING, dev1_stats.status);
+
+            /* Verify both workers processed some keys (work distribution) */
+            ASSERT_TRUE(dev0_stats.keys_processed > 0);
+            ASSERT_TRUE(dev1_stats.keys_processed > 0);
+
+            /* Verify work units were completed on both GPUs */
+            ASSERT_TRUE(dev0_stats.work_units_completed > 0);
+            ASSERT_TRUE(dev1_stats.work_units_completed > 0);
+
+            /* Check load balancing - neither GPU should be idle while other works
+             * Calculate the ratio of work between GPUs */
+            uint64_t min_work = dev0_stats.keys_processed < dev1_stats.keys_processed ?
+                                dev0_stats.keys_processed : dev1_stats.keys_processed;
+            uint64_t max_work = dev0_stats.keys_processed > dev1_stats.keys_processed ?
+                                dev0_stats.keys_processed : dev1_stats.keys_processed;
+
+            /* Load balancing check: min work should be at least 20% of max work
+             * This allows for some variance due to timing/scheduling but ensures
+             * work isn't heavily concentrated on one GPU */
+            if (max_work > 0) {
+                double balance_ratio = (double)min_work / (double)max_work;
+                ASSERT_TRUE(balance_ratio >= 0.20);  /* At least 20% balance */
+            }
+
+            /* Verify combined throughput includes both workers */
+            ASSERT_TRUE(stats.combined_throughput >= 0.0);
+
+            /* Verify total keys processed matches sum of individual workers */
+            uint64_t expected_total = dev0_stats.keys_processed + dev1_stats.keys_processed;
+            ASSERT_EQ(expected_total, stats.total_keys_processed);
+
+            /* Stop workers */
+            bool stopped = gpu_worker_stop(worker, 10000);
+            ASSERT_TRUE(stopped);
+
+            /* Get final statistics after stopping */
+            multi_gpu_worker_stats_t final_stats;
+            gpu_worker_get_stats(worker, &final_stats);
+
+            /* Verify workers stopped */
+            gpu_worker_stats_t final_dev0, final_dev1;
+            gpu_worker_get_device_stats(worker, 0, &final_dev0);
+            gpu_worker_get_device_stats(worker, 1, &final_dev1);
+
+            ASSERT_EQ(WORKER_STOPPED, final_dev0.status);
+            ASSERT_EQ(WORKER_STOPPED, final_dev1.status);
+
+            gpu_worker_shutdown(worker);
+        } else if (gpu_count == 1) {
+            /* With single GPU, just verify it works (no load balancing to test) */
+            worker_config_t config = gpu_worker_default_config(sched, 1);
+            config.device_ids[0] = 0;
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            if (worker) {
+                multi_gpu_set_range(sched, 0, 10000);
+                gpu_worker_start(worker);
+                usleep(50000);  /* 50ms */
+
+                gpu_worker_stats_t dev_stats;
+                bool got_stats = gpu_worker_get_device_stats(worker, 0, &dev_stats);
+                ASSERT_TRUE(got_stats);
+                ASSERT_TRUE(dev_stats.keys_processed > 0);
+
+                gpu_worker_stop(worker, 5000);
+                gpu_worker_shutdown(worker);
+            }
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
 /* ============================================================================
  * Worker Error Handling Tests
  * ============================================================================ */
@@ -745,6 +869,7 @@ int run_multi_gpu_integration_tests(void) {
     RUN_TEST(worker_multi_gpu_start_stop);
     RUN_TEST(worker_has_result_initial);
     RUN_TEST(worker_has_result_no_match);
+    RUN_TEST(worker_work_distribution_and_load_balancing);
 
     TEST_SECTION("Worker Error Handling Tests");
     RUN_TEST(worker_stop_timeout);
