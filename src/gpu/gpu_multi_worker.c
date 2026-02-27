@@ -133,3 +133,167 @@ worker_config_t gpu_worker_default_config(multi_gpu_scheduler_t *scheduler,
 
     return config;
 }
+
+/* Worker thread main function */
+static platform_thread_return_t gpu_worker_thread(void *arg) {
+    worker_context_t *ctx = (worker_context_t*)arg;
+    gpu_multi_worker_t *manager = ctx->manager;
+    int device_id = ctx->device_id;
+
+    /* Update status to running */
+    platform_mutex_lock(&manager->stats_lock);
+    ctx->stats.status = WORKER_RUNNING;
+    platform_mutex_unlock(&manager->stats_lock);
+
+    printf("[Worker %d] Thread started for GPU device %d\n", device_id, device_id);
+
+    /* Main work loop */
+    while (!manager->should_stop && !manager->has_result) {
+        /* Check if paused */
+        if (manager->paused) {
+            platform_mutex_lock(&manager->stats_lock);
+            ctx->stats.status = WORKER_IDLE;
+            platform_mutex_unlock(&manager->stats_lock);
+
+            /* Sleep briefly while paused */
+            uint64_t pause_start = get_time_ms();
+            while (manager->paused && !manager->should_stop) {
+                /* Sleep for 100ms */
+                uint64_t now = get_time_ms();
+                if (now - pause_start > 100) break;
+            }
+
+            platform_mutex_lock(&manager->stats_lock);
+            ctx->stats.status = WORKER_RUNNING;
+            platform_mutex_unlock(&manager->stats_lock);
+            continue;
+        }
+
+        /* Get work unit from scheduler */
+        uint64_t range_start, range_end;
+        if (!multi_gpu_get_work(manager->config.scheduler, device_id,
+                                &range_start, &range_end)) {
+            /* No more work available */
+            break;
+        }
+
+        /* Calculate work unit size */
+        uint64_t keys_in_batch = range_end - range_start;
+
+        /* Configure GPU search parameters */
+        gpu_search_config_t search_config;
+        memset(&search_config, 0, sizeof(search_config));
+
+        /* Set key range (convert uint64_t to 32-byte big-endian) */
+        memset(search_config.start_key, 0, 32);
+        for (int i = 0; i < 8; i++) {
+            search_config.start_key[31 - i] = (range_start >> (i * 8)) & 0xFF;
+        }
+
+        memset(search_config.end_key, 0, 32);
+        for (int i = 0; i < 8; i++) {
+            search_config.end_key[31 - i] = (range_end >> (i * 8)) & 0xFF;
+        }
+
+        /* Set stride to 1 */
+        memset(search_config.stride, 0, 32);
+        search_config.stride[31] = 1;
+
+        /* Use targets and config from manager config */
+        search_config.targets = manager->config.scheduler ? NULL : NULL;  /* TODO: Get from config */
+        search_config.target_count = 0;  /* TODO: Get from config */
+        search_config.search_compressed = 1;
+        search_config.search_uncompressed = 0;
+        search_config.use_bloom = 0;
+
+        /* Set callback (will be provided by manager config in future) */
+        search_config.callback = NULL;  /* TODO: Get from config */
+        search_config.callback_userdata = ctx;
+
+        /* Statistics tracking */
+        search_config.keys_checked = NULL;  /* Worker tracks separately */
+        search_config.should_stop = (volatile int*)&manager->should_stop;
+        search_config.quiet = 1;  /* Suppress GPU progress output */
+
+        /* Execute GPU search */
+        uint64_t work_start = get_time_ms();
+        int found_count = gpu_full_search(&search_config);
+        uint64_t work_elapsed = get_time_ms() - work_start;
+
+        /* Check for errors */
+        if (found_count < 0) {
+            platform_mutex_lock(&manager->stats_lock);
+            ctx->stats.error_count++;
+            snprintf(ctx->stats.last_error, sizeof(ctx->stats.last_error),
+                    "GPU search failed with code %d", found_count);
+            platform_mutex_unlock(&manager->stats_lock);
+
+            fprintf(stderr, "[Worker %d] GPU search failed: %s\n",
+                   device_id, ctx->stats.last_error);
+
+            /* Auto-restart if configured */
+            if (!manager->config.auto_restart) {
+                break;
+            }
+            continue;
+        }
+
+        /* Update worker statistics */
+        platform_mutex_lock(&manager->stats_lock);
+
+        ctx->stats.keys_processed += keys_in_batch;
+        ctx->stats.total_elapsed_ms += work_elapsed;
+        ctx->stats.work_units_completed++;
+
+        /* Calculate throughput (Mkeys/s) */
+        if (work_elapsed > 0) {
+            double mkeys = (double)keys_in_batch / 1000000.0;
+            double seconds = (double)work_elapsed / 1000.0;
+            double throughput = mkeys / seconds;
+
+            /* Exponential moving average */
+            if (ctx->stats.current_throughput == 0.0) {
+                ctx->stats.current_throughput = throughput;
+            } else {
+                ctx->stats.current_throughput =
+                    (ctx->stats.current_throughput * 0.7) + (throughput * 0.3);
+            }
+
+            /* Update peak */
+            if (throughput > ctx->stats.peak_throughput) {
+                ctx->stats.peak_throughput = throughput;
+            }
+        }
+
+        platform_mutex_unlock(&manager->stats_lock);
+
+        /* Report work completion to scheduler */
+        multi_gpu_report_work(manager->config.scheduler, device_id,
+                             keys_in_batch, work_elapsed);
+
+        /* Check if key was found */
+        if (found_count > 0) {
+            manager->has_result = true;
+            printf("[Worker %d] Found %d key(s)! Signaling completion.\n",
+                   device_id, found_count);
+            break;
+        }
+    }
+
+    /* Update status to stopped */
+    platform_mutex_lock(&manager->stats_lock);
+    ctx->stats.status = WORKER_STOPPED;
+    platform_mutex_unlock(&manager->stats_lock);
+
+    printf("[Worker %d] Thread stopped. Processed %llu keys in %llu ms (%.2f Mkeys/s avg)\n",
+           device_id,
+           (unsigned long long)ctx->stats.keys_processed,
+           (unsigned long long)ctx->stats.total_elapsed_ms,
+           ctx->stats.current_throughput);
+
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
