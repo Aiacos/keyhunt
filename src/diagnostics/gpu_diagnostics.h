@@ -6,6 +6,7 @@
 #ifndef GPU_DIAGNOSTICS_H
 #define GPU_DIAGNOSTICS_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 

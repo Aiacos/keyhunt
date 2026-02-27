@@ -1,4 +1,5 @@
 #include "diagnostics.h"
+#include "gpu_diagnostics.h"
 #include "../output.h"
 #include "../core/sysinfo.h"
 #include <stdio.h>
@@ -194,66 +195,147 @@ void diag_check_gpu(diagnostic_report_t *report) {
     char msg[256];
     char rec[256];
 
-    if (info->gpu_count == 0) {
+    // Run detailed GPU diagnostics using gpu_diagnostics module
+    gpu_diag_info_t gpu_info;
+    int gpu_diag_result = gpu_diag_check_compatibility(&gpu_info);
+
+    // Check if CUDA is available at all
+    if (!gpu_info.cuda_available) {
         diag_add_check(report, DIAG_INFO, "GPU Status",
-                      "No GPU detected or drivers not installed",
+                      "CUDA not available (CPU build or no CUDA support)",
                       "CPU-only mode will be used (--gpu flag will have no effect)");
         return;
     }
 
-    // GPU detected
-    if (info->has_nvidia && info->has_cuda) {
-        snprintf(msg, sizeof(msg), "%d GPU(s) detected: %s",
-                 info->gpu_count, info->gpu_name);
-        diag_add_check(report, DIAG_OK, "GPU Detection", msg, "");
+    // Check NVIDIA driver version
+    if (gpu_info.driver_compatible) {
+        snprintf(msg, sizeof(msg), "NVIDIA Driver: %d.%d detected",
+                 gpu_info.driver_version_major, gpu_info.driver_version_minor);
 
-        // Check VRAM
-        if (info->gpu_vram_mb > 0) {
-            snprintf(msg, sizeof(msg), "GPU VRAM: %llu MB",
-                     (unsigned long long)info->gpu_vram_mb);
-
-            if (info->gpu_vram_mb < 2048) {
-                snprintf(rec, sizeof(rec), "Limited VRAM, reduce batch sizes if GPU OOM occurs");
-                diag_add_check(report, DIAG_WARNING, "GPU Memory", msg, rec);
-            } else {
-                snprintf(rec, sizeof(rec), "Sufficient for GPU-accelerated searches");
-                diag_add_check(report, DIAG_OK, "GPU Memory", msg, rec);
-            }
+        if (gpu_info.driver_version_major >= 470) {
+            snprintf(rec, sizeof(rec), "Modern driver version, good compatibility");
+            diag_add_check(report, DIAG_OK, "GPU Driver", msg, rec);
+        } else if (gpu_info.driver_version_major >= 390) {
+            snprintf(rec, sizeof(rec), "Older driver, consider updating for best performance");
+            diag_add_check(report, DIAG_WARNING, "GPU Driver", msg, rec);
+        } else {
+            snprintf(rec, sizeof(rec), "Very old driver, may have compatibility issues");
+            diag_add_check(report, DIAG_WARNING, "GPU Driver", msg, rec);
         }
-
-        // Check compute capability
-        if (info->gpu_compute_capability > 0) {
-            int major = info->gpu_compute_capability / 10;
-            int minor = info->gpu_compute_capability % 10;
-            snprintf(msg, sizeof(msg), "Compute capability: %d.%d (sm_%d)",
-                     major, minor, info->gpu_compute_capability);
-
-            if (info->gpu_compute_capability < 35) {
-                snprintf(rec, sizeof(rec), "Old GPU architecture, rebuild with --arch sm_%d",
-                         info->gpu_compute_capability);
-                diag_add_check(report, DIAG_WARNING, "GPU Compute", msg, rec);
-            } else if (info->gpu_compute_capability >= 80) {
-                snprintf(rec, sizeof(rec), "Modern GPU architecture, excellent performance expected");
-                diag_add_check(report, DIAG_OK, "GPU Compute", msg, rec);
-            } else {
-                snprintf(rec, sizeof(rec), "Compatible GPU architecture");
-                diag_add_check(report, DIAG_OK, "GPU Compute", msg, rec);
-            }
-        }
-
-        // Check SM count
-        if (info->gpu_sm_count > 0) {
-            snprintf(msg, sizeof(msg), "Streaming Multiprocessors: %d", info->gpu_sm_count);
-            diag_add_check(report, DIAG_INFO, "GPU Architecture", msg, "");
-        }
-    } else if (info->has_nvidia && !info->has_cuda) {
-        diag_add_check(report, DIAG_WARNING, "GPU Status",
-                      "NVIDIA GPU detected but CUDA not available",
-                      "Install CUDA toolkit and compatible drivers for GPU acceleration");
     } else {
-        diag_add_check(report, DIAG_WARNING, "GPU Status",
-                      "Non-NVIDIA GPU detected",
-                      "Only NVIDIA GPUs with CUDA are currently supported");
+        snprintf(msg, sizeof(msg), "Failed to query NVIDIA driver version: %s",
+                 gpu_info.error_message[0] ? gpu_info.error_message : "Unknown error");
+        diag_add_check(report, DIAG_ERROR, "GPU Driver", msg,
+                      "Install or update NVIDIA GPU drivers");
+        return;
+    }
+
+    // Check CUDA runtime version
+    snprintf(msg, sizeof(msg), "CUDA Runtime: %d.%d",
+             gpu_info.cuda_runtime_version_major,
+             gpu_info.cuda_runtime_version_minor);
+
+    if (gpu_info.cuda_runtime_version_major >= 11) {
+        snprintf(rec, sizeof(rec), "Modern CUDA version, full feature support");
+        diag_add_check(report, DIAG_OK, "CUDA Runtime", msg, rec);
+    } else {
+        snprintf(rec, sizeof(rec), "Old CUDA version, consider updating CUDA toolkit");
+        diag_add_check(report, DIAG_WARNING, "CUDA Runtime", msg, rec);
+    }
+
+    // Check GPU count and device availability
+    if (gpu_info.gpu_count == 0) {
+        snprintf(msg, sizeof(msg), "No CUDA-capable GPU detected: %s",
+                 gpu_info.error_message[0] ? gpu_info.error_message : "No devices found");
+        diag_add_check(report, DIAG_WARNING, "GPU Detection", msg,
+                      "Verify GPU is properly installed and recognized by nvidia-smi");
+        return;
+    }
+
+    snprintf(msg, sizeof(msg), "%d CUDA-capable GPU(s) detected", gpu_info.gpu_count);
+    diag_add_check(report, DIAG_OK, "GPU Detection", msg,
+                  "GPU acceleration available for search operations");
+
+    // Check GPU model and hardware details
+    if (gpu_info.gpu_name[0] != '\0') {
+        snprintf(msg, sizeof(msg), "Primary GPU: %s", gpu_info.gpu_name);
+        diag_add_check(report, DIAG_INFO, "GPU Model", msg, "");
+    }
+
+    // Check VRAM
+    if (gpu_info.vram_mb > 0) {
+        snprintf(msg, sizeof(msg), "GPU VRAM: %llu MB",
+                 (unsigned long long)gpu_info.vram_mb);
+
+        if (gpu_info.vram_mb < 2048) {
+            snprintf(rec, sizeof(rec), "Limited VRAM, reduce batch sizes if GPU OOM occurs");
+            diag_add_check(report, DIAG_WARNING, "GPU Memory", msg, rec);
+        } else if (gpu_info.vram_mb >= 8192) {
+            snprintf(rec, sizeof(rec), "Excellent VRAM capacity for large batch sizes");
+            diag_add_check(report, DIAG_OK, "GPU Memory", msg, rec);
+        } else {
+            snprintf(rec, sizeof(rec), "Sufficient for GPU-accelerated searches");
+            diag_add_check(report, DIAG_OK, "GPU Memory", msg, rec);
+        }
+    }
+
+    // Check compute capability (critical for compatibility)
+    snprintf(msg, sizeof(msg), "Compute Capability: %d.%d (sm_%d%d)",
+             gpu_info.compute_major, gpu_info.compute_minor,
+             gpu_info.compute_major, gpu_info.compute_minor);
+
+    if (gpu_diag_result != 0 || !gpu_info.compute_capability_ok) {
+        // GPU failed compatibility check
+        snprintf(rec, sizeof(rec), "Compute capability %d.%d is below minimum 6.0",
+                 gpu_info.compute_major, gpu_info.compute_minor);
+        diag_add_check(report, DIAG_ERROR, "GPU Compute Capability", msg, rec);
+
+        if (gpu_info.error_message[0] != '\0') {
+            snprintf(msg, sizeof(msg), "GPU Compatibility Issue: %s", gpu_info.error_message);
+            diag_add_check(report, DIAG_ERROR, "GPU Compatibility", msg,
+                          "GPU does not meet minimum requirements for CUDA kernels");
+        }
+    } else {
+        // GPU passed compatibility check
+        if (gpu_info.compute_major >= 8) {
+            snprintf(rec, sizeof(rec), "Excellent (Ampere/Ada/Hopper), optimal performance");
+            diag_add_check(report, DIAG_OK, "GPU Compute Capability", msg, rec);
+        } else if (gpu_info.compute_major >= 7) {
+            snprintf(rec, sizeof(rec), "Very Good (Volta/Turing), excellent performance");
+            diag_add_check(report, DIAG_OK, "GPU Compute Capability", msg, rec);
+        } else if (gpu_info.compute_major >= 6) {
+            snprintf(rec, sizeof(rec), "Good (Pascal), meets minimum requirements");
+            diag_add_check(report, DIAG_OK, "GPU Compute Capability", msg, rec);
+        } else {
+            snprintf(rec, sizeof(rec), "Below minimum requirement (6.0)");
+            diag_add_check(report, DIAG_ERROR, "GPU Compute Capability", msg, rec);
+        }
+    }
+
+    // Check SM count (streaming multiprocessors)
+    if (gpu_info.multiprocessors > 0) {
+        snprintf(msg, sizeof(msg), "Streaming Multiprocessors (SMs): %d",
+                 gpu_info.multiprocessors);
+
+        if (gpu_info.multiprocessors >= 80) {
+            snprintf(rec, sizeof(rec), "High-end GPU, excellent parallel performance");
+        } else if (gpu_info.multiprocessors >= 40) {
+            snprintf(rec, sizeof(rec), "Mid-range GPU, good parallel performance");
+        } else {
+            snprintf(rec, sizeof(rec), "Entry-level GPU, basic acceleration available");
+        }
+        diag_add_check(report, DIAG_INFO, "GPU Architecture", msg, rec);
+    }
+
+    // Add overall GPU status summary
+    if (gpu_diag_result == 0 && gpu_info.compute_capability_ok) {
+        diag_add_check(report, DIAG_OK, "GPU Overall Status",
+                      "GPU is compatible and ready for acceleration",
+                      "Use --gpu flag to enable GPU-accelerated searches");
+    } else {
+        diag_add_check(report, DIAG_ERROR, "GPU Overall Status",
+                      "GPU detected but not compatible with this build",
+                      "GPU acceleration will not be available");
     }
 }
 
