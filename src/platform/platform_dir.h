@@ -21,11 +21,12 @@ extern "C" {
  * Wraps HANDLE (FindFirstFile) on Windows, DIR* on POSIX.
  */
 #if PLATFORM_WINDOWS
-    typedef struct platform_dir_handle_s {
+    struct platform_dir_handle_s {
         HANDLE handle;
         WIN32_FIND_DATAA find_data;
         int first_entry;  /* Flag to track if we've read the first entry */
-    } platform_dir_handle_t;
+    };
+    typedef struct platform_dir_handle_s *platform_dir_handle_t;
 #else
     #include <dirent.h>
     typedef DIR* platform_dir_handle_t;
