@@ -178,6 +178,7 @@ TEST_BLOOM_OBJ := $(TEST_OBJDIR)/test_bloom.o
 TEST_BSGS_OBJ := $(TEST_OBJDIR)/test_bsgs_integration.o
 TEST_BSGS_SORT_OBJ := $(TEST_OBJDIR)/test_bsgs_sort.o
 TEST_GPU_OBJ := $(TEST_OBJDIR)/test_gpu_backend.o
+TEST_MULTI_GPU_OBJ := $(TEST_OBJDIR)/test_multi_gpu_integration.o
 TEST_DISTRIBUTED_OBJ := $(TEST_OBJDIR)/test_distributed.o
 TEST_WIZARD_OBJ := $(TEST_OBJDIR)/test_wizard.o
 TEST_HASH_OBJ := $(TEST_OBJDIR)/test_hash.o
@@ -215,6 +216,9 @@ $(TEST_BSGS_SORT_OBJ): tests/test_bsgs_sort.cpp tests/test_framework.h | directo
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_GPU_OBJ): tests/test_gpu_backend.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_MULTI_GPU_OBJ): tests/test_multi_gpu_integration.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_DISTRIBUTED_OBJ): tests/test_distributed.cpp tests/test_framework.h | directories
@@ -258,7 +262,7 @@ $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 
 # All test objects
 TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
-             $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
+             $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_MULTI_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
              $(TEST_SHA512_SIMD_OBJ) $(TEST_SHA256_SIMD_OBJ) \
              $(TEST_SEARCH_XPOINT_OBJ) $(TEST_SEARCH_RMD160_OBJ) \

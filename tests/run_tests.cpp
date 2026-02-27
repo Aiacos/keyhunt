@@ -13,6 +13,7 @@
  *   ./run_tests bsgs         # Run only BSGS tests
  *   ./run_tests bsgs_sort    # Run only BSGS sort tests
  *   ./run_tests gpu          # Run only GPU backend tests
+ *   ./run_tests multi_gpu    # Run only multi-GPU integration tests
  *   ./run_tests distributed  # Run only distributed mode tests
  *   ./run_tests wizard       # Run only wizard tests
  *   ./run_tests point        # Run only Point tests
@@ -34,6 +35,7 @@ int run_bsgs_ops_tests(void);
 int run_bsgs_tests(void);
 int run_bsgs_sort_tests(void);
 int run_gpu_backend_tests(void);
+int run_multi_gpu_integration_tests(void);
 int run_distributed_tests(void);
 int run_wizard_tests(void);
 int run_point_tests(void);
@@ -71,6 +73,7 @@ static void print_usage(const char *prog) {
     printf("  bsgs         Run BSGS integration tests\n");
     printf("  bsgs_sort    Run BSGS sort and search tests\n");
     printf("  gpu          Run GPU backend tests\n");
+    printf("  multi_gpu    Run multi-GPU integration tests\n");
     printf("  distributed  Run distributed mode tests\n");
     printf("  wizard       Run wizard tests\n");
     printf("  point        Run Point operation tests\n");
@@ -133,6 +136,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "gpu") == 0) {
         printf(CLR_BOLD "\n>>> Running GPU Backend Tests\n" CLR_RESET);
         total_failures += run_gpu_backend_tests();
+    }
+
+    if (module == NULL || strcmp(module, "gpu") == 0 || strcmp(module, "multi_gpu") == 0) {
+        printf(CLR_BOLD "\n>>> Running Multi-GPU Integration Tests\n" CLR_RESET);
+        total_failures += run_multi_gpu_integration_tests();
     }
 
     if (module == NULL || strcmp(module, "distributed") == 0) {
