@@ -17,6 +17,9 @@
  *   ./run_tests wizard       # Run only wizard tests
  *   ./run_tests point        # Run only Point tests
  *   ./run_tests intgroup     # Run only IntGroup tests
+ *   ./run_tests sha512       # Run only SHA512 SIMD tests
+ *   ./run_tests search_xpoint # Run only XPOINT search mode tests
+ *   ./run_tests search_rmd160 # Run only RMD160 search mode tests
  */
 
 #include <stdio.h>
@@ -36,6 +39,8 @@ int run_wizard_tests(void);
 int run_point_tests(void);
 int run_intgroup_tests(void);
 int run_sha512_simd_tests(void);
+int run_search_xpoint_tests(void);
+int run_search_rmd160_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -69,6 +74,8 @@ static void print_usage(const char *prog) {
     printf("  point        Run Point operation tests\n");
     printf("  intgroup     Run IntGroup batch inversion tests\n");
     printf("  sha512       Run SHA512 SIMD tests\n");
+    printf("  search_xpoint Run XPOINT search mode tests\n");
+    printf("  search_rmd160 Run RMD160 search mode tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -147,6 +154,16 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "sha512") == 0) {
         printf(CLR_BOLD "\n>>> Running SHA512 SIMD Tests\n" CLR_RESET);
         total_failures += run_sha512_simd_tests();
+    }
+
+    if (module == NULL || strcmp(module, "search_xpoint") == 0) {
+        printf(CLR_BOLD "\n>>> Running XPOINT Search Mode Tests\n" CLR_RESET);
+        total_failures += run_search_xpoint_tests();
+    }
+
+    if (module == NULL || strcmp(module, "search_rmd160") == 0) {
+        printf(CLR_BOLD "\n>>> Running RMD160 Search Mode Tests\n" CLR_RESET);
+        total_failures += run_search_rmd160_tests();
     }
 
     /* Final summary */
