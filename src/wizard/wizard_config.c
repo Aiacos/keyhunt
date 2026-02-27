@@ -14,10 +14,19 @@
 #include <errno.h>
 #include <ctype.h>
 #include <fcntl.h>     /* open(), O_* flags */
-#include <unistd.h>    /* ftruncate(), close() */
 
 #if !PLATFORM_WINDOWS
+#include <unistd.h>    /* ftruncate(), close() */
 #include <sys/file.h>  /* flock() - POSIX only */
+#else
+#include <io.h>        /* _close, _open on Windows */
+#define close _close
+#define open _open
+#define ftruncate(fd, sz) _chsize(fd, sz)
+/* No flock on Windows - use no-op (configuration race conditions are acceptable) */
+#define LOCK_EX 0
+#define LOCK_SH 0
+#define flock(fd, op) (0)
 #endif
 
 /* ============================================================================

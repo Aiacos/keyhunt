@@ -9,9 +9,24 @@
  *
  * Architecture: Server does ONLY orchestration, no computation.
  * Computation is handled by spawned client process via TCP.
+ *
+ * Note: Requires POSIX process management (fork/exec/waitpid/kill).
+ * Not available on Windows - stub provided.
  */
 
 #include "wizard.h"
+
+#if PLATFORM_WINDOWS
+
+/* Windows stub - server mode requires POSIX process management */
+int wizard_server_run(wizard_config_t *cfg) {
+    (void)cfg;
+    fprintf(stderr, "[wizard] Server mode is not supported on Windows\n");
+    return -1;
+}
+
+#else /* POSIX implementation */
+
 #include "wizard_webhooks.h"
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
@@ -22,9 +37,10 @@
 #include <signal.h>
 #include <time.h>
 #include <errno.h>
-
-#if !PLATFORM_WINDOWS
 #include <sys/wait.h>
+#include <unistd.h>
+
+#ifdef __linux__
 #include <linux/limits.h>  /* PATH_MAX */
 #endif
 
@@ -858,3 +874,5 @@ int wizard_server_run(wizard_config_t *cfg) {
     dist_coordinator_shutdown(&coord);
     return (coord.result_count > 0) ? 1 : 0;
 }
+
+#endif /* !PLATFORM_WINDOWS */

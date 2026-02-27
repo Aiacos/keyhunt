@@ -16,6 +16,13 @@
 #include <string.h>
 #include <time.h>
 
+#if !PLATFORM_WINDOWS
+#include <unistd.h>    /* sleep() */
+#else
+/* Windows: Sleep takes milliseconds */
+#define sleep(sec) Sleep((sec) * 1000)
+#endif
+
 #define PUZZLES_CACHE_FILE "puzzles_cache.txt"
 #define CONFIG_FILE "keyhunt_wizard.json"
 
