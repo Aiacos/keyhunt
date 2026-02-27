@@ -45,6 +45,7 @@ void output_info(const char *fmt, ...);      // [I] prefix
 void output_success(const char *fmt, ...);   // [+] prefix
 void output_warning(const char *fmt, ...);   // [W] prefix
 void output_error(const char *fmt, ...);     // [E] prefix
+void output_debug(const char *fmt, ...);     // [D] prefix
 
 // Key found celebration
 void output_key_found(const char *private_key, const char *address,
