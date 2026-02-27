@@ -10,6 +10,14 @@
 #include <string.h>
 #include <time.h>
 
+#if PLATFORM_WINDOWS
+#include <winsock2.h>   /* gethostname on Windows */
+#define popen _popen
+#define pclose _pclose
+#else
+#include <unistd.h>     /* gethostname on POSIX */
+#endif
+
 #define BTCPUZZLE_URL "https://btcpuzzle.info"
 #define PRIVATEKEYS_URL "https://privatekeys.pw/puzzles/bitcoin-puzzle-tx"
 #define PRIVATEKEYS_CLOUD_URL "https://privatekeys.pw/cloud-search"

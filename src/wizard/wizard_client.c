@@ -8,14 +8,35 @@
  *
  * Architecture: Uses subprocess to run keyhunt search with proper
  * path resolution and error handling.
+ *
+ * Note: Requires POSIX process management (fork/exec/waitpid).
+ * Not available on Windows - stub provided.
  */
 
 #include "wizard.h"
+#include "../platform/platform.h"
+
+#if PLATFORM_WINDOWS
+
+/* Windows stub - client mode requires POSIX process management */
+int wizard_client_run(wizard_config_t *cfg) {
+    (void)cfg;
+    fprintf(stderr, "[wizard] Client mode is not supported on Windows\n");
+    return -1;
+}
+
+int wizard_client_run_auto(const char *host_port) {
+    (void)host_port;
+    fprintf(stderr, "[wizard] Client mode is not supported on Windows\n");
+    return -1;
+}
+
+#else /* POSIX implementation */
+
 #include "wizard_webhooks.h"
 #include "../distributed/distributed.h"
 #include "../core/sysinfo.h"
 #include "../gpu/gpu_backend.h"
-#include "../platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,11 +45,11 @@
 #include <errno.h>
 #include <ctype.h>      /* isalnum() */
 #include <fcntl.h>      /* open(), O_* flags */
-
-#if !PLATFORM_WINDOWS
+#include <unistd.h>     /* fork, exec, readlink, sleep */
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <fcntl.h>
+
+#ifdef __linux__
 #include <linux/limits.h>
 #endif
 
@@ -1505,3 +1526,5 @@ int wizard_client_run_auto(const char *host_port) {
 
     return wizard_client_run(&cfg);
 }
+
+#endif /* !PLATFORM_WINDOWS */
