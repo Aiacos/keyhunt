@@ -342,6 +342,10 @@ void diagnostics_print_report(const diagnostic_report_t *report) {
 
     // Print memory summary
     printf("%s%s[Memory Information]%s\n", COLOR_BOLD, COLOR_BLUE, COLOR_RESET);
+    printf("  Memory: %llu MB Total, %llu MB Available, %llu MB Free\n",
+           (unsigned long long)info->ram_total,
+           (unsigned long long)info->ram_available,
+           (unsigned long long)info->ram_free);
     printf("  Total RAM:     %llu MB\n", (unsigned long long)info->ram_total);
     printf("  Available RAM: %llu MB\n", (unsigned long long)info->ram_available);
     printf("  Free RAM:      %llu MB\n", (unsigned long long)info->ram_free);
