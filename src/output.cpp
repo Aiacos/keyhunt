@@ -143,6 +143,36 @@ void output_progress_bar(double percent, int width) {
     printf(CLR_RESET);
 }
 
+void output_memory_bar(uint64_t used_mb, uint64_t total_mb, int width) {
+    // Validate inputs
+    if (total_mb == 0) return;
+    if (width < 5) width = 5;
+    if (width > 60) width = 60;
+
+    // Calculate percentage
+    double percent = (double)used_mb / (double)total_mb * 100.0;
+    int filled = (int)(percent / 100.0 * width);
+    if (filled > width) filled = width;
+    if (filled < 0) filled = 0;
+
+    // Choose color based on usage level
+    const char *color;
+    if (percent < 60.0) {
+        color = CLR_GREEN;      // Safe: < 60%
+    } else if (percent < 80.0) {
+        color = CLR_YELLOW;     // Warning: 60-80%
+    } else {
+        color = CLR_RED;        // Danger: > 80%
+    }
+
+    // Render bar
+    printf("%s", color);
+    for (int i = 0; i < filled; i++) printf("█");
+    printf(CLR_DIM);
+    for (int i = filled; i < width; i++) printf("░");
+    printf(CLR_RESET);
+}
+
 void output_speed_graph(double *values, int count, int height) {
     // Validate inputs
     if (!values || count <= 0) return;

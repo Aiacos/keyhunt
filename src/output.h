@@ -49,6 +49,9 @@ void output_final_stats(uint64_t total_keys, double total_time_sec,
 // Progress bar helper
 void output_progress_bar(double percent, int width);
 
+// Memory usage bar (color-coded: green < 60%, yellow 60-80%, red > 80%)
+void output_memory_bar(uint64_t used_mb, uint64_t total_mb, int width);
+
 // ASCII speed graph (uses block characters ▁▂▃▄▅▆▇█)
 void output_speed_graph(double *values, int count, int height);
 
