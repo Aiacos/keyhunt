@@ -9,6 +9,7 @@
     /* Windows-specific headers for system information */
     #include <windows.h>
     #include <psapi.h>
+    #include <intrin.h>  /* For __cpuid and __cpuidex intrinsics */
 #else
     /* POSIX headers */
     #include <unistd.h>
@@ -317,7 +318,54 @@ static void detect_cpu_features(system_info_t *info) {
     info->has_sha_ni = false;
     info->numa_nodes = 1;
 
-#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#if PLATFORM_WINDOWS && (defined(_M_X64) || defined(_M_IX86))
+    /* Windows CPU feature detection using __cpuid intrinsics */
+    int cpu_info[4];  /* EAX, EBX, ECX, EDX */
+
+    /* Check CPUID support and get max function ID */
+    __cpuid(cpu_info, 0);
+    int max_func_id = cpu_info[0];
+
+    if (max_func_id >= 1) {
+        /* Get basic CPU features (function 1) */
+        __cpuid(cpu_info, 1);
+        int ecx_feat = cpu_info[2];  /* ECX register */
+
+        /* Check if OSXSAVE is enabled (bit 27) - required for AVX/AVX-512 */
+        bool osxsave = (ecx_feat & (1 << 27)) != 0;
+
+        if (osxsave) {
+            /* Use _xgetbv to check OS support for AVX/AVX-512 */
+            unsigned long long xcr0 = _xgetbv(0);
+            bool avx_supported = (xcr0 & 0x6) == 0x6;  /* XMM and YMM state */
+            bool avx512_supported = (xcr0 & 0xE6) == 0xE6;  /* opmask+ZMM state */
+
+            /* Get extended features (function 7, sub-function 0) */
+            if (max_func_id >= 7) {
+                __cpuidex(cpu_info, 7, 0);
+                int ebx_feat = cpu_info[1];  /* EBX register */
+
+                /* Check feature bits in EBX */
+                if (avx_supported) {
+                    info->has_avx2 = (ebx_feat & (1 << 5)) != 0;  /* AVX2 (bit 5) */
+                }
+
+                if (avx512_supported) {
+                    info->has_avx512f = (ebx_feat & (1 << 16)) != 0;  /* AVX-512F (bit 16) */
+                    info->has_avx512dq = (ebx_feat & (1 << 17)) != 0;  /* AVX-512DQ (bit 17) */
+                    info->has_avx512bw = (ebx_feat & (1 << 30)) != 0;  /* AVX-512BW (bit 30) */
+                    info->has_avx512vl = (ebx_feat & (1 << 31)) != 0;  /* AVX-512VL (bit 31) */
+                    info->has_avx512 = info->has_avx512f;
+                }
+
+                /* SHA extensions (bit 29 in EBX) */
+                info->has_sha_ni = (ebx_feat & (1 << 29)) != 0;
+            }
+        }
+    }
+    bool used_builtin = false;
+
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
     /* Prefer compiler-provided runtime detection on x86: it accounts for OS
      * support (XSAVE/XGETBV) and avoids false positives that can crash when
      * executing AVX/AVX-512 instructions. */
