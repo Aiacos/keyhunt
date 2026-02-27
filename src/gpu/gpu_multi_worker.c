@@ -353,3 +353,90 @@ bool gpu_worker_start(gpu_multi_worker_t *worker) {
     printf("[Worker] All %d worker threads started successfully\n", worker->worker_count);
     return true;
 }
+
+bool gpu_worker_stop(gpu_multi_worker_t *worker, uint64_t timeout_ms) {
+    if (!worker) {
+        fprintf(stderr, "[Worker] Error: NULL worker handle\n");
+        return false;
+    }
+
+    /* Check if already stopped */
+    if (worker->global_status == WORKER_STOPPED ||
+        worker->global_status == WORKER_IDLE) {
+        printf("[Worker] Workers already stopped\n");
+        return true;
+    }
+
+    printf("[Worker] Stopping %d worker threads...\n", worker->worker_count);
+
+    /* Signal all workers to stop */
+    worker->should_stop = true;
+    worker->global_status = WORKER_STOPPING;
+
+    /* Wait for all threads to finish */
+    uint64_t stop_start = get_time_ms();
+    bool all_stopped = true;
+
+    for (int i = 0; i < worker->worker_count; i++) {
+        worker_context_t *ctx = &worker->workers[i];
+
+        /* Skip if thread was never started */
+        if (!ctx->thread_started) {
+            continue;
+        }
+
+        /* Check timeout if specified */
+        if (timeout_ms > 0) {
+            uint64_t elapsed = get_time_ms() - stop_start;
+            if (elapsed >= timeout_ms) {
+                fprintf(stderr, "[Worker] Timeout waiting for worker %d to stop\n",
+                        ctx->device_id);
+                all_stopped = false;
+                continue;
+            }
+        }
+
+        /* Wait for thread to terminate */
+        int result = platform_thread_join(ctx->thread, NULL);
+        if (result != 0) {
+            fprintf(stderr, "[Worker] Error joining thread for GPU %d (error %d)\n",
+                    ctx->device_id, result);
+            all_stopped = false;
+        } else {
+            ctx->thread_started = false;
+            printf("[Worker]   Stopped worker thread for GPU %d\n", ctx->device_id);
+        }
+    }
+
+    /* Update global status */
+    worker->global_status = WORKER_STOPPED;
+
+    if (all_stopped) {
+        printf("[Worker] All worker threads stopped successfully\n");
+    } else {
+        fprintf(stderr, "[Worker] Some worker threads failed to stop cleanly\n");
+    }
+
+    return all_stopped;
+}
+
+void gpu_worker_shutdown(gpu_multi_worker_t *worker) {
+    if (!worker) {
+        return;
+    }
+
+    printf("[Worker] Shutting down worker manager...\n");
+
+    /* Stop workers if still running */
+    if (worker->global_status == WORKER_RUNNING) {
+        gpu_worker_stop(worker, 5000);  /* 5 second timeout */
+    }
+
+    /* Destroy synchronization primitives */
+    platform_mutex_destroy(&worker->stats_lock);
+
+    /* Free worker manager memory */
+    free(worker);
+
+    printf("[Worker] Worker manager shutdown complete\n");
+}
