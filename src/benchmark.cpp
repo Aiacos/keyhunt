@@ -1,5 +1,6 @@
 // src/benchmark.cpp
 #include "benchmark.h"
+#include "platform/platform.h"
 #include "core/sysinfo.h"
 #include <stdio.h>
 #include <string.h>
@@ -24,10 +25,19 @@
 #define BENCHMARK_SAMPLE_MS     1000
 
 // Forward declarations
+static void print_border_line(int width, char ch);
 static void print_progress_bar(double percent, int width);
 static void format_time_estimate(double seconds, char *buffer, size_t size);
 static double estimate_cpu_speed(const system_info_t *info);
 static double estimate_gpu_speed(const system_info_t *info);
+
+// Print a line of repeated characters (for borders)
+static void print_border_line(int width, char ch) {
+    for (int i = 0; i < width; i++) {
+        printf("%c", ch);
+    }
+    printf("\n");
+}
 
 int benchmark_run(benchmark_result_t *result, int duration_seconds) {
     if (!result) return -1;
@@ -46,10 +56,25 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
         result->gpu_name[sizeof(result->gpu_name) - 1] = '\0';
     }
 
+    int term_width = platform_terminal_width();
+    int max_width = term_width > 80 ? 80 : term_width;
+
     printf("\n");
-    printf(CLR_CYAN "=========================================================" CLR_RESET "\n");
-    printf(CLR_CYAN "            KEYHUNT PERFORMANCE BENCHMARK" CLR_RESET "\n");
-    printf(CLR_CYAN "=========================================================" CLR_RESET "\n\n");
+    printf(CLR_CYAN);
+    print_border_line(max_width, '=');
+    printf(CLR_RESET);
+
+    const char *title = "KEYHUNT PERFORMANCE BENCHMARK";
+    int title_len = (int)strlen(title);
+    int padding = (max_width - title_len) / 2;
+    if (padding < 0) padding = 0;
+
+    for (int i = 0; i < padding; i++) printf(" ");
+    printf(CLR_CYAN "%s" CLR_RESET "\n", title);
+
+    printf(CLR_CYAN);
+    print_border_line(max_width, '=');
+    printf(CLR_RESET "\n");
 
     printf(CLR_BOLD "System Information:" CLR_RESET "\n");
     printf("  CPU: %s\n", sysinfo.cpu_model);
@@ -140,9 +165,21 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
         result->efficiency_ratio = 1.0;
     }
 
-    printf(CLR_CYAN "=========================================================" CLR_RESET "\n");
-    printf(CLR_CYAN "                  BENCHMARK COMPLETE" CLR_RESET "\n");
-    printf(CLR_CYAN "=========================================================" CLR_RESET "\n\n");
+    printf(CLR_CYAN);
+    print_border_line(max_width, '=');
+    printf(CLR_RESET);
+
+    const char *complete_title = "BENCHMARK COMPLETE";
+    int complete_len = (int)strlen(complete_title);
+    int complete_padding = (max_width - complete_len) / 2;
+    if (complete_padding < 0) complete_padding = 0;
+
+    for (int i = 0; i < complete_padding; i++) printf(" ");
+    printf(CLR_CYAN "%s" CLR_RESET "\n", complete_title);
+
+    printf(CLR_CYAN);
+    print_border_line(max_width, '=');
+    printf(CLR_RESET "\n");
 
     return 0;
 }
@@ -150,76 +187,211 @@ int benchmark_run(benchmark_result_t *result, int duration_seconds) {
 void benchmark_print_results(const benchmark_result_t *result, int bits) {
     if (!result || bits < 1) return;
 
+    int term_width = platform_terminal_width();
+    int table_width = term_width > 70 ? 70 : (term_width > 50 ? term_width - 5 : 45);
+    int pad_len = 0;  // For dynamic padding
+    int time_str_len = 0;
+
     // Calculate range size for time estimates
     // For puzzle N, range is 2^(N-1) to 2^N, so range size is 2^(N-1)
     double range_size = pow(2.0, (double)(bits - 1));
 
     printf(CLR_BOLD "Performance Summary:" CLR_RESET "\n");
-    printf(CLR_CYAN "+---------------------------------------------------------+" CLR_RESET "\n");
-    printf(CLR_CYAN "|" CLR_RESET " CPU Speed:     " CLR_GREEN "%10.2f Mkeys/s" CLR_RESET "  (%d threads)           " CLR_CYAN "|" CLR_RESET "\n",
+    printf(CLR_CYAN "+");
+    print_border_line(table_width - 2, '-');
+    printf(CLR_RESET);
+
+    printf(CLR_CYAN "|" CLR_RESET " CPU Speed:     " CLR_GREEN "%10.2f Mkeys/s" CLR_RESET "  (%d threads)",
            result->cpu_speed_mkeys, result->cpu_threads);
+    pad_len = table_width - 48 - (result->cpu_threads >= 10 ? 2 : 1);
+    if (pad_len > 0) {
+        for (int i = 0; i < pad_len; i++) printf(" ");
+    }
+    printf(CLR_CYAN "|" CLR_RESET "\n");
+
     if (result->gpu_count > 0) {
-        printf(CLR_CYAN "|" CLR_RESET " GPU Speed:     " CLR_GREEN "%10.2f Mkeys/s" CLR_RESET "  (%s)  " CLR_CYAN "|" CLR_RESET "\n",
+        int gpu_name_len = result->gpu_name[0] ? (int)strlen(result->gpu_name) : 3;
+        printf(CLR_CYAN "|" CLR_RESET " GPU Speed:     " CLR_GREEN "%10.2f Mkeys/s" CLR_RESET "  (%s)",
                result->gpu_speed_mkeys,
                result->gpu_name[0] ? result->gpu_name : "GPU");
-        printf(CLR_CYAN "|" CLR_RESET " Hybrid Speed:  " CLR_GREEN "%10.2f Mkeys/s" CLR_RESET "  (%.0f%% efficiency)       " CLR_CYAN "|" CLR_RESET "\n",
+        pad_len = table_width - 38 - gpu_name_len;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
+
+        printf(CLR_CYAN "|" CLR_RESET " Hybrid Speed:  " CLR_GREEN "%10.2f Mkeys/s" CLR_RESET "  (%.0f%% efficiency)",
                result->hybrid_speed_mkeys, result->efficiency_ratio * 100.0);
+        pad_len = table_width - 52;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
     }
-    printf(CLR_CYAN "+---------------------------------------------------------+" CLR_RESET "\n\n");
+
+    printf(CLR_CYAN "+");
+    print_border_line(table_width - 2, '-');
+    printf(CLR_RESET "\n");
 
     // Time estimates for different bit ranges
     printf(CLR_BOLD "Time Estimates (Puzzle %d - %.0e keys):" CLR_RESET "\n", bits, range_size);
-    printf(CLR_CYAN "+---------------------------------------------------------+" CLR_RESET "\n");
+    printf(CLR_CYAN "+");
+    print_border_line(table_width - 2, '-');
+    printf(CLR_RESET);
 
     // CPU-only estimate
     double cpu_seconds = range_size / (result->cpu_speed_mkeys * 1e6);
     char cpu_time_str[64];
     format_time_estimate(cpu_seconds, cpu_time_str, sizeof(cpu_time_str));
-    printf(CLR_CYAN "|" CLR_RESET " CPU only:      %-40s" CLR_CYAN "|" CLR_RESET "\n", cpu_time_str);
+    time_str_len = (int)strlen(cpu_time_str);
+    printf(CLR_CYAN "|" CLR_RESET " CPU only:      %s", cpu_time_str);
+    pad_len = table_width - 18 - time_str_len;
+    if (pad_len > 0) {
+        for (int i = 0; i < pad_len; i++) printf(" ");
+    }
+    printf(CLR_CYAN "|" CLR_RESET "\n");
 
     // GPU/Hybrid estimate (if available)
     if (result->gpu_count > 0) {
         double gpu_seconds = range_size / (result->gpu_speed_mkeys * 1e6);
         char gpu_time_str[64];
         format_time_estimate(gpu_seconds, gpu_time_str, sizeof(gpu_time_str));
-        printf(CLR_CYAN "|" CLR_RESET " GPU only:      %-40s" CLR_CYAN "|" CLR_RESET "\n", gpu_time_str);
+        time_str_len = (int)strlen(gpu_time_str);
+        printf(CLR_CYAN "|" CLR_RESET " GPU only:      %s", gpu_time_str);
+        pad_len = table_width - 18 - time_str_len;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
 
         double hybrid_seconds = range_size / (result->hybrid_speed_mkeys * 1e6);
         char hybrid_time_str[64];
         format_time_estimate(hybrid_seconds, hybrid_time_str, sizeof(hybrid_time_str));
-        printf(CLR_CYAN "|" CLR_RESET " Hybrid:        %-40s" CLR_CYAN "|" CLR_RESET "\n", hybrid_time_str);
+        time_str_len = (int)strlen(hybrid_time_str);
+        printf(CLR_CYAN "|" CLR_RESET " Hybrid:        %s", hybrid_time_str);
+        pad_len = table_width - 18 - time_str_len;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
     }
 
-    printf(CLR_CYAN "+---------------------------------------------------------+" CLR_RESET "\n\n");
+    printf(CLR_CYAN "+");
+    print_border_line(table_width - 2, '-');
+    printf(CLR_RESET "\n");
 
     // Recommendations
     printf(CLR_BOLD "Recommended Settings:" CLR_RESET "\n");
-    printf(CLR_CYAN "+---------------------------------------------------------+" CLR_RESET "\n");
+    printf(CLR_CYAN "+");
+    print_border_line(table_width - 2, '-');
+    printf(CLR_RESET);
 
     // Recommend based on available hardware
     if (result->gpu_count > 0 && result->hybrid_speed_mkeys > result->cpu_speed_mkeys * 1.2) {
-        printf(CLR_CYAN "|" CLR_RESET CLR_GREEN " Use hybrid mode for best performance:" CLR_RESET "                  " CLR_CYAN "|" CLR_RESET "\n");
-        printf(CLR_CYAN "|" CLR_RESET "   ./keyhunt -m address --gpu -t %d -f <targets.txt>      " CLR_CYAN "|" CLR_RESET "\n",
-               result->cpu_threads);
+        printf(CLR_CYAN "|" CLR_RESET CLR_GREEN " Use hybrid mode for best performance:" CLR_RESET);
+        pad_len = table_width - 39;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
+
+        char cmd_buf[128];
+        snprintf(cmd_buf, sizeof(cmd_buf), "   ./keyhunt -m address --gpu -t %d -f <targets.txt>",
+                 result->cpu_threads);
+        int cmd_len = (int)strlen(cmd_buf);
+        printf(CLR_CYAN "|" CLR_RESET "%s", cmd_buf);
+        pad_len = table_width - 2 - cmd_len;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
     } else {
-        printf(CLR_CYAN "|" CLR_RESET CLR_GREEN " Use CPU mode (optimal for your system):" CLR_RESET "                " CLR_CYAN "|" CLR_RESET "\n");
-        printf(CLR_CYAN "|" CLR_RESET "   ./keyhunt -m address -t %d -f <targets.txt>            " CLR_CYAN "|" CLR_RESET "\n",
-               result->cpu_threads);
+        printf(CLR_CYAN "|" CLR_RESET CLR_GREEN " Use CPU mode (optimal for your system):" CLR_RESET);
+        pad_len = table_width - 41;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
+
+        char cmd_buf[128];
+        snprintf(cmd_buf, sizeof(cmd_buf), "   ./keyhunt -m address -t %d -f <targets.txt>",
+                 result->cpu_threads);
+        int cmd_len = (int)strlen(cmd_buf);
+        printf(CLR_CYAN "|" CLR_RESET "%s", cmd_buf);
+        pad_len = table_width - 2 - cmd_len;
+        if (pad_len > 0) {
+            for (int i = 0; i < pad_len; i++) printf(" ");
+        }
+        printf(CLR_CYAN "|" CLR_RESET "\n");
     }
 
     // BSGS recommendation for known public keys
-    printf(CLR_CYAN "|" CLR_RESET "                                                         " CLR_CYAN "|" CLR_RESET "\n");
-    printf(CLR_CYAN "|" CLR_RESET CLR_YELLOW " For known public keys, use BSGS mode:" CLR_RESET "                   " CLR_CYAN "|" CLR_RESET "\n");
-    printf(CLR_CYAN "|" CLR_RESET "   ./keyhunt -m bsgs -t %d -f <pubkeys.txt> -b %d         " CLR_CYAN "|" CLR_RESET "\n",
-           result->cpu_threads, bits);
+    printf(CLR_CYAN "|" CLR_RESET);
+    for (int i = 0; i < table_width - 2; i++) printf(" ");
+    printf(CLR_CYAN "|" CLR_RESET "\n");
 
-    printf(CLR_CYAN "+---------------------------------------------------------+" CLR_RESET "\n\n");
+    printf(CLR_CYAN "|" CLR_RESET CLR_YELLOW " For known public keys, use BSGS mode:" CLR_RESET);
+    pad_len = table_width - 39;
+    if (pad_len > 0) {
+        for (int i = 0; i < pad_len; i++) printf(" ");
+    }
+    printf(CLR_CYAN "|" CLR_RESET "\n");
+
+    char bsgs_cmd[128];
+    snprintf(bsgs_cmd, sizeof(bsgs_cmd), "   ./keyhunt -m bsgs -t %d -f <pubkeys.txt> -b %d",
+             result->cpu_threads, bits);
+    int bsgs_len = (int)strlen(bsgs_cmd);
+    printf(CLR_CYAN "|" CLR_RESET "%s", bsgs_cmd);
+    pad_len = table_width - 2 - bsgs_len;
+    if (pad_len > 0) {
+        for (int i = 0; i < pad_len; i++) printf(" ");
+    }
+    printf(CLR_CYAN "|" CLR_RESET "\n");
+
+    printf(CLR_CYAN "+");
+    print_border_line(table_width - 2, '-');
+    printf(CLR_RESET "\n");
 
     // Additional puzzle time estimates
     printf(CLR_BOLD "Puzzle Time Estimates (CPU mode):" CLR_RESET "\n");
-    printf(CLR_CYAN "+-------+------------------+----------------------------------+" CLR_RESET "\n");
-    printf(CLR_CYAN "| Bits  | Keys to Search   | Estimated Time                   |" CLR_RESET "\n");
-    printf(CLR_CYAN "+-------+------------------+----------------------------------+" CLR_RESET "\n");
+
+    // Determine column widths based on terminal size
+    int col1_width = 7;  // "Bits" column (minimum)
+    int col2_width = 18; // "Keys to Search" column (minimum)
+    int remaining = table_width - col1_width - col2_width - 4; // 4 for borders
+    int col3_width = remaining > 20 ? remaining : 20; // Time column
+
+    // Adjust if terminal is too narrow
+    if (table_width < 50) {
+        col1_width = 6;
+        col2_width = 15;
+        col3_width = table_width - col1_width - col2_width - 4;
+        if (col3_width < 15) col3_width = 15;
+    }
+
+    // Top border
+    printf(CLR_CYAN "+");
+    for (int i = 0; i < col1_width; i++) printf("-");
+    printf("+");
+    for (int i = 0; i < col2_width; i++) printf("-");
+    printf("+");
+    for (int i = 0; i < col3_width; i++) printf("-");
+    printf("+" CLR_RESET "\n");
+
+    // Header
+    printf(CLR_CYAN "| %-*s| %-*s| %-*s|" CLR_RESET "\n",
+           col1_width - 1, "Bits",
+           col2_width - 1, "Keys to Search",
+           col3_width - 1, "Estimated Time");
+
+    // Middle border
+    printf(CLR_CYAN "+");
+    for (int i = 0; i < col1_width; i++) printf("-");
+    printf("+");
+    for (int i = 0; i < col2_width; i++) printf("-");
+    printf("+");
+    for (int i = 0; i < col3_width; i++) printf("-");
+    printf("+" CLR_RESET "\n");
 
     int puzzle_bits[] = {50, 55, 60, 65, 66, 70, 75, 80};
     int num_puzzles = (int)(sizeof(puzzle_bits) / sizeof(puzzle_bits[0]));
@@ -230,16 +402,27 @@ void benchmark_print_results(const benchmark_result_t *result, int bits) {
         char time_str[64];
         format_time_estimate(seconds, time_str, sizeof(time_str));
 
+        char keys_str[32];
+        snprintf(keys_str, sizeof(keys_str), "2^%d", b-1);
+
         // Highlight current puzzle
         if (b == bits) {
-            printf(CLR_CYAN "|" CLR_GREEN " %3d   " CLR_RESET CLR_CYAN "|" CLR_RESET CLR_GREEN " 2^%-14d " CLR_RESET CLR_CYAN "|" CLR_RESET CLR_GREEN " %-32s " CLR_RESET CLR_CYAN "|" CLR_RESET "\n",
-                   b, b-1, time_str);
+            printf(CLR_CYAN "|" CLR_GREEN " %-*d" CLR_RESET CLR_CYAN "|" CLR_GREEN " %-*s" CLR_RESET CLR_CYAN "|" CLR_GREEN " %-*s" CLR_RESET CLR_CYAN "|" CLR_RESET "\n",
+                   col1_width - 2, b, col2_width - 2, keys_str, col3_width - 2, time_str);
         } else {
-            printf(CLR_CYAN "|" CLR_RESET " %3d   " CLR_CYAN "|" CLR_RESET " 2^%-14d " CLR_CYAN "|" CLR_RESET " %-32s " CLR_CYAN "|" CLR_RESET "\n",
-                   b, b-1, time_str);
+            printf(CLR_CYAN "| %-*d| %-*s| %-*s|" CLR_RESET "\n",
+                   col1_width - 2, b, col2_width - 2, keys_str, col3_width - 2, time_str);
         }
     }
-    printf(CLR_CYAN "+-------+------------------+----------------------------------+" CLR_RESET "\n\n");
+
+    // Bottom border
+    printf(CLR_CYAN "+");
+    for (int i = 0; i < col1_width; i++) printf("-");
+    printf("+");
+    for (int i = 0; i < col2_width; i++) printf("-");
+    printf("+");
+    for (int i = 0; i < col3_width; i++) printf("-");
+    printf("+" CLR_RESET "\n\n");
 
     // Note about BSGS
     printf(CLR_DIM "Note: BSGS mode is dramatically faster for known public keys (sqrt complexity)." CLR_RESET "\n");

@@ -107,6 +107,23 @@ int platform_mutex_destroy(platform_mutex_t *mutex);
  */
 uint64_t platform_time_now_ns(void);
 
+/* ============================================================================
+ * Terminal operations
+ * ============================================================================ */
+
+/**
+ * @brief Get terminal width in columns.
+ * @return Terminal width in columns, or 80 if detection fails.
+ *
+ * Uses GetConsoleScreenBufferInfo on Windows, ioctl(TIOCGWINSZ) on POSIX.
+ *
+ * Returns 80 as a safe default if terminal size cannot be detected or
+ * output is redirected to a pipe/file.
+ *
+ * Suitable for responsive output formatting that adapts to terminal size.
+ */
+int platform_terminal_width(void);
+
 #ifdef __cplusplus
 }
 #endif
