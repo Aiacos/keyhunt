@@ -26,9 +26,9 @@ static const char* search_mode_names[] = {
 };
 
 static const char* key_format_names[] = {
-    "uncompressed",  /* KEY_UNCOMPRESSED */
-    "compressed",    /* KEY_COMPRESSED */
-    "both"           /* KEY_BOTH */
+    "compressed",    /* KEYTYPE_COMPRESSED = 0 */
+    "uncompressed",  /* KEYTYPE_UNCOMPRESSED = 1 */
+    "both"           /* KEYTYPE_BOTH = 2 */
 };
 
 static const char* crypto_type_names[] = {
@@ -147,7 +147,7 @@ void kh_bsgs_config_init(bsgs_config_t *cfg) {
 void kh_gpu_config_init(gpu_config_t *cfg) {
     if (!cfg) return;
 
-    /* NOTE: Cannot use memset() because gpu_config_t contains std::atomic members.
+    /* NOTE: gpu_config_t fields use volatile qualifiers for cross-thread visibility.
      * All fields are explicitly initialized below. */
 
     /* Defaults */
@@ -253,8 +253,8 @@ void kh_autotune_config_init(autotune_config_t *cfg) {
 void kh_config_init(keyhunt_config_t *cfg) {
     if (!cfg) return;
 
-    /* NOTE: Cannot use memset() on keyhunt_config_t because it contains
-     * gpu_config_t which has std::atomic members. Zero each section explicitly. */
+    /* NOTE: gpu_config_t uses volatile fields for cross-thread visibility.
+     * Zero each section explicitly for clarity. */
 
     cfg->version = KH_CONFIG_VERSION;
 

@@ -9,12 +9,42 @@
 #include <unistd.h>
 
 /* ============================================================================
+ * URL Validation (shell injection prevention)
+ * ============================================================================ */
+
+/**
+ * Validate that a URL is safe to pass to shell commands.
+ * Rejects URLs containing shell metacharacters that could enable injection.
+ * Returns 0 if safe, -1 if unsafe.
+ */
+static int validate_shell_safe(const char *str) {
+    if (!str) return -1;
+    for (const char *p = str; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        /* Reject shell metacharacters and control characters */
+        if (c < 32 || c == '\'' || c == '`' || c == '$' ||
+            c == '(' || c == ')' || c == '|' || c == ';' ||
+            c == '&' || c == '!' || c == '{' || c == '}' ||
+            c == '<' || c == '>' || c == '\n' || c == '\r') {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* ============================================================================
  * HTTP GET Request
  * ============================================================================ */
 
 int wizard_http_get(const char *url, char **response, size_t *response_len) {
     if (!url || !response || !response_len) {
         fprintf(stderr, "[-] wizard_http_get: Invalid parameters\n");
+        return -1;
+    }
+
+    /* Validate URL is safe for shell use */
+    if (validate_shell_safe(url) != 0) {
+        fprintf(stderr, "[-] wizard_http_get: URL contains unsafe characters\n");
         return -1;
     }
 
@@ -85,6 +115,16 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
                      const char *content_type, char **response, size_t *response_len) {
     if (!url || !response || !response_len) {
         fprintf(stderr, "[-] wizard_http_post: Invalid parameters\n");
+        return -1;
+    }
+
+    /* Validate URL and content_type are safe for shell use */
+    if (validate_shell_safe(url) != 0) {
+        fprintf(stderr, "[-] wizard_http_post: URL contains unsafe characters\n");
+        return -1;
+    }
+    if (content_type && validate_shell_safe(content_type) != 0) {
+        fprintf(stderr, "[-] wizard_http_post: content_type contains unsafe characters\n");
         return -1;
     }
 

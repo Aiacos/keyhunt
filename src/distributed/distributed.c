@@ -306,14 +306,8 @@ static int json_add_string(char *buf, size_t sz, const char *key, const char *va
     /* Escape the value */
     char escaped[DIST_MAX_MSG_SIZE];
     if (json_escape(val ? val : "", escaped, sizeof(escaped)) != 0) {
-        /* Fallback: use raw value if escaping fails (should not happen with valid input) */
-        size_t remaining = sz - current_len;
-        int written = snprintf(buf + current_len, remaining, "\"%s\":\"%s\",", key, val ? val : "");
-        if (written < 0 || (size_t)written >= remaining) {
-            buf[sz - 1] = '\0';
-            return -1;
-        }
-        return 0;
+        /* Escape failed (value too large for buffer) - report truncation */
+        return -1;
     }
 
     size_t remaining = sz - current_len;
@@ -1229,8 +1223,10 @@ static void *worker_handler_thread(void *arg) {
         int n = recv_msg_ex(worker->socket_fd, worker->ssl, msg, sizeof(msg));
 
         if (n > 0) {
-            /* Process the message - this may take a lock briefly but releases quickly */
-            handle_worker_msg(coord, worker_idx, msg);
+            /* Process the message - returns -1 on "leave" to signal thread exit */
+            if (handle_worker_msg(coord, worker_idx, msg) < 0) {
+                break;
+            }
         } else if (n == 0) {
             /* Connection closed gracefully */
             break;

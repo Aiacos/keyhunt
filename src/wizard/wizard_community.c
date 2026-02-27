@@ -20,7 +20,31 @@
  * HTTP Fetch (using curl command)
  * ============================================================================ */
 
+/**
+ * Validate that a string is safe to embed in shell commands.
+ * Rejects shell metacharacters that could enable injection.
+ */
+static int validate_shell_safe_str(const char *str) {
+    if (!str) return -1;
+    for (const char *p = str; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c < 32 || c == '\'' || c == '`' || c == '$' ||
+            c == '(' || c == ')' || c == '|' || c == ';' ||
+            c == '&' || c == '!' || c == '{' || c == '}' ||
+            c == '<' || c == '>' || c == '\n' || c == '\r') {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int fetch_url(const char *url, char **response, size_t *response_len) {
+    /* Validate URL is safe for shell use */
+    if (validate_shell_safe_str(url) != 0) {
+        fprintf(stderr, "[-] fetch_url: URL contains unsafe characters\n");
+        return -1;
+    }
+
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
              "curl -sL --max-time %d --compressed "

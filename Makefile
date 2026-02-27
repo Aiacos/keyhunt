@@ -163,6 +163,7 @@ keyhunt_legacy: $(LEGACY_EXE)
 clean:
 	$(RM) keyhunt keyhunt_legacy bsgsd run_tests keyhunt_pgo_gen keyhunt_pgo benchmark_intgroup test_intgroup_avx2
 	$(RM) -r $(OBJDIR)
+	$(RM) -f *.gcda *.gcno *.profraw *.profdata default.profraw gmon.out
 
 # ============================================================================
 # Unit Tests
@@ -196,6 +197,7 @@ TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
                     $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
                     $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
                     $(BSGS_OBJS) $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS) \
+                    $(PLATFORM_OBJS) \
                     $(OBJDIR)/search/search_xpoint.o $(OBJDIR)/search/search_rmd160.o
 
 # Build test object files

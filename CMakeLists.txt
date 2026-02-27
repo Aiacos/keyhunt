@@ -160,7 +160,7 @@ if(NOT MSVC)
         list(APPEND KEYHUNT_ARCH_FLAGS -mssse3)
     endif()
 
-    # Optimization flags (match Makefile: -O3 -ftree-vectorize -funroll-loops -pipe -DNDEBUG)
+    # Optimization flags (match Makefile: -O2 -ftree-vectorize -funroll-loops -pipe)
     set(KEYHUNT_OPT_FLAGS
         -ftree-vectorize
         -funroll-loops
@@ -238,6 +238,7 @@ set(HASH_AVX2_SOURCES
 # AVX-512 hash sources (need -mavx512f -mavx512dq)
 set(HASH_AVX512_SOURCES
     src/hash/ripemd160_avx512.cpp
+    src/hash/sha256_avx512.cpp
     src/hash/sha512_avx512.cpp
 )
 
@@ -272,6 +273,9 @@ set(PLATFORM_SOURCES
     src/platform/platform_thread.c
     src/platform/platform_mutex.c
     src/platform/platform_time.c
+    src/platform/platform_terminal.c
+    src/platform/platform_compat.c
+    src/platform/platform_dir.c
 )
 
 # -- Search modules --
@@ -326,6 +330,8 @@ set(WIZARD_SOURCES
     src/wizard/wizard_community.c
     src/wizard/wizard_server.c
     src/wizard/wizard_client.c
+    src/wizard/wizard_http.c
+    src/wizard/wizard_webhooks.c
 )
 
 # -- GPU backend --
@@ -554,6 +560,11 @@ set(TEST_SOURCES
     tests/test_point.cpp
     tests/test_intgroup.cpp
     tests/test_sha512_simd.cpp
+    tests/test_sha256_simd.cpp
+    tests/test_search_xpoint.cpp
+    tests/test_search_rmd160.cpp
+    tests/test_search_mocks.cpp
+    tests/test_fused_hash.cpp
 )
 
 # Test shared objects = common sources + wizard (matches Makefile TEST_SHARED_OBJS)

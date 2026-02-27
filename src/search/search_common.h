@@ -148,9 +148,7 @@ extern struct bsgs_xvalue *bPtable;           /* Baby step point table */
 extern uint64_t bsgs_m3;                      /* M3 value for table size */
 extern uint64_t BSGS_BUFFERXPOINTLENGTH;      /* X-point buffer length (16) */
 
-/* BSGS extended bloom filters (bloom_wrapper.h) */
-extern bloom_extended_t *bloom_bPx2nd;        /* 2nd level bloom filter */
-extern bloom_extended_t *bloom_bPx3rd;        /* 3rd level bloom filter */
+/* BSGS extended bloom filters (declared above with bloom_bP) */
 
 /* Byte encode for address generation */
 extern uint8_t byte_encode_crypto;

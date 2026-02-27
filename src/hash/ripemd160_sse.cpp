@@ -389,8 +389,8 @@ void ripemd160sse_test() {
     printf("SSE: %s\n", ripemd160_hex(h2).c_str());
     printf("SSE: %s\n\n", ripemd160_hex(h3).c_str());
 
+  } else {
+    printf("RIPE() Results OK !\n");
   }
-
-  printf("RIPE() Results OK !\n");
 
 }

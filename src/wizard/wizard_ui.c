@@ -9,9 +9,6 @@
 #include <string.h>
 #include <ctype.h>
 
-#if !PLATFORM_WINDOWS
-#include <sys/ioctl.h>
-#endif
 
 /* ANSI color codes */
 #define RESET       "\033[0m"
@@ -36,21 +33,13 @@
 #define BOX_V       "║"
 #define BOX_SEP     "─"
 
-static int get_terminal_width(void) {
-    struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) {
-        return w.ws_col;
-    }
-    return 80;  /* Default */
-}
-
 void wizard_ui_clear(void) {
     printf("\033[2J\033[H");
     fflush(stdout);
 }
 
 void wizard_print_header(const char *title) {
-    int width = get_terminal_width();
+    int width = platform_terminal_width();
     if (width > 70) width = 70;
 
     printf("\n");
@@ -67,7 +56,7 @@ void wizard_print_header(const char *title) {
 }
 
 void wizard_print_separator(void) {
-    int width = get_terminal_width();
+    int width = platform_terminal_width();
     if (width > 70) width = 70;
 
     printf(CYAN);
@@ -248,7 +237,7 @@ void wizard_print_config_summary(const wizard_config_t *cfg) {
 }
 
 void wizard_print_progress(int current, int total, double speed, const char *status) {
-    int width = get_terminal_width() - 40;
+    int width = platform_terminal_width() - 40;
     if (width < 20) width = 20;
     if (width > 50) width = 50;
 
@@ -296,7 +285,7 @@ void wizard_print_puzzle_table(const puzzle_def_t *puzzles, int count, int highl
 
 /* Print privacy warning for progress reporting */
 void wizard_print_privacy_warning(void) {
-    int width = get_terminal_width();
+    int width = platform_terminal_width();
     if (width > 70) width = 70;
 
     printf("\n");
