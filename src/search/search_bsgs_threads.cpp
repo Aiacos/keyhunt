@@ -80,6 +80,97 @@ extern platform_mutex_t *bPload_mutex;
 extern void profile_set_thread(int idx);
 
 /* ============================================================================
+ * BSGS N/M Value Validation
+ * ============================================================================ */
+
+/**
+ * validate_bsgs_nm_values - Validate BSGS N/M values for practical ranges
+ *
+ * This function checks if the BSGS N and M values (Int 256-bit types) fit
+ * within practical computation limits. The values originate from:
+ * - config->bsgs.n_value_int: N value as Int* (256-bit precision)
+ * - config->bsgs.m_value_int: M value as Int* (256-bit precision)
+ *
+ * These are converted to working Int globals (BSGS_N, BSGS_M) during
+ * initialization in keyhunt.cpp. This function validates them at thread
+ * startup to ensure practical memory and computation constraints.
+ *
+ * Practical limits:
+ * - N <= 2^80 (~1.2e24): Ensures reasonable computation time
+ * - M <= 2^64 (~1.8e19): Ensures M can fit in uint64_t for array indexing
+ * - Memory: M * K * ~20 bytes per entry (bloom + table)
+ *
+ * @param thread_id  Thread number for error reporting
+ * @return           0 on success, -1 if values are impractical
+ *
+ * Example warnings:
+ * - N > 2^80: "BSGS N value is beyond practical computation range"
+ * - M > 2^64: "BSGS M value exceeds addressable memory limits"
+ */
+static int validate_bsgs_nm_values(uint32_t thread_id) {
+	bool n_overflow = false;
+	bool m_overflow = false;
+
+	/* Check if higher bits are set (indicating overflow beyond 64 bits) */
+	for (int i = 1; i < NB64BLOCK; i++) {
+		if (BSGS_N.bits64[i] != 0) {
+			n_overflow = true;
+		}
+		if (BSGS_M.bits64[i] != 0) {
+			m_overflow = true;
+		}
+	}
+
+	/* Check if N > 2^80 (practical limit for BSGS computation)
+	 * 2^80 = 0x100000000000000000000 (21 hex digits)
+	 * If bit 80 or higher is set, it's beyond practical range */
+	bool n_beyond_practical = false;
+	if (n_overflow) {
+		/* If any bit beyond bit 63 is set, check if beyond 2^80 */
+		/* 2^80 requires bits64[1] to have bit 16 or higher set (80-64=16) */
+		if (BSGS_N.bits64[1] >= (1ULL << 16)) {
+			n_beyond_practical = true;
+		}
+		/* Or any higher limb is set */
+		for (int i = 2; i < NB64BLOCK; i++) {
+			if (BSGS_N.bits64[i] != 0) {
+				n_beyond_practical = true;
+				break;
+			}
+		}
+	}
+
+	/* Report warnings for impractical ranges */
+	if (n_beyond_practical) {
+		output_error("\n[Thread %u] ERROR: BSGS N value is beyond practical computation range (>2^80)\n", thread_id);
+		output_error("  Current N would require astronomical computation time and memory.\n");
+		output_error("  For reference:\n");
+		output_error("    - Puzzle #66:  N = 2^66  (practical with BSGS)\n");
+		output_error("    - Puzzle #125: N = 2^125 (practical with BSGS)\n");
+		output_error("    - N > 2^160:   Impractical even with perfect hardware\n");
+		output_error("  Suggestion: Use a smaller N value or reduce K factor.\n");
+		return -1;
+	}
+
+	if (m_overflow) {
+		output_warning("\n[Thread %u] WARNING: BSGS M value exceeds 64-bit addressable range\n", thread_id);
+		output_warning("  M = sqrt(N) = %s (hex)\n", BSGS_M.GetBase16());
+		output_warning("  This may cause memory allocation or indexing issues.\n");
+		output_warning("  Suggestion: Reduce N or K factor to bring M within 2^64.\n");
+		/* Continue execution but warn - may fail later during memory allocation */
+	}
+
+	if (n_overflow && !n_beyond_practical) {
+		output_warning("\n[Thread %u] WARNING: BSGS N value exceeds 64-bit range (but within 2^80 practical limit)\n", thread_id);
+		output_warning("  N = %s (hex)\n", BSGS_N.GetBase16());
+		output_warning("  Using extended precision (Int 256-bit) for computation.\n");
+	}
+
+	/* Success: Values are within practical limits */
+	return 0;
+}
+
+/* ============================================================================
  * thread_process_bsgs - Sequential BSGS search
  * ============================================================================ */
 
@@ -121,6 +212,13 @@ void *thread_process_bsgs(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	// Initialize batch context
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
@@ -287,6 +385,13 @@ void *thread_process_bsgs_random(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	// Initialize batch context
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
@@ -746,6 +851,14 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
+
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
 
 	// Initialize batch context
@@ -951,6 +1064,13 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	free(tt);
 	profile_set_thread((int)thread_number);
 
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
+
 	// Initialize batch context
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
@@ -1125,6 +1245,14 @@ void *thread_process_bsgs_both(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
+
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
 
 	// Initialize batch context
