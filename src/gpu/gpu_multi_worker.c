@@ -297,3 +297,59 @@ static platform_thread_return_t gpu_worker_thread(void *arg) {
     return NULL;
 #endif
 }
+
+bool gpu_worker_start(gpu_multi_worker_t *worker) {
+    if (!worker) {
+        fprintf(stderr, "[Worker] Error: NULL worker handle\n");
+        return false;
+    }
+
+    /* Check if already running */
+    if (worker->global_status == WORKER_RUNNING) {
+        fprintf(stderr, "[Worker] Error: Workers already started\n");
+        return false;
+    }
+
+    printf("[Worker] Starting %d GPU worker threads...\n", worker->worker_count);
+
+    /* Spawn one thread per GPU */
+    int started_count = 0;
+    for (int i = 0; i < worker->worker_count; i++) {
+        worker_context_t *ctx = &worker->workers[i];
+
+        /* Create and start thread */
+        int result = platform_thread_create(&ctx->thread, gpu_worker_thread, ctx);
+        if (result != 0) {
+            fprintf(stderr, "[Worker] Error: Failed to create thread for GPU %d (error %d)\n",
+                    ctx->device_id, result);
+
+            /* Stop already-started threads before returning */
+            if (started_count > 0) {
+                fprintf(stderr, "[Worker] Stopping %d already-started workers...\n", started_count);
+                worker->should_stop = true;
+
+                /* Wait for threads to stop */
+                for (int j = 0; j < i; j++) {
+                    if (worker->workers[j].thread_started) {
+                        platform_thread_join(worker->workers[j].thread, NULL);
+                        worker->workers[j].thread_started = false;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /* Mark thread as started */
+        ctx->thread_started = true;
+        started_count++;
+
+        printf("[Worker]   Started worker thread for GPU %d\n", ctx->device_id);
+    }
+
+    /* Update global status */
+    worker->global_status = WORKER_RUNNING;
+
+    printf("[Worker] All %d worker threads started successfully\n", worker->worker_count);
+    return true;
+}
