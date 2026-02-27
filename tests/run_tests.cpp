@@ -39,6 +39,7 @@ int run_wizard_tests(void);
 int run_point_tests(void);
 int run_intgroup_tests(void);
 int run_sha512_simd_tests(void);
+int run_sha256_simd_tests(void);
 int run_search_xpoint_tests(void);
 int run_search_rmd160_tests(void);
 int run_fused_hash_tests(void);
@@ -75,6 +76,7 @@ static void print_usage(const char *prog) {
     printf("  point        Run Point operation tests\n");
     printf("  intgroup     Run IntGroup batch inversion tests\n");
     printf("  sha512       Run SHA512 SIMD tests\n");
+    printf("  sha256       Run SHA256 SIMD tests\n");
     printf("  search_xpoint Run XPOINT search mode tests\n");
     printf("  search_rmd160 Run RMD160 search mode tests\n");
     printf("  fused        Run fused hash pipeline tests\n");
@@ -156,6 +158,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "sha512") == 0) {
         printf(CLR_BOLD "\n>>> Running SHA512 SIMD Tests\n" CLR_RESET);
         total_failures += run_sha512_simd_tests();
+    }
+
+    if (module == NULL || strcmp(module, "sha256") == 0) {
+        printf(CLR_BOLD "\n>>> Running SHA256 SIMD Tests\n" CLR_RESET);
+        total_failures += run_sha256_simd_tests();
     }
 
     if (module == NULL || strcmp(module, "search_xpoint") == 0) {

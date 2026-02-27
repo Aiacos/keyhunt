@@ -28,7 +28,7 @@ static int validate_shell_safe_str(const char *str) {
     if (!str) return -1;
     for (const char *p = str; *p; p++) {
         unsigned char c = (unsigned char)*p;
-        if (c < 32 || c == '\'' || c == '`' || c == '$' ||
+        if (c < 32 || c == '\'' || c == '"' || c == '`' || c == '$' ||
             c == '(' || c == ')' || c == '|' || c == ';' ||
             c == '&' || c == '!' || c == '{' || c == '}' ||
             c == '<' || c == '>' || c == '\n' || c == '\r') {

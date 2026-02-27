@@ -22,7 +22,7 @@ static int validate_shell_safe(const char *str) {
     for (const char *p = str; *p; p++) {
         unsigned char c = (unsigned char)*p;
         /* Reject shell metacharacters and control characters */
-        if (c < 32 || c == '\'' || c == '`' || c == '$' ||
+        if (c < 32 || c == '\'' || c == '"' || c == '`' || c == '$' ||
             c == '(' || c == ')' || c == '|' || c == ';' ||
             c == '&' || c == '!' || c == '{' || c == '}' ||
             c == '<' || c == '>' || c == '\n' || c == '\r') {
