@@ -273,9 +273,9 @@ static void print_progress_bar(double percent, int width) {
     if (filled < 0) filled = 0;
 
     printf(CLR_GREEN);
-    for (int i = 0; i < filled; i++) printf("#");
+    for (int i = 0; i < filled; i++) printf("█");
     printf(CLR_DIM);
-    for (int i = filled; i < width; i++) printf("-");
+    for (int i = filled; i < width; i++) printf("░");
     printf(CLR_RESET);
 }
 
