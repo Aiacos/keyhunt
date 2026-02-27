@@ -447,3 +447,140 @@ bool gpu_worker_has_result(const gpu_multi_worker_t *worker) {
     }
     return worker->has_result;
 }
+
+void gpu_worker_get_stats(const gpu_multi_worker_t *worker,
+                          multi_gpu_worker_stats_t *stats) {
+    if (!worker || !stats) {
+        return;
+    }
+
+    /* Clear output structure */
+    memset(stats, 0, sizeof(*stats));
+
+    /* Lock for thread-safe access */
+    platform_mutex_lock((platform_mutex_t*)&((gpu_multi_worker_t*)worker)->stats_lock);
+
+    /* Copy aggregate statistics */
+    stats->active_workers = worker->worker_count;
+    stats->total_keys_processed = 0;
+    stats->combined_throughput = 0.0;
+
+    /* Copy per-worker statistics and calculate totals */
+    for (int i = 0; i < worker->worker_count; i++) {
+        stats->workers[i] = worker->workers[i].stats;
+        stats->total_keys_processed += worker->workers[i].stats.keys_processed;
+        stats->combined_throughput += worker->workers[i].stats.current_throughput;
+    }
+
+    platform_mutex_unlock((platform_mutex_t*)&((gpu_multi_worker_t*)worker)->stats_lock);
+}
+
+bool gpu_worker_get_device_stats(const gpu_multi_worker_t *worker,
+                                 int device_id,
+                                 gpu_worker_stats_t *stats) {
+    if (!worker || !stats) {
+        return false;
+    }
+
+    platform_mutex_lock((platform_mutex_t*)&((gpu_multi_worker_t*)worker)->stats_lock);
+
+    /* Find worker with matching device_id */
+    bool found = false;
+    for (int i = 0; i < worker->worker_count; i++) {
+        if (worker->workers[i].device_id == device_id) {
+            *stats = worker->workers[i].stats;
+            found = true;
+            break;
+        }
+    }
+
+    platform_mutex_unlock((platform_mutex_t*)&((gpu_multi_worker_t*)worker)->stats_lock);
+
+    return found;
+}
+
+bool gpu_worker_pause(gpu_multi_worker_t *worker) {
+    if (!worker) {
+        fprintf(stderr, "[Worker] Error: NULL worker handle\n");
+        return false;
+    }
+
+    /* Check if already paused */
+    if (worker->paused) {
+        printf("[Worker] Workers already paused\n");
+        return true;
+    }
+
+    /* Check if workers are running */
+    if (worker->global_status != WORKER_RUNNING) {
+        fprintf(stderr, "[Worker] Error: Cannot pause - workers not running\n");
+        return false;
+    }
+
+    printf("[Worker] Pausing %d worker threads...\n", worker->worker_count);
+
+    /* Signal workers to pause */
+    worker->paused = true;
+
+    /* Wait briefly for workers to enter paused state */
+    uint64_t pause_start = get_time_ms();
+    bool all_paused = false;
+
+    while (get_time_ms() - pause_start < 1000) {  /* 1 second timeout */
+        platform_mutex_lock(&worker->stats_lock);
+
+        /* Check if all workers are idle (paused) */
+        all_paused = true;
+        for (int i = 0; i < worker->worker_count; i++) {
+            if (worker->workers[i].stats.status != WORKER_IDLE) {
+                all_paused = false;
+                break;
+            }
+        }
+
+        platform_mutex_unlock(&worker->stats_lock);
+
+        if (all_paused) {
+            break;
+        }
+
+        /* Sleep briefly before rechecking */
+        uint64_t now = get_time_ms();
+        if (now - pause_start > 50) break;  /* Check every 50ms */
+    }
+
+    if (all_paused) {
+        printf("[Worker] All worker threads paused\n");
+    } else {
+        printf("[Worker] Workers pausing (may take a moment to complete current work)\n");
+    }
+
+    return true;
+}
+
+bool gpu_worker_resume(gpu_multi_worker_t *worker) {
+    if (!worker) {
+        fprintf(stderr, "[Worker] Error: NULL worker handle\n");
+        return false;
+    }
+
+    /* Check if actually paused */
+    if (!worker->paused) {
+        printf("[Worker] Workers already running\n");
+        return true;
+    }
+
+    /* Check if workers are in a runnable state */
+    if (worker->global_status != WORKER_RUNNING) {
+        fprintf(stderr, "[Worker] Error: Cannot resume - workers not in running state\n");
+        return false;
+    }
+
+    printf("[Worker] Resuming %d worker threads...\n", worker->worker_count);
+
+    /* Clear pause flag */
+    worker->paused = false;
+
+    printf("[Worker] Worker threads resumed\n");
+    return true;
+}
