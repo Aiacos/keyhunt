@@ -22,7 +22,7 @@
 // Internal SSE RIPEMD-160 implementation.
 namespace ripemd160sse {
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(16)) uint32_t _init[] = {
 #else
   static const uint32_t _init[] __attribute__ ((aligned (16))) = {
@@ -291,7 +291,7 @@ namespace ripemd160sse {
 
 } // namespace ripemd160sse
 
-#ifdef WIN64
+#ifdef _MSC_VER
 
 #define DEPACK(d,i) \
 ((uint32_t *)d)[0] = s[0].m128i_u32[i]; \
@@ -328,7 +328,7 @@ void ripemd160sse_32(
 
   ripemd160sse::Transform(s, bs);
 
-#ifndef WIN64
+#ifndef _MSC_VER
   uint32_t *s0 = (uint32_t *)&s[0];
   uint32_t *s1 = (uint32_t *)&s[1];
   uint32_t *s2 = (uint32_t *)&s[2];

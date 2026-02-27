@@ -12,11 +12,16 @@
 #include "bloom_simd.h"
 #include "../xxhash/xxhash.h"
 #include <immintrin.h>
+#if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#if defined(_WIN32) || defined(_WIN64)
+#include <malloc.h>  /* For _aligned_malloc / _aligned_free */
+#endif
 
 // Check CPU support
 int bloom_simd_avx2_available(void) {
@@ -78,9 +83,16 @@ int bloom_simd_init(struct bloom_simd *bloom, uint64_t entries, double error) {
     bloom->bytes = bloom->sectors * 64;  // 64 bytes per sector
 
     // Allocate aligned memory (64-byte alignment for cache lines)
+#if defined(_WIN32) || defined(_WIN64)
+    bloom->bf = (uint8_t *)_aligned_malloc(bloom->bytes, 64);
+    if (!bloom->bf) {
+        return 1;
+    }
+#else
     if (posix_memalign((void**)&bloom->bf, 64, bloom->bytes) != 0) {
         return 1;
     }
+#endif
     memset(bloom->bf, 0, bloom->bytes);
 
     bloom->ready = 1;
@@ -89,7 +101,11 @@ int bloom_simd_init(struct bloom_simd *bloom, uint64_t entries, double error) {
 
 void bloom_simd_free(struct bloom_simd *bloom) {
     if (bloom->ready && bloom->bf) {
+#if defined(_WIN32) || defined(_WIN64)
+        _aligned_free(bloom->bf);
+#else
         free(bloom->bf);
+#endif
         bloom->bf = NULL;
     }
     bloom->ready = 0;

@@ -49,7 +49,7 @@ int sha512_avx2_available(void) {
 namespace _sha512avx2
 {
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(32)) uint64_t _init[] = {
 #else
   static const uint64_t _init[] __attribute__ ((aligned (32))) = {

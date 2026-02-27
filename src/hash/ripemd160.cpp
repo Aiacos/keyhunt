@@ -36,7 +36,7 @@ void inline Initialize(uint32_t* s)
     s[4] = 0xC3D2E1F0ul;
 }
 
-#ifndef WIN64
+#ifndef _MSC_VER
 inline uint32_t _rotl(uint32_t x, uint8_t r) {
   asm("roll %1,%0" : "+r" (x) : "c" (r));
   return x;

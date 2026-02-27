@@ -48,7 +48,7 @@ int sha256_avx2_available(void) {
 namespace _sha256avx2
 {
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(32)) uint32_t _init[] = {
 #else
   static const uint32_t _init[] __attribute__ ((aligned (32))) = {
@@ -535,7 +535,7 @@ void sha256avx2_checksum(
 // RIPEMD-160 AVX2 implementation (inline to avoid separate file dependency)
 namespace _ripemd160avx2_fused {
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(32)) uint32_t _rmd_init[] = {
 #else
   static const uint32_t _rmd_init[] __attribute__ ((aligned (32))) = {
@@ -550,7 +550,7 @@ namespace _ripemd160avx2_fused {
 // RIPEMD-160 macros (reuse existing names with RMD prefix to avoid conflicts)
 #define RMD_ROL(x,n) _mm256_or_si256(_mm256_slli_epi32(x, n), _mm256_srli_epi32(x, 32 - n))
 
-#ifdef WIN64
+#ifdef _MSC_VER
 #define rmd_not(x) _mm256_andnot_si256(x, _mm256_cmpeq_epi32(_mm256_setzero_si256(), _mm256_setzero_si256()))
 #define rmd_f1(x,y,z) _mm256_xor_si256(x, _mm256_xor_si256(y, z))
 #define rmd_f2(x,y,z) _mm256_or_si256(_mm256_and_si256(x,y),_mm256_andnot_si256(x,z))

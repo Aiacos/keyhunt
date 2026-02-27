@@ -24,7 +24,7 @@ namespace _sha256sse
 {
 
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(16)) uint32_t _init[] = {
 #else
   static const uint32_t _init[] __attribute__ ((aligned (16))) = {
@@ -430,7 +430,7 @@ namespace _sha256sse
 
 namespace _ripemd160sse_fused {
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(16)) uint32_t _rmd_init[] = {
 #else
   static const uint32_t _rmd_init[] __attribute__ ((aligned (16))) = {
@@ -445,7 +445,7 @@ namespace _ripemd160sse_fused {
 // RIPEMD-160 macros (adapted for SSE2)
 #define RMD_ROL(x,n) _mm_or_si128(_mm_slli_epi32(x, n), _mm_srli_epi32(x, 32 - n))
 
-#ifdef WIN64
+#ifdef _MSC_VER
 #define rmd_not(x) _mm_andnot_si128(x, _mm_cmpeq_epi32(_mm_setzero_si128(), _mm_setzero_si128()))
 #define rmd_f1(x,y,z) _mm_xor_si128(x, _mm_xor_si128(y, z))
 #define rmd_f2(x,y,z) _mm_or_si128(_mm_and_si128(x,y),_mm_andnot_si128(x,z))
@@ -909,7 +909,7 @@ void sha256sse_checksum(uint32_t *i0, uint32_t *i1, uint32_t *i2, uint32_t *i3,
   _sha256sse::Initialize(s);
   _sha256sse::Transform2(s, i0, i1, i2, i3);
 
-#ifndef WIN64
+#ifndef _MSC_VER
   uint32_t *s32 = (uint32_t *)(&s[0]);
   *((uint32_t *)d0) = __builtin_bswap32(s32[3]);
   *((uint32_t *)d1) = __builtin_bswap32(s32[2]);

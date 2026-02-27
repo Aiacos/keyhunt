@@ -49,7 +49,7 @@ int ripemd160_avx2_available(void) {
 // Internal AVX2 RIPEMD-160 implementation
 namespace ripemd160avx2 {
 
-#ifdef WIN64
+#ifdef _MSC_VER
     static const __declspec(align(32)) uint32_t _init[] = {
 #else
     static const uint32_t _init[] __attribute__ ((aligned (32))) = {
@@ -342,7 +342,7 @@ static inline void transpose_and_load(__m256i *w, const uint8_t *blk[8]) {
 } // namespace ripemd160avx2
 
 // Unpack and deinterleave results from AVX2 registers
-#ifdef WIN64
+#ifdef _MSC_VER
 #define DEPACK(d,i) \
     ((uint32_t *)d)[0] = s[0].m256i_u32[i]; \
     ((uint32_t *)d)[1] = s[1].m256i_u32[i]; \
@@ -382,7 +382,7 @@ void ripemd160avx2_32(
     ripemd160avx2::Initialize(s);
     ripemd160avx2::Transform(s, bs);
 
-#ifndef WIN64
+#ifndef _MSC_VER
     uint32_t *s0 = (uint32_t *)&s[0];
     uint32_t *s1 = (uint32_t *)&s[1];
     uint32_t *s2 = (uint32_t *)&s[2];

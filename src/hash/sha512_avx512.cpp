@@ -50,7 +50,7 @@ int sha512_avx512_available(void) {
 // Internal AVX-512 SHA-512 implementation
 namespace _sha512avx512 {
 
-#ifdef WIN64
+#ifdef _MSC_VER
     static const __declspec(align(64)) uint64_t _init[] = {
 #else
     static const uint64_t _init[] __attribute__ ((aligned (64))) = {

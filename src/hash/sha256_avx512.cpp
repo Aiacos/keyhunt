@@ -49,7 +49,7 @@ int sha256_avx512_available(void) {
 namespace _sha256avx512
 {
 
-#ifdef WIN64
+#ifdef _MSC_VER
   static const __declspec(align(64)) uint32_t _init[] = {
 #else
   static const uint32_t _init[] __attribute__ ((aligned (64))) = {
