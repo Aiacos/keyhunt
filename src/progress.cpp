@@ -165,6 +165,9 @@ int progress_create(progress_state_t *state, const char *mode,
     state->start_time = time(NULL);
     state->last_save_time = state->start_time;
 
+    // Initialize speed history
+    speed_history_init(&state->speed_history);
+
     // Save initial state
     return progress_save(state);
 }
@@ -364,6 +367,9 @@ int progress_load(progress_state_t *state, const char *mode,
     parse_json_int(json, "thread_count", &state->thread_count);
     parse_json_int(json, "ranges_completed", &state->ranges_completed);
     parse_json_int(json, "ranges_total", &state->ranges_total);
+
+    // Initialize speed history (reset on load, as it's runtime data)
+    speed_history_init(&state->speed_history);
 
     free(json);
     return 0;

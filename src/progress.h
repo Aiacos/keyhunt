@@ -53,6 +53,9 @@ typedef struct {
     // For random mode: track checked ranges
     int ranges_completed;
     int ranges_total;
+
+    // Speed tracking
+    speed_history_t speed_history;
 } progress_state_t;
 
 // Initialize progress system (creates directory if needed)
