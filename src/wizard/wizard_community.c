@@ -996,7 +996,7 @@ int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progres
             while (*val_start == ' ' || *val_start == '\t' || *val_start == '"') val_start++;
 
             uint64_t val = 0;
-            if (sscanf(val_start, "%llu", &val) == 1 && val > 0) {
+            if (sscanf(val_start, "%lu", &val) == 1 && val > 0) {
                 keys_scanned = val;
             }
         }
