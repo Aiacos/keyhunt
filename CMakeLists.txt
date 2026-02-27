@@ -4,10 +4,20 @@
 # Modern CMake alternative to the existing Makefile.
 # The Makefile is preserved as a fallback build system.
 #
-# Basic usage:
+# Basic usage (Linux/macOS):
 #   mkdir build && cd build
 #   cmake ..
 #   cmake --build . -j$(nproc)
+#
+# Windows usage (Visual Studio):
+#   mkdir build && cd build
+#   cmake .. -G "Visual Studio 17 2022" -A x64
+#   cmake --build . --config Release
+#
+# Windows usage (MinGW-w64):
+#   mkdir build && cd build
+#   cmake .. -G "MinGW Makefiles"
+#   cmake --build . -j%NUMBER_OF_PROCESSORS%
 #
 # Options:
 #   cmake .. -DENABLE_TLS=ON          # Enable TLS (OpenSSL)
@@ -54,18 +64,46 @@ option(ENABLE_TLS "Enable TLS support (requires OpenSSL)" OFF)
 option(ENABLE_LTO "Enable Link-Time Optimization" ON)
 
 # ---------------------------------------------------------------------------
+# Platform Detection
+# ---------------------------------------------------------------------------
+if(WIN32)
+    message(STATUS "Platform: Windows")
+    set(PLATFORM_WINDOWS ON)
+else()
+    message(STATUS "Platform: POSIX (Linux/macOS)")
+    set(PLATFORM_WINDOWS OFF)
+endif()
+
+# ---------------------------------------------------------------------------
 # Compiler Feature Detection (SIMD)
 # ---------------------------------------------------------------------------
 include(CheckCXXCompilerFlag)
 include(CheckCCompilerFlag)
 
-check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
-check_cxx_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
-check_cxx_compiler_flag("-mavx512dq" COMPILER_SUPPORTS_AVX512DQ)
-check_cxx_compiler_flag("-msha" COMPILER_SUPPORTS_SHA_NI)
-check_cxx_compiler_flag("-msse4.1" COMPILER_SUPPORTS_SSE41)
-check_cxx_compiler_flag("-mssse3" COMPILER_SUPPORTS_SSSE3)
-check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+# GCC/Clang flags
+if(NOT MSVC)
+    check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+    check_cxx_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
+    check_cxx_compiler_flag("-mavx512dq" COMPILER_SUPPORTS_AVX512DQ)
+    check_cxx_compiler_flag("-msha" COMPILER_SUPPORTS_SHA_NI)
+    check_cxx_compiler_flag("-msse4.1" COMPILER_SUPPORTS_SSE41)
+    check_cxx_compiler_flag("-mssse3" COMPILER_SUPPORTS_SSSE3)
+    check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+else()
+    # MSVC flags - note: MSVC doesn't have per-instruction set flags like GCC
+    # /arch:AVX2 enables AVX, AVX2, and FMA
+    # /arch:AVX512 enables AVX-512 (requires VS 2017 15.7+)
+    check_cxx_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
+    check_cxx_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512F)
+    # MSVC AVX2 implies AVX512DQ support when AVX512 is available
+    set(COMPILER_SUPPORTS_AVX512DQ ${COMPILER_SUPPORTS_AVX512F})
+    # MSVC doesn't have separate SHA-NI flag - it's included with SSE4.1
+    set(COMPILER_SUPPORTS_SHA_NI ON)
+    set(COMPILER_SUPPORTS_SSE41 ON)
+    set(COMPILER_SUPPORTS_SSSE3 ON)
+    # MSVC doesn't have -march=native equivalent
+    set(COMPILER_SUPPORTS_MARCH_NATIVE OFF)
+endif()
 
 # ---------------------------------------------------------------------------
 # LTO Support
@@ -111,26 +149,61 @@ endif()
 # ---------------------------------------------------------------------------
 # Common Compile Flags
 # ---------------------------------------------------------------------------
-# Architecture flags (match Makefile: -m64 -march=native -mtune=native -mssse3)
-set(KEYHUNT_ARCH_FLAGS "")
-if(COMPILER_SUPPORTS_MARCH_NATIVE)
-    list(APPEND KEYHUNT_ARCH_FLAGS -m64 -march=native -mtune=native)
-endif()
-if(COMPILER_SUPPORTS_SSSE3)
-    list(APPEND KEYHUNT_ARCH_FLAGS -mssse3)
-endif()
+if(NOT MSVC)
+    # GCC/Clang flags
+    # Architecture flags (match Makefile: -m64 -march=native -mtune=native -mssse3)
+    set(KEYHUNT_ARCH_FLAGS "")
+    if(COMPILER_SUPPORTS_MARCH_NATIVE)
+        list(APPEND KEYHUNT_ARCH_FLAGS -m64 -march=native -mtune=native)
+    endif()
+    if(COMPILER_SUPPORTS_SSSE3)
+        list(APPEND KEYHUNT_ARCH_FLAGS -mssse3)
+    endif()
 
-# Optimization flags (match Makefile: -O3 -ftree-vectorize -funroll-loops -pipe -DNDEBUG)
-set(KEYHUNT_OPT_FLAGS
-    -ftree-vectorize
-    -funroll-loops
-    -pipe
-)
+    # Optimization flags (match Makefile: -O3 -ftree-vectorize -funroll-loops -pipe -DNDEBUG)
+    set(KEYHUNT_OPT_FLAGS
+        -ftree-vectorize
+        -funroll-loops
+        -pipe
+    )
 
-# Warning flags
-set(KEYHUNT_WARN_FLAGS -Wall -Wextra)
-set(KEYHUNT_CXX_WARN_FLAGS -Wno-deprecated-copy)
-set(KEYHUNT_C_WARN_FLAGS -Wno-unused-parameter -Wno-unused-result)
+    # Warning flags
+    set(KEYHUNT_WARN_FLAGS -Wall -Wextra)
+    set(KEYHUNT_CXX_WARN_FLAGS -Wno-deprecated-copy)
+    set(KEYHUNT_C_WARN_FLAGS -Wno-unused-parameter -Wno-unused-result)
+else()
+    # MSVC flags
+    # Architecture flags - MSVC uses /arch: for SIMD
+    set(KEYHUNT_ARCH_FLAGS "")
+    # Base AVX2 support (includes AVX, SSE4.2, etc.)
+    if(COMPILER_SUPPORTS_AVX2)
+        list(APPEND KEYHUNT_ARCH_FLAGS /arch:AVX2)
+    endif()
+
+    # Optimization flags
+    set(KEYHUNT_OPT_FLAGS
+        /O2          # Maximum optimization
+        /Oi          # Enable intrinsic functions
+        /Ot          # Favor fast code
+        /GL          # Whole program optimization (similar to LTO)
+    )
+
+    # Warning flags
+    set(KEYHUNT_WARN_FLAGS /W3)  # Warning level 3 (reasonable)
+    set(KEYHUNT_CXX_WARN_FLAGS
+        /wd4996      # Disable deprecation warnings (strcpy, etc.)
+        /wd4244      # Disable conversion warnings
+        /wd4267      # Disable size_t conversion warnings
+    )
+    set(KEYHUNT_C_WARN_FLAGS ${KEYHUNT_CXX_WARN_FLAGS})
+
+    # MSVC-specific defines
+    add_compile_definitions(
+        _CRT_SECURE_NO_WARNINGS    # Disable secure CRT warnings
+        _CRT_NONSTDC_NO_DEPRECATE  # Disable POSIX function warnings
+        NOMINMAX                    # Prevent min/max macro pollution
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # Source Files
@@ -339,32 +412,57 @@ set_source_files_properties(
 
 # AVX2 flags
 if(COMPILER_SUPPORTS_AVX2)
-    set_source_files_properties(
-        ${HASH_AVX2_SOURCES}
-        ${BLOOM_AVX2_SOURCES}
-        ${BSGS_AVX2_SOURCES}
-        PROPERTIES COMPILE_OPTIONS "-mavx2"
-    )
+    if(NOT MSVC)
+        set_source_files_properties(
+            ${HASH_AVX2_SOURCES}
+            ${BLOOM_AVX2_SOURCES}
+            ${BSGS_AVX2_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "-mavx2"
+        )
+    else()
+        set_source_files_properties(
+            ${HASH_AVX2_SOURCES}
+            ${BLOOM_AVX2_SOURCES}
+            ${BSGS_AVX2_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "/arch:AVX2"
+        )
+    endif()
 else()
     message(WARNING "Compiler does not support AVX2 - AVX2 optimizations disabled")
 endif()
 
 # AVX-512 flags
 if(COMPILER_SUPPORTS_AVX512F AND COMPILER_SUPPORTS_AVX512DQ)
-    set_source_files_properties(
-        ${HASH_AVX512_SOURCES}
-        PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq"
-    )
+    if(NOT MSVC)
+        set_source_files_properties(
+            ${HASH_AVX512_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512dq"
+        )
+    else()
+        set_source_files_properties(
+            ${HASH_AVX512_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "/arch:AVX512"
+        )
+    endif()
 else()
     message(WARNING "Compiler does not support AVX-512 - AVX-512 optimizations disabled")
 endif()
 
 # SHA-NI flags
 if(COMPILER_SUPPORTS_SHA_NI AND COMPILER_SUPPORTS_SSE41)
-    set_source_files_properties(
-        ${HASH_SHANI_SOURCES}
-        PROPERTIES COMPILE_OPTIONS "-msha;-msse4.1"
-    )
+    if(NOT MSVC)
+        set_source_files_properties(
+            ${HASH_SHANI_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "-msha;-msse4.1"
+        )
+    else()
+        # MSVC: SHA-NI intrinsics are available when targeting modern CPUs
+        # No specific flag needed - already included with /arch:AVX2
+        set_source_files_properties(
+            ${HASH_SHANI_SOURCES}
+            PROPERTIES COMPILE_OPTIONS "/arch:AVX2"
+        )
+    endif()
 else()
     message(WARNING "Compiler does not support SHA-NI - SHA-NI optimizations disabled")
 endif()
@@ -400,11 +498,20 @@ if(ENABLE_LTO AND LTO_SUPPORTED)
 endif()
 
 # Link libraries
-target_link_libraries(keyhunt PRIVATE
-    m
-    pthread
-    ${CMAKE_DL_LIBS}
-)
+if(NOT WIN32)
+    # POSIX systems (Linux, macOS)
+    target_link_libraries(keyhunt PRIVATE
+        m          # Math library
+        pthread    # POSIX threads
+        ${CMAKE_DL_LIBS}  # dlopen/dlsym
+    )
+else()
+    # Windows
+    target_link_libraries(keyhunt PRIVATE
+        ws2_32     # Winsock2 (network functions)
+        bcrypt     # Windows crypto API (random number generation)
+    )
+endif()
 
 # CUDA link
 if(HAVE_CUDA)
@@ -412,9 +519,16 @@ if(HAVE_CUDA)
 endif()
 
 # Linker flags to match Makefile behavior
-target_link_options(keyhunt PRIVATE
-    "LINKER:--as-needed"
-)
+if(NOT MSVC)
+    target_link_options(keyhunt PRIVATE
+        "LINKER:--as-needed"
+    )
+else()
+    # MSVC linker flags
+    target_link_options(keyhunt PRIVATE
+        /LTCG      # Link-time code generation (works with /GL)
+    )
+endif()
 
 # Output to project root (match Makefile behavior)
 set_target_properties(keyhunt PROPERTIES
@@ -479,19 +593,34 @@ if(ENABLE_LTO AND LTO_SUPPORTED)
     set_target_properties(run_tests PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
-target_link_libraries(run_tests PRIVATE
-    m
-    pthread
-    ${CMAKE_DL_LIBS}
-)
+if(NOT WIN32)
+    # POSIX systems
+    target_link_libraries(run_tests PRIVATE
+        m
+        pthread
+        ${CMAKE_DL_LIBS}
+    )
+else()
+    # Windows
+    target_link_libraries(run_tests PRIVATE
+        ws2_32
+        bcrypt
+    )
+endif()
 
 if(HAVE_CUDA)
     target_link_libraries(run_tests PRIVATE CUDA::cudart)
 endif()
 
-target_link_options(run_tests PRIVATE
-    "LINKER:--as-needed"
-)
+if(NOT MSVC)
+    target_link_options(run_tests PRIVATE
+        "LINKER:--as-needed"
+    )
+else()
+    target_link_options(run_tests PRIVATE
+        /LTCG
+    )
+endif()
 
 # Output test binary to project root (match Makefile behavior)
 set_target_properties(run_tests PROPERTIES
@@ -510,9 +639,14 @@ add_test(
 # ===========================================================================
 message(STATUS "")
 message(STATUS "=== keyhunt build configuration ===")
+message(STATUS "  Platform:      ${CMAKE_SYSTEM_NAME}")
+message(STATUS "  Compiler:      ${CMAKE_CXX_COMPILER_ID}")
 message(STATUS "  Build type:    ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C compiler:    ${CMAKE_C_COMPILER}")
 message(STATUS "  C++ compiler:  ${CMAKE_CXX_COMPILER}")
+if(WIN32)
+    message(STATUS "  Windows libs:  ws2_32, bcrypt")
+endif()
 message(STATUS "  CUDA:          ${HAVE_CUDA}")
 if(HAVE_CUDA)
     message(STATUS "  CUDA arch:     ${CMAKE_CUDA_ARCHITECTURES}")
