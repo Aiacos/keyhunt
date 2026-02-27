@@ -66,7 +66,7 @@ endif
 
 # Object files organized by module (all in obj/ directory)
 BLOOM_OBJS := $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
-HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_shani.o $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/sha512_avx2.o $(OBJDIR)/hash/sha512_avx512.o
+HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_avx512.o $(OBJDIR)/hash/sha256_shani.o $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/sha512_avx2.o $(OBJDIR)/hash/sha512_avx512.o
 SHA3_OBJS := $(OBJDIR)/sha3/sha3.o $(OBJDIR)/sha3/keccak.o
 PLATFORM_OBJS := $(OBJDIR)/platform/platform_thread.o $(OBJDIR)/platform/platform_mutex.o $(OBJDIR)/platform/platform_time.o
 SECP256K1_OBJS := $(OBJDIR)/secp256k1/Int.o $(OBJDIR)/secp256k1/Point.o $(OBJDIR)/secp256k1/SECP256K1.o $(OBJDIR)/secp256k1/IntMod.o $(OBJDIR)/secp256k1/Random.o $(OBJDIR)/secp256k1/IntGroup.o
@@ -260,6 +260,10 @@ $(OBJDIR)/hash/ripemd160_avx512.o: $(SRCDIR)/hash/ripemd160_avx512.cpp | directo
 
 # SHA-512 AVX-512: sha512_avx512.cpp needs -mavx512f -mavx512dq
 $(OBJDIR)/hash/sha512_avx512.o: $(SRCDIR)/hash/sha512_avx512.cpp | directories
+	$(CXX) $(CXXFLAGS) -mavx512f -mavx512dq -c $< -o $@
+
+# SHA-256 AVX-512: sha256_avx512.cpp needs -mavx512f -mavx512dq
+$(OBJDIR)/hash/sha256_avx512.o: $(SRCDIR)/hash/sha256_avx512.cpp | directories
 	$(CXX) $(CXXFLAGS) -mavx512f -mavx512dq -c $< -o $@
 
 # SHA-NI optimized builds (Intel SHA Extensions)
