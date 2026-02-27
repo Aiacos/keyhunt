@@ -5,7 +5,31 @@ CC ?= gcc
 OBJDIR := obj
 SRCDIR := src
 
-COMMON_FLAGS := -m64 -march=native -mtune=native -mssse3
+# ============================================================================
+# MinGW-w64 Cross-Compilation Support
+# ============================================================================
+# Detect MinGW-w64 cross-compilation for Windows
+# Usage: make CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc
+# ============================================================================
+ifneq (,$(findstring mingw,$(CXX)))
+  IS_MINGW := 1
+  EXE_EXT := .exe
+  # Windows doesn't have -ldl, and uses different socket libraries
+  PLATFORM_LIBS := -lws2_32 -lbcrypt
+  # Disable -march=native for cross-compilation (can't detect target CPU)
+  COMMON_FLAGS := -m64 -mssse3
+else ifneq (,$(findstring w64-mingw32,$(CXX)))
+  IS_MINGW := 1
+  EXE_EXT := .exe
+  PLATFORM_LIBS := -lws2_32 -lbcrypt
+  COMMON_FLAGS := -m64 -mssse3
+else
+  IS_MINGW := 0
+  EXE_EXT :=
+  PLATFORM_LIBS := -ldl
+  COMMON_FLAGS := -m64 -march=native -mtune=native -mssse3
+endif
+
 OPT_FLAGS := -O2 -ftree-vectorize -funroll-loops -pipe
 WARN_FLAGS := -Wall -Wextra
 
@@ -46,7 +70,7 @@ CXXFLAGS += $(GPU_CXXFLAGS)
 LDFLAGS ?=
 LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
 LDLIBS ?=
-LDLIBS += -lm -lpthread -ldl
+LDLIBS += -lm -lpthread $(PLATFORM_LIBS)
 
 # If CUDA backend is built, link against cudart (toolkit runtime)
 CUDA_HOME ?= /usr/local/cuda
@@ -97,30 +121,43 @@ KEYHUNT_OBJS := $(OBJDIR)/keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OB
 BSGSD_OBJS := $(OBJDIR)/bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
 LEGACY_OBJS := $(OBJDIR)/keyhunt_legacy.o $(OBJDIR)/core/hashing.o $(LEGACY_COMMON_OBJS) $(GMP256K1_OBJS)
 
+# Executable names (with .exe extension for Windows cross-compilation)
+KEYHUNT_EXE := keyhunt$(EXE_EXT)
+BSGSD_EXE := bsgsd$(EXE_EXT)
+LEGACY_EXE := keyhunt_legacy$(EXE_EXT)
+TEST_EXE := run_tests$(EXE_EXT)
+
 # Create obj directory structure
 OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests
 
 .PHONY: all clean legacy bsgsd directories test sanitize tsan coverage
 
-all: directories keyhunt
+all: directories $(KEYHUNT_EXE)
 
 directories: $(OBJ_DIRS)
 
 $(OBJ_DIRS):
 	@mkdir -p $@
 
-keyhunt: directories $(KEYHUNT_OBJS)
+$(KEYHUNT_EXE): directories $(KEYHUNT_OBJS)
 	$(CXX) $(LDFLAGS) $(KEYHUNT_OBJS) $(LDLIBS) -o $@
 
-bsgsd: directories $(BSGSD_OBJS)
+$(BSGSD_EXE): directories $(BSGSD_OBJS)
 	$(CXX) $(LDFLAGS) $(BSGSD_OBJS) $(LDLIBS) -o $@
 
-legacy: keyhunt_legacy
+# Keep legacy name target for backwards compatibility
+bsgsd: $(BSGSD_EXE)
 
-keyhunt_legacy: directories $(LEGACY_OBJS)
+legacy: $(LEGACY_EXE)
+
+$(LEGACY_EXE): directories $(LEGACY_OBJS)
 	$(CXX) $(LDFLAGS) $(LEGACY_OBJS) $(LDLIBS) -lcrypto -lgmp -o $@
 
+# Keep legacy name target for backwards compatibility
+keyhunt_legacy: $(LEGACY_EXE)
+
 clean:
+	$(RM) $(KEYHUNT_EXE) $(LEGACY_EXE) $(BSGSD_EXE) $(TEST_EXE)
 	$(RM) keyhunt keyhunt_legacy bsgsd run_tests
 	$(RM) -r $(OBJDIR)
 
@@ -200,12 +237,15 @@ TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OB
              $(TEST_SHA512_SIMD_OBJ)
 
 # Build test runner
-run_tests: directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
+$(TEST_EXE): directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
 	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
 
+# Keep legacy name target for backwards compatibility
+run_tests: $(TEST_EXE)
+
 # Run all tests
-test: run_tests
-	./run_tests
+test: $(TEST_EXE)
+	./$(TEST_EXE)
 
 # Generic rules for building object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | directories
@@ -298,39 +338,39 @@ COVERAGE_LDFLAGS := --coverage
 sanitize: clean-sanitize
 	@echo "Building with AddressSanitizer..."
 	@mkdir -p $(SANITIZE_OBJDIR)
-	$(MAKE) run_tests_asan OBJDIR=$(SANITIZE_OBJDIR) \
+	$(MAKE) run_tests_asan$(EXE_EXT) OBJDIR=$(SANITIZE_OBJDIR) \
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(ASAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(ASAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(ASAN_LDFLAGS) -Wl,--as-needed" \
 		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(SANITIZE_OBJDIR)/gpu/gpu_backend_none.o $(SANITIZE_OBJDIR)/gpu/gpu_autotune.o $(SANITIZE_OBJDIR)/gpu/multi_gpu_scheduler.o $(SANITIZE_OBJDIR)/gpu/async_pipeline.o"
 	@echo ""
 	@echo "Running tests with AddressSanitizer..."
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:print_stats=1 ./run_tests_asan
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:print_stats=1 ./run_tests_asan$(EXE_EXT)
 
-run_tests_asan: directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
+run_tests_asan$(EXE_EXT): directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
 	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
 
 clean-sanitize:
-	$(RM) -r $(SANITIZE_OBJDIR) run_tests_asan
+	$(RM) -r $(SANITIZE_OBJDIR) run_tests_asan$(EXE_EXT) run_tests_asan
 
 # ThreadSanitizer build
 tsan: clean-tsan
 	@echo "Building with ThreadSanitizer..."
 	@mkdir -p $(TSAN_OBJDIR)
-	$(MAKE) run_tests_tsan OBJDIR=$(TSAN_OBJDIR) \
+	$(MAKE) run_tests_tsan$(EXE_EXT) OBJDIR=$(TSAN_OBJDIR) \
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(TSAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(TSAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(TSAN_LDFLAGS) -Wl,--as-needed" \
 		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(TSAN_OBJDIR)/gpu/gpu_backend_none.o $(TSAN_OBJDIR)/gpu/gpu_autotune.o $(TSAN_OBJDIR)/gpu/multi_gpu_scheduler.o $(TSAN_OBJDIR)/gpu/async_pipeline.o"
 	@echo ""
 	@echo "Running tests with ThreadSanitizer..."
-	TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ./run_tests_tsan
+	TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ./run_tests_tsan$(EXE_EXT)
 
-run_tests_tsan: directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
+run_tests_tsan$(EXE_EXT): directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
 	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
 
 clean-tsan:
-	$(RM) -r $(TSAN_OBJDIR) run_tests_tsan
+	$(RM) -r $(TSAN_OBJDIR) run_tests_tsan$(EXE_EXT) run_tests_tsan
 
 # ============================================================================
 # Code Coverage
@@ -350,18 +390,18 @@ clean-tsan:
 coverage: clean-coverage
 	@echo "Building with coverage instrumentation..."
 	@mkdir -p $(COVERAGE_OBJDIR)
-	$(MAKE) run_tests_cov OBJDIR=$(COVERAGE_OBJDIR) \
+	$(MAKE) run_tests_cov$(EXE_EXT) OBJDIR=$(COVERAGE_OBJDIR) \
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(COVERAGE_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(COVERAGE_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(COVERAGE_LDFLAGS) -Wl,--as-needed" \
 		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/gpu_autotune.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o"
 	@echo ""
 	@echo "Running tests for coverage data..."
-	./run_tests_cov
+	./run_tests_cov$(EXE_EXT)
 	@echo ""
 	$(MAKE) coverage-report
 
-run_tests_cov: directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
+run_tests_cov$(EXE_EXT): directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_OBJS)
 	$(CXX) $(LDFLAGS) $(TEST_OBJS) $(TEST_SHARED_OBJS) $(LDLIBS) -o $@
 
 coverage-report:
@@ -383,7 +423,7 @@ coverage-report:
 	@lcov --summary coverage/coverage.filtered.info 2>/dev/null || true
 
 clean-coverage:
-	$(RM) -r $(COVERAGE_OBJDIR) run_tests_cov coverage *.gcda *.gcno
+	$(RM) -r $(COVERAGE_OBJDIR) run_tests_cov$(EXE_EXT) run_tests_cov coverage *.gcda *.gcno
 
 .PHONY: sanitize run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
 .PHONY: coverage run_tests_cov coverage-report clean-coverage
