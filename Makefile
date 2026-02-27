@@ -68,7 +68,7 @@ endif
 BLOOM_OBJS := $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
 HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_shani.o $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/sha512_avx2.o $(OBJDIR)/hash/sha512_avx512.o
 SHA3_OBJS := $(OBJDIR)/sha3/sha3.o $(OBJDIR)/sha3/keccak.o
-PLATFORM_OBJS := $(OBJDIR)/platform/platform_thread.o $(OBJDIR)/platform/platform_mutex.o $(OBJDIR)/platform/platform_time.o
+PLATFORM_OBJS := $(OBJDIR)/platform/platform_thread.o $(OBJDIR)/platform/platform_mutex.o $(OBJDIR)/platform/platform_time.o $(OBJDIR)/platform/platform_compat.o
 SECP256K1_OBJS := $(OBJDIR)/secp256k1/Int.o $(OBJDIR)/secp256k1/Point.o $(OBJDIR)/secp256k1/SECP256K1.o $(OBJDIR)/secp256k1/IntMod.o $(OBJDIR)/secp256k1/Random.o $(OBJDIR)/secp256k1/IntGroup.o
 GMP256K1_OBJS := $(OBJDIR)/gmp256k1/Int.o $(OBJDIR)/gmp256k1/Point.o $(OBJDIR)/gmp256k1/GMP256K1.o $(OBJDIR)/gmp256k1/IntMod.o $(OBJDIR)/gmp256k1/Random.o $(OBJDIR)/gmp256k1/IntGroup.o
 BSGS_OBJS := $(OBJDIR)/bsgs/bsgs_ops.o $(OBJDIR)/bsgs/bsgs_fast.o $(OBJDIR)/bsgs/bsgs_sort.o

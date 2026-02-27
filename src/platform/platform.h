@@ -22,6 +22,9 @@
 /* Core platform types */
 #include "platform_types.h"
 
+/* POSIX compatibility layer */
+#include "platform_compat.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
