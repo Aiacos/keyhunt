@@ -791,7 +791,7 @@ have been migrated to bsgs_config_t and runtime_state_t.
 Runtime algorithm state (bPtable, bloom_bP*, addressTable, checksums, mutexes)
 remain as module-scoped until BSGS algorithm is fully encapsulated.
 */
-int *bsgs_found;
+volatile int *bsgs_found;
 std::vector<Point> OriginalPointsBSGS;
 bool *OriginalPointsBSGScompressed;
 
@@ -1272,7 +1272,7 @@ static bool capture_progress_metrics(int &permille, char *position, size_t posit
 	return true;
 }
 
-static void append_progress_info(char *buffer, size_t bufferSize) {
+static void append_progress_info(char *buffer, size_t bufferSize, int elapsed_seconds = -1) {
 	if (!g_rangeProgressEnabled || bufferSize < 4) {
 		return;
 	}
@@ -1283,25 +1283,44 @@ static void append_progress_info(char *buffer, size_t bufferSize) {
 	}
 	const int segments = 20;
 	int filled = (permille * segments) / 1000;
-	int remainder = (permille * segments) % 1000;
-	char bar[segments + 1];
+	// Build Unicode bar: █ (filled), ▓ (partial), ░ (empty)
+	// Each UTF-8 block char is 3 bytes, so bar needs segments*3 + 1
+	char bar[segments * 3 + 1];
+	int pos = 0;
 	for (int i = 0; i < segments; ++i) {
+		const char *ch;
 		if (i < filled) {
-			bar[i] = '=';
-		} else if (i == filled && remainder > 0 && filled < segments) {
-			bar[i] = '>';
+			ch = "\xe2\x96\x88"; // █ U+2588
+		} else if (i == filled && filled < segments && (permille * segments) % 1000 > 0) {
+			ch = "\xe2\x96\x93"; // ▓ U+2593
 		} else {
-			bar[i] = '.';
+			ch = "\xe2\x96\x91"; // ░ U+2591
 		}
+		bar[pos++] = ch[0];
+		bar[pos++] = ch[1];
+		bar[pos++] = ch[2];
 	}
-	if (filled >= segments) {
-		bar[segments - 1] = '=';
-	}
-	bar[segments] = '\0';
+	bar[pos] = '\0';
 	int percent = permille / 10;
 	int tenths = permille % 10;
-	char addition[160];
-	snprintf(addition, sizeof(addition), " | [%s] %d.%d%% @ %s", bar, percent, tenths, position);
+
+	// Format ETA if elapsed time is available and progress > 0
+	char eta_part[48] = "";
+	if (elapsed_seconds > 0 && permille > 0) {
+		double total_estimate = elapsed_seconds / (permille / 1000.0);
+		double remaining = (1000.0 - permille) / 1000.0;
+		int eta_secs = (int)(total_estimate * remaining);
+		if (eta_secs < 3600) {
+			snprintf(eta_part, sizeof(eta_part), " | ETA: %dm %ds", eta_secs / 60, eta_secs % 60);
+		} else if (eta_secs < 86400) {
+			snprintf(eta_part, sizeof(eta_part), " | ETA: %dh %dm", eta_secs / 3600, (eta_secs % 3600) / 60);
+		} else {
+			snprintf(eta_part, sizeof(eta_part), " | ETA: %dd %dh", eta_secs / 86400, (eta_secs % 86400) / 3600);
+		}
+	}
+
+	char addition[256];
+	snprintf(addition, sizeof(addition), " | %s %d.%d%% @ %s%s", bar, percent, tenths, position, eta_part);
 	size_t len = strlen(buffer);
 	char tail = 0;
 	if (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
@@ -1378,7 +1397,7 @@ static platform_thread_return_t PLATFORM_THREAD_CALL gpu_full_stats_thread(void 
 		snprintf(buffer, sizeof(buffer),
 		         "[+] Total %s keys in %s seconds (last %d s): CPU 0 keys/s | GPU %s | TOTAL %s\n",
 		         str_total ? str_total : "?", seconds_buf, period, gpu_rate_str, gpu_rate_str);
-		append_progress_info(buffer, sizeof(buffer));
+		append_progress_info(buffer, sizeof(buffer), (int)seconds);
 		append_profile_info(buffer, sizeof(buffer));
 		append_adaptive_info(buffer, sizeof(buffer));
 		printf("%s", buffer);
@@ -4287,7 +4306,8 @@ int main(int argc, char **argv)	{
 									cpu_rate_str, gpu_rate_str, overall_rate_str);
 							}
 
-						append_progress_info(buffer, sizeof(buffer));
+						int elapsed_secs = atoi(str_seconds ? str_seconds : "0");
+						append_progress_info(buffer, sizeof(buffer), elapsed_secs);
 						append_profile_info(buffer, sizeof(buffer));
 						append_adaptive_info(buffer, sizeof(buffer));
 						printf("%s", buffer);
@@ -4295,7 +4315,8 @@ int main(int argc, char **argv)	{
 						THREADOUTPUT = 0;
 
 						// Show visual progress bar if range progress is enabled
-						if (g_rangeProgressEnabled) {
+						// Skip when line_mode — append_progress_info already shows bar + ETA inline
+						if (g_rangeProgressEnabled && !line_mode) {
 							int permille = 0;
 							char pos[48];
 							if (capture_progress_metrics(permille, pos, sizeof(pos))) {
@@ -4306,9 +4327,8 @@ int main(int argc, char **argv)	{
 								if (rate_str) free(rate_str);
 								uint64_t keys_checked = strtoull(str_total ? str_total : "0", NULL, 10);
 								// Calculate ETA: remaining keys / speed
-								int secs = atoi(str_seconds ? str_seconds : "0");
 								double remaining_ratio = (1000.0 - permille) / 1000.0;
-								double total_estimate = (permille > 0) ? (secs / (permille / 1000.0)) : 0;
+								double total_estimate = (permille > 0) ? (elapsed_secs / (permille / 1000.0)) : 0;
 								int eta_seconds = (int)(total_estimate * remaining_ratio);
 
 								// Add speed sample to history for visual mode
@@ -4344,6 +4364,18 @@ int main(int argc, char **argv)	{
 									output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
 								}
 								printf("\n");
+							}
+						} else if (g_rangeProgressEnabled && line_mode) {
+							// Still track speed history even when not displaying the secondary bar
+							int permille = 0;
+							char pos[48];
+							if (capture_progress_metrics(permille, pos, sizeof(pos))) {
+								if (g_progress_enabled) {
+									char *rate_str = overall_rate.GetBase10();
+									double speed_raw = strtod(rate_str ? rate_str : "0", NULL);
+									if (rate_str) free(rate_str);
+									speed_history_add_sample(&g_progress_state.speed_history, speed_raw);
+								}
 							}
 						}
 
@@ -4426,7 +4458,8 @@ int main(int argc, char **argv)	{
 							free(str_divpretotal);
 
 						}
-						append_progress_info(buffer, sizeof(buffer));
+						int elapsed_secs_cpu = atoi(str_seconds ? str_seconds : "0");
+						append_progress_info(buffer, sizeof(buffer), elapsed_secs_cpu);
 						append_profile_info(buffer, sizeof(buffer));
 						append_adaptive_info(buffer, sizeof(buffer));
 						printf("%s",buffer);
@@ -4434,7 +4467,8 @@ int main(int argc, char **argv)	{
 						THREADOUTPUT = 0;
 
 						// Show visual progress bar if range progress is enabled
-						if (g_rangeProgressEnabled) {
+						// Skip when line_mode — append_progress_info already shows bar + ETA inline
+						if (g_rangeProgressEnabled && !line_mode) {
 							int permille = 0;
 							char pos[48];
 							if (capture_progress_metrics(permille, pos, sizeof(pos))) {
@@ -4443,9 +4477,8 @@ int main(int argc, char **argv)	{
 								double speed_mkeys = strtod(str_pretotal ? str_pretotal : "0", NULL) / 1000000.0;
 								uint64_t keys_checked = strtoull(str_total ? str_total : "0", NULL, 10);
 								// Calculate ETA: remaining keys / speed
-								int secs = atoi(str_seconds ? str_seconds : "0");
 								double remaining_ratio = (1000.0 - permille) / 1000.0;
-								double total_estimate = (permille > 0) ? (secs / (permille / 1000.0)) : 0;
+								double total_estimate = (permille > 0) ? (elapsed_secs_cpu / (permille / 1000.0)) : 0;
 								int eta_seconds = (int)(total_estimate * remaining_ratio);
 
 								// Add speed sample to history for visual mode
@@ -4481,6 +4514,16 @@ int main(int argc, char **argv)	{
 									output_progress(percent, speed_mkeys, keys_checked, eta_seconds);
 								}
 								printf("\n");
+							}
+						} else if (g_rangeProgressEnabled && line_mode) {
+							// Still track speed history even when not displaying the secondary bar
+							int permille = 0;
+							char pos[48];
+							if (capture_progress_metrics(permille, pos, sizeof(pos))) {
+								if (g_progress_enabled) {
+									double speed_raw = strtod(str_pretotal ? str_pretotal : "0", NULL);
+									speed_history_add_sample(&g_progress_state.speed_history, speed_raw);
+								}
 							}
 						}
 
