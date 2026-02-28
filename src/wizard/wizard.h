@@ -55,6 +55,24 @@ typedef struct {
     char solver[64];
 } puzzle_def_t;
 
+/* Maximum number of pools for multi-pool coordination */
+#define WIZARD_MAX_POOLS 8
+
+/* Pool configuration for multi-pool coordination */
+typedef struct {
+    char host[256];              /* Coordinator hostname or IP address */
+    int port;                    /* Coordinator port */
+    int priority;                /* Pool priority for weighted distribution (1-100, higher = more work) */
+    char auth_token[64];         /* Authentication token for this pool */
+    bool enabled;                /* Is this pool enabled? */
+
+    /* Connection state (runtime, not saved to JSON) */
+    bool connected;              /* Is currently connected? */
+    uint64_t last_connected;     /* Timestamp of last successful connection */
+    uint64_t keys_processed;     /* Keys processed for this pool */
+    int reconnect_backoff_sec;   /* Current reconnection backoff in seconds */
+} pool_config_t;
+
 /* Wizard configuration (JSON-serializable) */
 typedef struct {
     int version;
@@ -66,12 +84,24 @@ typedef struct {
     char range_end[68];
     int bits;
 
-    /* Server settings */
+    /* Multi-pool coordination settings */
+    pool_config_t pools[WIZARD_MAX_POOLS];  /* Array of pool configurations */
+    int pool_count;                         /* Number of configured pools (0-8) */
+    int pool_failover_enabled;              /* Enable automatic failover to backup pools */
+    int pool_strategy;                      /* Pool selection strategy:
+                                             * 0 = priority-weighted (distribute based on priority)
+                                             * 1 = round-robin (equal distribution)
+                                             * 2 = failover-only (use pools in priority order) */
+
+    /* Legacy single-server settings (DEPRECATED - use pools[] instead)
+     * Kept for backward compatibility with old config files */
     char server_host[256];
     int server_port;
-    uint64_t work_unit_size;
-    int checkpoint_interval_sec;
-    char auth_token[64];            /* Authentication token for workers */
+    char auth_token[64];                    /* Authentication token for workers */
+
+    /* Work coordination settings */
+    uint64_t work_unit_size;                /* Size of work units distributed to workers */
+    int checkpoint_interval_sec;            /* How often to save progress (seconds) */
 
     /* Search settings */
     char mode[32];           /* "address", "bsgs", "xpoint" */
@@ -212,6 +242,7 @@ bool wizard_ask_yesno(const char *prompt, bool default_val);
 void wizard_print_config_summary(const wizard_config_t *cfg);
 void wizard_print_progress(int current, int total, double speed, const char *status);
 void wizard_print_privacy_warning(void);
+int wizard_configure_multipool(wizard_config_t *cfg);
 
 /* ============================================================================
  * Community Sync Functions

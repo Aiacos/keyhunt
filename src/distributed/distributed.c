@@ -277,6 +277,71 @@ void dist_federation_shutdown(dist_coordinator_t *coordinator) {
     (void)coordinator;
 }
 
+/* Multi-Pool Client Functions */
+int dist_multipool_init(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    fprintf(stderr, "[distributed] Not supported on Windows\n");
+    return -1;
+}
+
+int dist_multipool_add_pool(dist_multipool_client_t *multipool,
+                             const char *coordinator_host,
+                             int coordinator_port,
+                             double perf_score) {
+    (void)multipool; (void)coordinator_host; (void)coordinator_port; (void)perf_score;
+    return -1;
+}
+
+int dist_multipool_connect_all(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    return -1;
+}
+
+int dist_multipool_request_work(dist_multipool_client_t *multipool,
+                                 char *range_start, char *range_end) {
+    (void)multipool; (void)range_start; (void)range_end;
+    return -1;
+}
+
+int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
+                                   uint64_t keys_since_last) {
+    (void)multipool; (void)keys_since_last;
+    return -1;
+}
+
+int dist_multipool_reconnect(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    return -1;
+}
+
+int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
+                                         const char *range_start,
+                                         const char *range_end,
+                                         int pool_index) {
+    (void)multipool; (void)range_start; (void)range_end; (void)pool_index;
+    return -1;
+}
+
+int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
+                                    const char *range_start,
+                                    const char *range_end) {
+    (void)multipool; (void)range_start; (void)range_end;
+    return -1;
+}
+
+void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
+    (void)multipool;
+}
+
+int dist_multipool_start_reconnect_thread(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    return -1;
+}
+
+void dist_multipool_stop_reconnect_thread(void) {
+    /* No-op on Windows */
+}
+
 #else /* POSIX implementation */
 
 #include <sys/socket.h>
@@ -287,6 +352,20 @@ void dist_federation_shutdown(dist_coordinator_t *coordinator) {
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
+
+/* ============================================================================
+ * Multi-Pool Reconnection Thread State
+ * ============================================================================ */
+
+/* Background reconnection thread for failed pools */
+static pthread_t g_reconnect_thread;
+static volatile int g_reconnect_thread_running = 0;
+static pthread_mutex_t g_reconnect_mutex = PTHREAD_MUTEX_INITIALIZER;
+static dist_multipool_client_t *g_reconnect_multipool = NULL;
+
+/* Reconnection thread configuration */
+#define RECONNECT_CHECK_INTERVAL_SEC 5  /* Check for failed pools every 5 seconds */
 
 /* ============================================================================
  * TLS/SSL Support (Optional - requires OpenSSL)
@@ -3549,6 +3628,798 @@ int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
     (void)key_file;
     return -1;
 #endif
+}
+
+/* ============================================================================
+ * Multi-Pool Client Functions (POSIX)
+ * ============================================================================ */
+
+/**
+ * Initialize multi-pool client manager
+ * @param multipool Multi-pool client state to initialize
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_init(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    /* Zero out the structure */
+    memset(multipool, 0, sizeof(dist_multipool_client_t));
+
+    /* Initialize mutex for thread-safe access */
+    if (platform_mutex_init(&multipool->mutex) != 0) {
+        fprintf(stderr, "[multipool] Failed to initialize mutex\n");
+        return -1;
+    }
+
+    /* Initialize range mutex for thread-safe range tracking */
+    if (platform_mutex_init(&multipool->range_mutex) != 0) {
+        fprintf(stderr, "[multipool] Failed to initialize range mutex\n");
+        platform_mutex_destroy(&multipool->mutex);
+        return -1;
+    }
+
+    multipool->pool_count = 0;
+    multipool->current_pool_index = 0;
+    multipool->active_range_count = 0;
+
+    printf("[multipool] Multi-pool manager initialized\n");
+    return 0;
+}
+
+/**
+ * Add a pool to the multi-pool manager
+ * @param multipool Multi-pool client state
+ * @param coordinator_host Coordinator hostname/IP
+ * @param coordinator_port Coordinator port (0 = default DIST_DEFAULT_PORT)
+ * @param perf_score Performance score from sysinfo
+ * @return Pool index on success, -1 on error
+ */
+int dist_multipool_add_pool(dist_multipool_client_t *multipool,
+                             const char *coordinator_host,
+                             int coordinator_port,
+                             double perf_score) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!coordinator_host || strlen(coordinator_host) == 0) {
+        fprintf(stderr, "[multipool] Invalid coordinator host\n");
+        return -1;
+    }
+
+    /* Thread-safe pool addition */
+    platform_mutex_lock(&multipool->mutex);
+
+    /* Check if max pools reached */
+    if (multipool->pool_count >= DIST_MAX_POOLS) {
+        platform_mutex_unlock(&multipool->mutex);
+        fprintf(stderr, "[multipool] Maximum pools (%d) reached\n", DIST_MAX_POOLS);
+        return -1;
+    }
+
+    /* Get the next available pool slot */
+    int pool_index = multipool->pool_count;
+    dist_worker_client_t *client = &multipool->clients[pool_index];
+
+    /* Initialize the worker client for this pool */
+    int result = dist_worker_init(client, coordinator_host, coordinator_port, perf_score);
+    if (result != 0) {
+        platform_mutex_unlock(&multipool->mutex);
+        fprintf(stderr, "[multipool] Failed to initialize pool %d (%s:%d)\n",
+                pool_index, coordinator_host, coordinator_port);
+        return -1;
+    }
+
+    /* Increment pool count */
+    multipool->pool_count++;
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    printf("[multipool] Added pool %d: %s:%d (perf_score=%.2f)\n",
+           pool_index, coordinator_host,
+           coordinator_port > 0 ? coordinator_port : DIST_DEFAULT_PORT,
+           perf_score);
+
+    return pool_index;
+}
+
+/**
+ * Connect to all pools in the multi-pool manager
+ * Attempts to connect to all configured pools, continues even if some fail
+ * @param multipool Multi-pool client state
+ * @return Number of successful connections (>= 0), or -1 on error
+ */
+int dist_multipool_connect_all(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        fprintf(stderr, "[multipool] No pools configured\n");
+        return 0;
+    }
+
+    printf("[multipool] Connecting to %d pool(s)...\n", multipool->pool_count);
+
+    int successful_connections = 0;
+    int failed_connections = 0;
+
+    /* Thread-safe connection process */
+    platform_mutex_lock(&multipool->mutex);
+
+    /* Attempt to connect to each pool */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+
+        printf("[multipool] Connecting to pool %d (%s:%d)...\n",
+               i, client->coordinator_host, client->coordinator_port);
+
+        /* Attempt connection */
+        int result = dist_worker_connect(client);
+        if (result == 0) {
+            successful_connections++;
+            printf("[multipool] Successfully connected to pool %d (%s:%d)\n",
+                   i, client->coordinator_host, client->coordinator_port);
+        } else {
+            failed_connections++;
+            fprintf(stderr, "[multipool] Failed to connect to pool %d (%s:%d)\n",
+                    i, client->coordinator_host, client->coordinator_port);
+            /* Continue with remaining pools even if this one failed */
+        }
+    }
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    /* Summary */
+    printf("[multipool] Connection summary: %d successful, %d failed\n",
+           successful_connections, failed_connections);
+
+    if (successful_connections == 0) {
+        fprintf(stderr, "[multipool] Warning: No pools connected successfully\n");
+    }
+
+    return successful_connections;
+}
+
+/**
+ * Request work from pools using weighted round-robin
+ * Tries pools in round-robin order, skipping disconnected pools
+ * @param multipool Multi-pool client state
+ * @param range_start Output: start of assigned range (hex, 65 bytes min)
+ * @param range_end Output: end of assigned range (hex, 65 bytes min)
+ * @return 0 if work assigned, 1 if no more work, -1 on error
+ */
+int dist_multipool_request_work(dist_multipool_client_t *multipool,
+                                 char *range_start, char *range_end) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!range_start || !range_end) {
+        fprintf(stderr, "[multipool] NULL output buffers\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        fprintf(stderr, "[multipool] No pools configured\n");
+        return -1;
+    }
+
+    /* Thread-safe work request */
+    platform_mutex_lock(&multipool->mutex);
+
+    int pools_tried = 0;
+    int no_work_count = 0;
+    int error_count = 0;
+    int start_index = multipool->current_pool_index;
+
+    /* Try each pool in round-robin order */
+    for (int attempt = 0; attempt < multipool->pool_count; attempt++) {
+        int pool_index = (start_index + attempt) % multipool->pool_count;
+        dist_worker_client_t *client = &multipool->clients[pool_index];
+
+        /* Skip disconnected pools */
+        if (!client->connected) {
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d (%s:%d) not connected, skipping\n",
+                       pool_index, client->coordinator_host, client->coordinator_port);
+            }
+            continue;
+        }
+
+        pools_tried++;
+
+        /* Request work from this pool */
+        if (getenv("KEYHUNT_DEBUG")) {
+            printf("[multipool] Requesting work from pool %d (%s:%d)\n",
+                   pool_index, client->coordinator_host, client->coordinator_port);
+        }
+
+        int result = dist_worker_request_work(client, range_start, range_end);
+
+        if (result == 0) {
+            /* Work assigned successfully - check for range conflicts */
+            int conflict = dist_multipool_check_range_conflict(multipool, range_start, range_end, pool_index);
+
+            if (conflict == 1) {
+                /* Range conflict detected - reject this work and try next pool */
+                fprintf(stderr, "[multipool] Range conflict detected for %s -> %s from pool %d, trying next pool\n",
+                        range_start, range_end, pool_index);
+                error_count++;
+                continue;  /* Try next pool */
+            } else if (conflict == -1) {
+                /* Error checking conflict */
+                fprintf(stderr, "[multipool] Error checking range conflict for pool %d\n", pool_index);
+                error_count++;
+                continue;  /* Try next pool */
+            }
+
+            /* No conflict - add to active range tracking */
+            platform_mutex_lock(&multipool->range_mutex);
+
+            if (multipool->active_range_count >= DIST_MAX_POOLS * 2) {
+                platform_mutex_unlock(&multipool->range_mutex);
+                fprintf(stderr, "[multipool] Active range limit reached (%d), cannot accept more work\n",
+                        multipool->active_range_count);
+                error_count++;
+                continue;  /* Try next pool */
+            }
+
+            /* Add range to active tracking */
+            active_range_t *new_range = &multipool->active_ranges[multipool->active_range_count];
+            strncpy(new_range->range_start, range_start, 65);
+            new_range->range_start[64] = '\0';
+            strncpy(new_range->range_end, range_end, 65);
+            new_range->range_end[64] = '\0';
+            new_range->pool_index = pool_index;
+            new_range->assigned_time = (uint64_t)time(NULL);
+            multipool->active_range_count++;
+
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Added active range #%d: %s -> %s (pool %d)\n",
+                       multipool->active_range_count, range_start, range_end, pool_index);
+            }
+
+            platform_mutex_unlock(&multipool->range_mutex);
+
+            /* Update current pool index for next request (round-robin) */
+            multipool->current_pool_index = (pool_index + 1) % multipool->pool_count;
+
+            platform_mutex_unlock(&multipool->mutex);
+
+            printf("[multipool] Work assigned from pool %d (%s:%d): %s -> %s\n",
+                   pool_index, client->coordinator_host, client->coordinator_port,
+                   range_start, range_end);
+
+            return 0;
+        } else if (result == 1) {
+            /* No more work available from this pool */
+            no_work_count++;
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d has no work available\n", pool_index);
+            }
+        } else {
+            /* Error requesting work from this pool - mark as disconnected for failover */
+            error_count++;
+
+            pool_connection_state_t *state = &multipool->pool_states[pool_index];
+            state->connected = false;
+            client->connected = false;
+            state->failure_count++;
+
+            /* Initialize or update exponential backoff delay: 1s, 2s, 4s, 8s, 16s, 32s, max 60s */
+            if (state->reconnect_delay_sec == 0) {
+                state->reconnect_delay_sec = 1;  /* Initial delay */
+            } else {
+                state->reconnect_delay_sec *= 2;  /* Double the delay */
+                if (state->reconnect_delay_sec > 60) {
+                    state->reconnect_delay_sec = 60;  /* Cap at 60 seconds */
+                }
+            }
+
+            state->last_connect_attempt = (uint64_t)time(NULL);
+            state->is_healthy = false;
+
+            fprintf(stderr, "[multipool] Connection failure on pool %d (%s:%d), marked as disconnected "
+                    "(failures=%d, reconnect_delay=%ds)\n",
+                    pool_index, client->coordinator_host, client->coordinator_port,
+                    state->failure_count, state->reconnect_delay_sec);
+        }
+    }
+
+    /* Update current pool index even if no work (for next attempt) */
+    multipool->current_pool_index = (multipool->current_pool_index + 1) % multipool->pool_count;
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    /* Determine return value based on what happened */
+    if (pools_tried == 0) {
+        fprintf(stderr, "[multipool] No pools available (all disconnected)\n");
+        return -1;
+    } else if (no_work_count == pools_tried) {
+        /* All pools reported no work */
+        printf("[multipool] No work available from any pool (%d pools checked)\n", pools_tried);
+        return 1;
+    } else {
+        /* Some pools had errors, some may have had no work */
+        fprintf(stderr, "[multipool] Failed to get work from %d pool(s) (tried=%d, no_work=%d, errors=%d)\n",
+                pools_tried, pools_tried, no_work_count, error_count);
+        return -1;
+    }
+}
+
+/**
+ * Send heartbeat to all connected pools
+ * Detects disconnections and updates connection status
+ * @param multipool Multi-pool client state
+ * @param keys_since_last Keys processed since last heartbeat
+ * @return Number of successful heartbeats sent, or -1 on error
+ */
+int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
+                                   uint64_t keys_since_last) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        if (getenv("KEYHUNT_DEBUG")) {
+            fprintf(stderr, "[multipool] No pools configured for heartbeat\n");
+        }
+        return 0;
+    }
+
+    /* Thread-safe heartbeat to all pools */
+    platform_mutex_lock(&multipool->mutex);
+
+    int successful_heartbeats = 0;
+
+    /* Send heartbeat to all connected pools */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+
+        /* Skip disconnected pools */
+        if (!client->connected) {
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d (%s:%d) not connected, skipping heartbeat\n",
+                       i, client->coordinator_host, client->coordinator_port);
+            }
+            continue;
+        }
+
+        /* Send heartbeat to this pool */
+        int result = dist_worker_heartbeat(client, keys_since_last);
+
+        if (result == 0) {
+            /* Heartbeat successful */
+            successful_heartbeats++;
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Heartbeat sent to pool %d (%s:%d)\n",
+                       i, client->coordinator_host, client->coordinator_port);
+            }
+        } else {
+            /* Heartbeat failed - mark pool as disconnected */
+            fprintf(stderr, "[multipool] Heartbeat failed for pool %d (%s:%d), marking disconnected\n",
+                    i, client->coordinator_host, client->coordinator_port);
+            client->connected = false;
+        }
+    }
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Sent heartbeats to %d/%d pools\n",
+               successful_heartbeats, multipool->pool_count);
+    }
+
+    return successful_heartbeats;
+}
+
+/**
+ * Attempt to reconnect to failed pools with exponential backoff
+ * Only attempts reconnection if enough time has passed since last attempt
+ * Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s
+ * @param multipool Multi-pool client state
+ * @return Number of successful reconnections, or -1 on error
+ */
+int dist_multipool_reconnect(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        if (getenv("KEYHUNT_DEBUG")) {
+            fprintf(stderr, "[multipool] No pools configured for reconnection\n");
+        }
+        return 0;
+    }
+
+    /* Thread-safe reconnection attempts */
+    platform_mutex_lock(&multipool->mutex);
+
+    int successful_reconnects = 0;
+    uint64_t current_time = (uint64_t)time(NULL);
+
+    /* Attempt reconnection to disconnected pools */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+        pool_connection_state_t *state = &multipool->pool_states[i];
+
+        /* Skip already connected pools */
+        if (state->connected) {
+            continue;
+        }
+
+        /* Check if enough time has passed since last connection attempt */
+        uint64_t time_since_last_attempt = current_time - state->last_connect_attempt;
+
+        if (time_since_last_attempt < (uint64_t)state->reconnect_delay_sec) {
+            /* Not yet time to retry this pool */
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d (%s:%d): waiting %d more seconds before retry\n",
+                       i, client->coordinator_host, client->coordinator_port,
+                       (int)(state->reconnect_delay_sec - time_since_last_attempt));
+            }
+            continue;
+        }
+
+        /* Update last connection attempt time */
+        state->last_connect_attempt = current_time;
+
+        if (getenv("KEYHUNT_DEBUG")) {
+            printf("[multipool] Attempting to reconnect to pool %d (%s:%d), delay=%ds, failures=%d\n",
+                   i, client->coordinator_host, client->coordinator_port,
+                   state->reconnect_delay_sec, state->failure_count);
+        }
+
+        /* Attempt to reconnect */
+        int connect_result = dist_worker_connect(client);
+
+        if (connect_result == 0) {
+            /* Reconnection successful! */
+            state->connected = true;
+            client->connected = true;
+            state->failure_count = 0;
+            state->reconnect_delay_sec = 1; /* Reset to initial delay */
+            state->is_healthy = true;
+            state->last_heartbeat = current_time;
+            successful_reconnects++;
+
+            printf("[multipool] Successfully reconnected to pool %d (%s:%d)\n",
+                   i, client->coordinator_host, client->coordinator_port);
+        } else {
+            /* Reconnection failed */
+            state->connected = false;
+            client->connected = false;
+            state->failure_count++;
+
+            /* Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s */
+            if (state->reconnect_delay_sec == 0) {
+                state->reconnect_delay_sec = 1; /* Initial delay */
+            } else {
+                state->reconnect_delay_sec *= 2; /* Double the delay */
+                if (state->reconnect_delay_sec > 60) {
+                    state->reconnect_delay_sec = 60; /* Cap at 60 seconds */
+                }
+            }
+
+            fprintf(stderr, "[multipool] Failed to reconnect to pool %d (%s:%d), "
+                    "failures=%d, next retry in %ds\n",
+                    i, client->coordinator_host, client->coordinator_port,
+                    state->failure_count, state->reconnect_delay_sec);
+        }
+    }
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection attempt complete: %d successful\n",
+               successful_reconnects);
+    }
+
+    return successful_reconnects;
+}
+
+/**
+ * Background thread that periodically attempts to reconnect to failed pools.
+ * This thread runs continuously in the background, checking for failed pools
+ * and attempting reconnection with exponential backoff.
+ * @param arg Pointer to dist_multipool_client_t
+ * @return NULL
+ */
+static void *reconnect_thread_func(void *arg) {
+    (void)arg;  /* multipool is accessed via global g_reconnect_multipool */
+
+    while (g_reconnect_thread_running) {
+        /* Sleep in small increments to respond quickly to shutdown */
+        for (int i = 0; i < RECONNECT_CHECK_INTERVAL_SEC && g_reconnect_thread_running; i++) {
+            sleep(1);
+        }
+
+        if (!g_reconnect_thread_running) break;
+
+        /* Attempt reconnection to failed pools */
+        pthread_mutex_lock(&g_reconnect_mutex);
+        dist_multipool_client_t *multipool = g_reconnect_multipool;
+        pthread_mutex_unlock(&g_reconnect_mutex);
+
+        if (multipool) {
+            int reconnected = dist_multipool_reconnect(multipool);
+            if (reconnected > 0 && getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Background thread reconnected %d pool(s)\n", reconnected);
+            }
+        }
+    }
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection thread exiting\n");
+    }
+
+    return NULL;
+}
+
+/**
+ * Start the background reconnection thread.
+ * This spawns a thread that periodically checks for failed pools and attempts
+ * to reconnect with exponential backoff.
+ * @param multipool Multi-pool client state
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_start_reconnect_thread(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    /* Check if thread is already running */
+    pthread_mutex_lock(&g_reconnect_mutex);
+    if (g_reconnect_thread_running) {
+        pthread_mutex_unlock(&g_reconnect_mutex);
+        if (getenv("KEYHUNT_DEBUG")) {
+            fprintf(stderr, "[multipool] Reconnection thread already running\n");
+        }
+        return 0;  /* Already running, not an error */
+    }
+
+    g_reconnect_multipool = multipool;
+    g_reconnect_thread_running = 1;
+    pthread_mutex_unlock(&g_reconnect_mutex);
+
+    if (pthread_create(&g_reconnect_thread, NULL, reconnect_thread_func, NULL) != 0) {
+        pthread_mutex_lock(&g_reconnect_mutex);
+        g_reconnect_thread_running = 0;
+        g_reconnect_multipool = NULL;
+        pthread_mutex_unlock(&g_reconnect_mutex);
+        fprintf(stderr, "[multipool] Failed to create reconnection thread\n");
+        return -1;
+    }
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection thread started (check interval: %ds)\n",
+               RECONNECT_CHECK_INTERVAL_SEC);
+    }
+
+    return 0;
+}
+
+/**
+ * Stop the background reconnection thread.
+ * This signals the thread to exit and waits for it to finish.
+ */
+void dist_multipool_stop_reconnect_thread(void) {
+    pthread_mutex_lock(&g_reconnect_mutex);
+    if (!g_reconnect_thread_running) {
+        pthread_mutex_unlock(&g_reconnect_mutex);
+        return;  /* Thread not running */
+    }
+
+    g_reconnect_thread_running = 0;
+    pthread_mutex_unlock(&g_reconnect_mutex);
+
+    /* Wait for thread to finish */
+    pthread_join(g_reconnect_thread, NULL);
+
+    pthread_mutex_lock(&g_reconnect_mutex);
+    g_reconnect_multipool = NULL;
+    pthread_mutex_unlock(&g_reconnect_mutex);
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection thread stopped\n");
+    }
+}
+
+/**
+ * Check if a range conflicts with any active ranges from other pools
+ * Uses hex string comparison to detect overlapping ranges
+ * @param multipool Multi-pool client state
+ * @param range_start Start of range to check (hex string)
+ * @param range_end End of range to check (hex string)
+ * @param pool_index Pool index this range would be from
+ * @return 1 if conflict detected, 0 if no conflict, -1 on error
+ */
+int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
+                                         const char *range_start,
+                                         const char *range_end,
+                                         int pool_index) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!range_start || !range_end) {
+        fprintf(stderr, "[multipool] NULL range pointers\n");
+        return -1;
+    }
+
+    if (pool_index < 0 || pool_index >= DIST_MAX_POOLS) {
+        fprintf(stderr, "[multipool] Invalid pool index: %d\n", pool_index);
+        return -1;
+    }
+
+    /* Thread-safe range conflict check */
+    platform_mutex_lock(&multipool->range_mutex);
+
+    /* Check against all active ranges */
+    for (int i = 0; i < multipool->active_range_count; i++) {
+        const active_range_t *active = &multipool->active_ranges[i];
+
+        /* Skip ranges from the same pool (not a conflict) */
+        if (active->pool_index == pool_index) {
+            continue;
+        }
+
+        /* Check if ranges overlap
+         * Two ranges overlap if: start1 <= end2 AND start2 <= end1
+         * Equivalently: NOT (end1 < start2 OR end2 < start1)
+         *
+         * For hex strings of equal length, strcmp works correctly:
+         * - strcmp(a, b) < 0 means a < b
+         * - strcmp(a, b) <= 0 means a <= b
+         */
+        int new_end_vs_active_start = strcmp(range_end, active->range_start);
+        int active_end_vs_new_start = strcmp(active->range_end, range_start);
+
+        /* Ranges overlap if:
+         * new_end >= active_start AND active_end >= new_start
+         * i.e., NOT (new_end < active_start OR active_end < new_start)
+         */
+        if (!(new_end_vs_active_start < 0 || active_end_vs_new_start < 0)) {
+            /* Conflict detected! */
+            platform_mutex_unlock(&multipool->range_mutex);
+
+            if (getenv("KEYHUNT_DEBUG")) {
+                fprintf(stderr, "[multipool] Range conflict detected:\n");
+                fprintf(stderr, "[multipool]   New range [%d]: %s - %s\n",
+                        pool_index, range_start, range_end);
+                fprintf(stderr, "[multipool]   Active range [%d]: %s - %s\n",
+                        active->pool_index, active->range_start, active->range_end);
+            }
+
+            return 1;  /* Conflict found */
+        }
+    }
+
+    platform_mutex_unlock(&multipool->range_mutex);
+
+    /* No conflict found */
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] No conflict for range [%d]: %s - %s (checked %d active ranges)\n",
+               pool_index, range_start, range_end, multipool->active_range_count);
+    }
+
+    return 0;
+}
+
+/**
+ * Mark a range as completed and remove from active tracking
+ * Call this after successfully processing a work unit to allow future requests in that range
+ * @param multipool Multi-pool client state
+ * @param range_start Hex string of range start
+ * @param range_end Hex string of range end
+ * @return 0 on success (range removed), 1 if range not found, -1 on error
+ */
+int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
+                                    const char *range_start,
+                                    const char *range_end) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!range_start || !range_end) {
+        fprintf(stderr, "[multipool] NULL range pointers\n");
+        return -1;
+    }
+
+    /* Thread-safe range removal */
+    platform_mutex_lock(&multipool->range_mutex);
+
+    /* Find the matching range in active_ranges */
+    int found_index = -1;
+    for (int i = 0; i < multipool->active_range_count; i++) {
+        const active_range_t *active = &multipool->active_ranges[i];
+
+        /* Check if this is the matching range */
+        if (strcmp(active->range_start, range_start) == 0 &&
+            strcmp(active->range_end, range_end) == 0) {
+            found_index = i;
+            break;
+        }
+    }
+
+    /* Range not found in active tracking */
+    if (found_index == -1) {
+        platform_mutex_unlock(&multipool->range_mutex);
+
+        if (getenv("KEYHUNT_DEBUG")) {
+            printf("[multipool] Range not found in active tracking: %s -> %s\n",
+                   range_start, range_end);
+        }
+
+        return 1;  /* Not found (not necessarily an error) */
+    }
+
+    /* Remove range by shifting remaining elements down */
+    for (int i = found_index; i < multipool->active_range_count - 1; i++) {
+        multipool->active_ranges[i] = multipool->active_ranges[i + 1];
+    }
+
+    multipool->active_range_count--;
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Removed completed range: %s -> %s (active ranges: %d)\n",
+               range_start, range_end, multipool->active_range_count);
+    }
+
+    platform_mutex_unlock(&multipool->range_mutex);
+
+    return 0;  /* Success */
+}
+
+/**
+ * Shutdown multi-pool client and disconnect all pools
+ * @param multipool Multi-pool client state
+ */
+void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        return;
+    }
+
+    printf("[multipool] Shutting down multi-pool manager...\n");
+
+    /* Stop reconnection thread first */
+    dist_multipool_stop_reconnect_thread();
+
+    platform_mutex_lock(&multipool->mutex);
+
+    /* Disconnect all active pools */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+        if (client->connected) {
+            printf("[multipool] Disconnecting from pool %d (%s:%d)\n",
+                   i, client->coordinator_host, client->coordinator_port);
+            dist_worker_disconnect(client);
+        }
+    }
+
+    multipool->pool_count = 0;
+    multipool->current_pool_index = 0;
+    multipool->active_range_count = 0;
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    /* Destroy mutexes */
+    platform_mutex_destroy(&multipool->mutex);
+    platform_mutex_destroy(&multipool->range_mutex);
+
+    printf("[multipool] Multi-pool manager shutdown complete\n");
 }
 
 #endif /* !PLATFORM_WINDOWS */

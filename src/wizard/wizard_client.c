@@ -76,6 +76,7 @@ static char g_client_last_range_end[65] = "";
 static pthread_t g_heartbeat_thread;
 static volatile int g_heartbeat_running = 0;
 static dist_worker_client_t *g_heartbeat_client = NULL;
+static dist_multipool_client_t *g_heartbeat_multipool = NULL;  /* For multi-pool mode */
 static pthread_mutex_t g_heartbeat_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile uint64_t g_keys_since_heartbeat = 0;
 static volatile time_t g_last_heartbeat_time = 0;
@@ -348,6 +349,10 @@ static void client_signal_handler(int sig) {
  * Background thread that sends periodic heartbeats to the server.
  * This ensures the server knows we're still alive during long searches.
  * Tracks failures and sets reconnection flag when threshold is exceeded.
+ *
+ * Supports both single-pool and multi-pool modes:
+ * - Single-pool: Uses g_heartbeat_client with dist_worker_heartbeat
+ * - Multi-pool: Uses g_heartbeat_multipool with dist_multipool_heartbeat_all
  */
 static void *heartbeat_thread_func(void *arg) {
     int interval_sec = *(int *)arg;
@@ -368,10 +373,27 @@ static void *heartbeat_thread_func(void *arg) {
 
         /* Send heartbeat */
         pthread_mutex_lock(&g_heartbeat_mutex);
-        if (g_heartbeat_client && g_heartbeat_client->connected) {
-            uint64_t keys = g_keys_since_heartbeat;
-            g_keys_since_heartbeat = 0;
 
+        uint64_t keys = g_keys_since_heartbeat;
+        g_keys_since_heartbeat = 0;
+
+        /* Multi-pool mode: send heartbeat to all connected pools */
+        if (g_heartbeat_multipool) {
+            int successful = dist_multipool_heartbeat_all(g_heartbeat_multipool, keys);
+            if (successful > 0) {
+                g_last_heartbeat_time = time(NULL);
+                g_heartbeat_failures = 0;  /* Reset failure count on any success */
+            } else if (successful < 0) {
+                g_heartbeat_failures++;
+                if (g_heartbeat_failures >= HEARTBEAT_FAILURE_THRESHOLD) {
+                    /* All pools failed - trigger reconnection */
+                    g_reconnecting = 1;
+                }
+            }
+            /* successful == 0 means no pools connected - don't increment failures */
+        }
+        /* Single-pool mode: send heartbeat to single server */
+        else if (g_heartbeat_client && g_heartbeat_client->connected) {
             int result = dist_worker_heartbeat(g_heartbeat_client, keys);
             if (result == 0) {
                 g_last_heartbeat_time = time(NULL);
@@ -384,6 +406,7 @@ static void *heartbeat_thread_func(void *arg) {
                 }
             }
         }
+
         pthread_mutex_unlock(&g_heartbeat_mutex);
     }
 
@@ -391,13 +414,35 @@ static void *heartbeat_thread_func(void *arg) {
 }
 
 /**
- * Start the heartbeat thread.
+ * Start the heartbeat thread (single-pool mode).
  */
 static int start_heartbeat_thread(dist_worker_client_t *client, int interval_sec) {
     static int interval;  /* Static to keep value valid for thread */
     interval = interval_sec;
 
     g_heartbeat_client = client;
+    g_heartbeat_multipool = NULL;  /* Ensure multi-pool is disabled */
+    g_heartbeat_running = 1;
+    g_keys_since_heartbeat = 0;
+    g_last_heartbeat_time = time(NULL);
+
+    if (pthread_create(&g_heartbeat_thread, NULL, heartbeat_thread_func, &interval) != 0) {
+        g_heartbeat_running = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * Start the heartbeat thread (multi-pool mode).
+ */
+static int start_multipool_heartbeat_thread(dist_multipool_client_t *multipool, int interval_sec) {
+    static int interval;  /* Static to keep value valid for thread */
+    interval = interval_sec;
+
+    g_heartbeat_multipool = multipool;
+    g_heartbeat_client = NULL;  /* Ensure single-pool is disabled */
     g_heartbeat_running = 1;
     g_keys_since_heartbeat = 0;
     g_last_heartbeat_time = time(NULL);
@@ -419,6 +464,7 @@ static void stop_heartbeat_thread(void) {
     g_heartbeat_running = 0;
     pthread_join(g_heartbeat_thread, NULL);
     g_heartbeat_client = NULL;
+    g_heartbeat_multipool = NULL;
 }
 
 /**
@@ -1073,14 +1119,325 @@ int wizard_client_run(wizard_config_t *cfg) {
         cfg->gpu_percent = 0;
     }
 
-    /* Step 3: Connect to server */
-    printf("\n[+] Connecting to server %s:%d...\n", cfg->server_host, cfg->server_port);
+    /* Step 3: Detect multi-pool vs single-pool mode */
+    int use_multipool = (cfg->pool_count > 1);
+
+    if (use_multipool) {
+        /* Multi-pool mode: worker will connect to multiple coordinators */
+        printf("\n[+] Multi-pool mode detected (%d pools configured)\n", cfg->pool_count);
+
+        /* List configured pools */
+        for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+            if (cfg->pools[i].enabled) {
+                printf("    Pool %d: %s:%d (priority: %d)\n",
+                       i + 1,
+                       cfg->pools[i].host,
+                       cfg->pools[i].port,
+                       cfg->pools[i].priority);
+            }
+        }
+
+        /* Initialize multi-pool client manager */
+        dist_multipool_client_t multipool;
+        if (dist_multipool_init(&multipool) != 0) {
+            printf("[-] Failed to initialize multi-pool manager\n");
+            return -1;
+        }
+
+        /* Add all enabled pools to the manager */
+        int pools_added = 0;
+        for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+            if (!cfg->pools[i].enabled) {
+                continue;
+            }
+
+            int pool_idx = dist_multipool_add_pool(&multipool,
+                                                    cfg->pools[i].host,
+                                                    cfg->pools[i].port,
+                                                    sysinfo.cpu_score);
+            if (pool_idx < 0) {
+                printf("[!] Warning: Failed to add pool %s:%d\n",
+                       cfg->pools[i].host, cfg->pools[i].port);
+                continue;
+            }
+
+            /* Set hardware info for this pool's client */
+            dist_worker_client_t *client = &multipool.clients[pool_idx];
+            dist_worker_set_hardware_info(client,
+                                          sysinfo.cpu_physical_cores,
+                                          sysinfo.cpu_logical_cores,
+                                          sysinfo.cpu_model,
+                                          sysinfo.gpu_name,
+                                          (int)sysinfo.gpu_vram_mb);
+
+            /* Set authentication token if configured */
+            if (cfg->pools[i].auth_token[0] != '\0') {
+                dist_worker_set_auth_token(client, cfg->pools[i].auth_token);
+                printf("    Pool %d: authentication enabled\n", i + 1);
+            }
+
+            pools_added++;
+        }
+
+        if (pools_added == 0) {
+            printf("[-] No pools were successfully added\n");
+            dist_multipool_shutdown(&multipool);
+            return -1;
+        }
+
+        printf("[+] Added %d pools to multi-pool manager\n", pools_added);
+
+        /* Connect to all pools */
+        printf("[+] Connecting to pools...\n");
+        int connected_count = dist_multipool_connect_all(&multipool);
+        if (connected_count <= 0) {
+            printf("[-] Failed to connect to any pools\n");
+            dist_multipool_shutdown(&multipool);
+            return -1;
+        }
+
+        printf("[+] Connected to %d/%d pools\n", connected_count, pools_added);
+
+        /* Start background reconnection thread for failed pools */
+        if (cfg->pool_failover_enabled && dist_multipool_start_reconnect_thread(&multipool) == 0) {
+            printf("[+] Background reconnection thread started\n");
+        }
+
+        /* Multi-pool work loop */
+        printf("\n[+] Starting multi-pool worker loop...\n");
+        printf("[+] Press Ctrl+C to stop.\n");
+        wizard_print_separator();
+        printf("\n");
+
+        /* Start heartbeat thread for multi-pool progress reporting */
+        int heartbeat_interval = 30;  /* Default 30 seconds */
+        if (start_multipool_heartbeat_thread(&multipool, heartbeat_interval) != 0) {
+            printf("[!] Warning: Could not start heartbeat thread\n");
+        } else {
+            printf("[+] Multi-pool heartbeat thread started (every %d seconds)\n", heartbeat_interval);
+        }
+
+        /* Create persistent target file (reused across work units) */
+        if (create_target_file(cfg->target_address) != 0) {
+            printf("[-] Failed to create target file\n");
+            stop_heartbeat_thread();
+            dist_multipool_stop_reconnect_thread();
+            dist_multipool_shutdown(&multipool);
+            return -1;
+        }
+
+        time_t start_time = time(NULL);
+        int work_count = 0;
+        uint64_t total_keys = 0;
+        int no_work_count = 0;
+
+        /* Main work loop - request work from multi-pool manager */
+        while (g_client_running && !g_shutdown_requested) {
+            /* Request work from multi-pool manager (uses weighted round-robin) */
+            char range_start[65], range_end[65];
+            int result = dist_multipool_request_work(&multipool, range_start, range_end);
+
+            if (result == 1) {
+                /* No work available from any pool */
+                no_work_count++;
+                if (no_work_count >= 10) {
+                    printf("\n[+] No more work available from any pool (waited 30s).\n");
+                    break;
+                }
+                printf("\r[i] Waiting for work from pools... (%d/10)     ", no_work_count);
+                fflush(stdout);
+                sleep(3);
+                continue;
+            }
+
+            no_work_count = 0;
+
+            if (result < 0) {
+                /* Work request failed from all pools - wait and retry */
+                printf("\r[!] All pools unavailable, waiting for reconnection...     ");
+                fflush(stdout);
+                sleep(5);
+                continue;
+            }
+
+            work_count++;
+
+            /* Store current range for graceful shutdown progress saving */
+            strncpy(g_client_last_range_start, range_start, sizeof(g_client_last_range_start) - 1);
+            strncpy(g_client_last_range_end, range_end, sizeof(g_client_last_range_end) - 1);
+
+            /* Process the range */
+            printf("\r[Unit #%d] Range: %.16s...%.8s ",
+                   work_count, range_start, range_end + strlen(range_end) - 8);
+            fflush(stdout);
+
+            uint64_t keys_checked = 0;
+            double unit_cpu_speed = 0.0, unit_gpu_speed = 0.0;
+            char found_key[65] = {0};
+            char found_addr[36] = {0};
+            time_t unit_start = time(NULL);
+
+            /* Run search */
+            int search_result = search_range_subprocess(
+                range_start, range_end,
+                cfg, &keys_checked, &unit_cpu_speed, &unit_gpu_speed,
+                &g_client_running, found_key, found_addr
+            );
+
+            time_t unit_elapsed = time(NULL) - unit_start;
+            if (unit_elapsed == 0) unit_elapsed = 1;
+
+            /* Handle results */
+            if (search_result == -1) {
+                /* Fatal error - log but continue to try next unit */
+                printf("\n[-] Search error, will try next unit\n");
+                continue;
+            }
+
+            if (search_result == -2) {
+                /* Timeout - partial progress */
+                printf("\n[!] Work unit timed out, reporting partial progress\n");
+            }
+
+            total_keys += keys_checked;
+            double speed = (double)keys_checked / unit_elapsed / 1000000.0;
+
+            /* Show progress */
+            time_t elapsed = time(NULL) - start_time;
+            if (unit_cpu_speed > 0 && unit_gpu_speed > 0) {
+                /* Hybrid mode - show CPU and GPU separately */
+                printf("\r[Unit #%d] %.2e keys | CPU: %.1f GPU: %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
+                       work_count,
+                       (double)keys_checked,
+                       unit_cpu_speed, unit_gpu_speed,
+                       (double)total_keys,
+                       elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+            } else {
+                printf("\r[Unit #%d] %.2e keys | %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
+                       work_count,
+                       (double)keys_checked,
+                       speed,
+                       (double)total_keys,
+                       elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+            }
+            fflush(stdout);
+
+            /* Mark range as done in multi-pool manager to release from active ranges */
+            dist_multipool_mark_range_done(&multipool, range_start, range_end);
+
+            /* Save local progress */
+            wizard_save_local_progress(cfg->puzzle_number, range_start, range_end);
+
+            /* Check if key found */
+            if (search_result == 1 && found_key[0]) {
+                printf("\n\n");
+                printf("╔═══════════════════════════════════════════════════════════╗\n");
+                printf("║               🎉 PRIVATE KEY FOUND! 🎉                    ║\n");
+                printf("╠═══════════════════════════════════════════════════════════╣\n");
+                printf("║ Key:  %-52s ║\n", found_key);
+                printf("║ Addr: %-52s ║\n", found_addr);
+                printf("╚═══════════════════════════════════════════════════════════╝\n");
+
+                /* Report to all connected pools */
+                int pools_notified = 0;
+                for (int i = 0; i < multipool.pool_count; i++) {
+                    dist_worker_client_t *pool_client = &multipool.clients[i];
+                    if (pool_client->connected) {
+                        if (dist_worker_report_found(pool_client, found_key, found_addr) == 0) {
+                            pools_notified++;
+                        } else {
+                            fprintf(stderr, "[!] Warning: Failed to report result to pool %d (%s:%d)\n",
+                                    i, pool_client->coordinator_host, pool_client->coordinator_port);
+                        }
+                    }
+                }
+                printf("[+] Reported result to %d/%d pool(s)\n", pools_notified, multipool.pool_count);
+
+                /* Save locally (restricted permissions — sensitive data) */
+                int key_fd = open("FOUND_KEY.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+                FILE *f = key_fd >= 0 ? fdopen(key_fd, "w") : NULL;
+                if (!f && key_fd >= 0) { close(key_fd); }
+                if (f) {
+                    time_t now = time(NULL);
+                    fprintf(f, "PRIVATE KEY FOUND!\n");
+                    fprintf(f, "Time: %s", ctime(&now));
+                    fprintf(f, "Puzzle: #%d\n", cfg->puzzle_number);
+                    fprintf(f, "Private Key: %s\n", found_key);
+                    fprintf(f, "Address: %s\n", found_addr);
+                    fclose(f);
+                    printf("\n[+] Key saved to FOUND_KEY.txt\n");
+                } else {
+                    fprintf(stderr, "\n[!] WARNING: Failed to save key to FOUND_KEY.txt\n");
+                    fprintf(stderr, "[!] PRIVATE KEY (save this!): %s\n", found_key);
+                }
+
+                /* Send webhook notifications if configured */
+                char tg_token[256] = {0}, tg_chat_id[128] = {0};
+                if (cfg->webhook_telegram_url[0] != '\0') {
+                    parse_telegram_url(cfg->webhook_telegram_url, tg_token, sizeof(tg_token),
+                                       tg_chat_id, sizeof(tg_chat_id));
+                }
+
+                int notified = wizard_webhook_notify_found(
+                    cfg->webhook_discord_url[0] != '\0' ? cfg->webhook_discord_url : NULL,
+                    tg_token[0] != '\0' ? tg_token : NULL,
+                    tg_chat_id[0] != '\0' ? tg_chat_id : NULL,
+                    found_key,
+                    found_addr,
+                    cfg->puzzle_number
+                );
+
+                if (notified > 0) {
+                    printf("[+] Sent %d webhook notification(s)\n", notified);
+                }
+
+                printf("[+] Continuing search in case of multiple targets...\n\n");
+            }
+
+            printf("\n");
+        }
+
+        /* Clean shutdown */
+        printf("\n[+] Shutting down multi-pool worker...\n");
+        stop_heartbeat_thread();
+        dist_multipool_stop_reconnect_thread();
+        dist_multipool_shutdown(&multipool);
+
+        /* Cleanup target file */
+        if (g_target_file_created) {
+            unlink(g_target_file);
+        }
+
+        printf("[+] Shutdown complete. Total keys checked: %.2e\n", (double)total_keys);
+        return 0;
+    }
+
+    /* Single-pool mode: backwards compatible with existing implementation */
+    printf("\n[+] Single-pool mode\n");
+
+    /* Determine server host/port:
+     * - If pool_count == 1, use pools[0]
+     * - If pool_count == 0, use legacy server_host/server_port fields
+     */
+    const char *server_host;
+    int server_port;
+
+    if (cfg->pool_count == 1) {
+        server_host = cfg->pools[0].host;
+        server_port = cfg->pools[0].port;
+        printf("    Connecting to pool: %s:%d\n", server_host, server_port);
+    } else {
+        /* pool_count == 0: use legacy fields for backwards compatibility */
+        server_host = cfg->server_host;
+        server_port = cfg->server_port;
+        printf("    Connecting to server: %s:%d\n", server_host, server_port);
+    }
 
     dist_worker_client_t client;
     memset(&client, 0, sizeof(client));
 
     /* Initialize client with connection info */
-    if (dist_worker_init(&client, cfg->server_host, cfg->server_port, sysinfo.cpu_score) != 0) {
+    if (dist_worker_init(&client, server_host, server_port, sysinfo.cpu_score) != 0) {
         printf("[-] Failed to initialize worker client\n");
         return -1;
     }
@@ -1094,8 +1451,16 @@ int wizard_client_run(wizard_config_t *cfg) {
                                   (int)sysinfo.gpu_vram_mb);
 
     /* Set authentication token if configured */
-    if (cfg->auth_token[0] != '\0') {
-        dist_worker_set_auth_token(&client, cfg->auth_token);
+    const char *auth_token = NULL;
+
+    if (cfg->pool_count == 1 && cfg->pools[0].auth_token[0] != '\0') {
+        auth_token = cfg->pools[0].auth_token;
+    } else if (cfg->pool_count == 0 && cfg->auth_token[0] != '\0') {
+        auth_token = cfg->auth_token;
+    }
+
+    if (auth_token != NULL) {
+        dist_worker_set_auth_token(&client, auth_token);
         printf("    Using authentication token\n");
     }
 

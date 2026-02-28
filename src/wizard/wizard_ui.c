@@ -190,7 +190,33 @@ void wizard_print_config_summary(const wizard_config_t *cfg) {
     printf("  │ " CYAN "Mode:" RESET "   %-10s %-10s                        │\n",
            cfg->is_server ? "SERVER" : "CLIENT",
            cfg->server_also_worker ? "(+worker)" : "");
-    printf("  │ " CYAN "Port:" RESET "   %-5d                                       │\n", cfg->server_port);
+
+    /* Display pool configuration */
+    if (!cfg->is_server && cfg->pool_count > 1) {
+        /* Multi-pool client mode */
+        printf("  │ " CYAN "Pools:" RESET "  %d coordinators configured                    │\n", cfg->pool_count);
+        const char *strategy_names[] = {"Priority-weighted", "Round-robin", "Failover-only"};
+        int strategy_idx = (cfg->pool_strategy >= 0 && cfg->pool_strategy < 3) ? cfg->pool_strategy : 0;
+        printf("  │ " CYAN "Strategy:" RESET " %-40s│\n", strategy_names[strategy_idx]);
+        printf("  │ " CYAN "Failover:" RESET " %-40s│\n", cfg->pool_failover_enabled ? "Enabled" : "Disabled");
+        printf("  │                                                           │\n");
+        for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+            if (!cfg->pools[i].enabled) continue;
+            char pool_info[80];
+            snprintf(pool_info, sizeof(pool_info), "%s:%d (priority: %d)",
+                     cfg->pools[i].host, cfg->pools[i].port, cfg->pools[i].priority);
+            printf("  │   Pool %d: %-45s│\n", i + 1, pool_info);
+        }
+        printf("  │                                                           │\n");
+    } else if (!cfg->is_server && cfg->pool_count == 1) {
+        /* Single pool client mode */
+        printf("  │ " CYAN "Server:" RESET " %s:%-5d                                 │\n",
+               cfg->pools[0].host, cfg->pools[0].port);
+    } else {
+        /* Server mode - show server port */
+        printf("  │ " CYAN "Port:" RESET "   %-5d                                       │\n", cfg->server_port);
+    }
+
     printf("  │ " CYAN "Unit:" RESET "   %llu keys/work                         │\n",
            (unsigned long long)cfg->work_unit_size);
     if (cfg->threads <= 0) {
@@ -361,4 +387,93 @@ void wizard_print_privacy_warning(void) {
     printf(YELLOW BOX_BL);
     for (int i = 0; i < width - 2; i++) printf(BOX_H);
     printf(BOX_BR "\n" RESET);
+}
+
+/* ============================================================================
+ * Multi-Pool Configuration Prompts
+ * ============================================================================ */
+
+int wizard_configure_multipool(wizard_config_t *cfg) {
+    printf("\n");
+    printf(BOLD CYAN "Multi-Pool Configuration" RESET "\n");
+    printf("Connect to multiple coordinators for redundancy and load distribution.\n\n");
+
+    /* Ask if user wants multi-pool */
+    bool use_multipool = wizard_ask_yesno("Do you want to connect to multiple coordinators?", false);
+
+    if (!use_multipool) {
+        /* Single pool - prompt for basic settings */
+        cfg->pool_count = 1;
+        cfg->pools[0].enabled = true;
+        cfg->pools[0].priority = 100;
+
+        wizard_ask_string("Coordinator hostname", cfg->pools[0].host, sizeof(cfg->pools[0].host), "localhost");
+        cfg->pools[0].port = wizard_ask_int("Coordinator port", 1, 65535, 7777);
+
+        if (wizard_ask_yesno("Require authentication token?", false)) {
+            wizard_ask_string("Authentication token", cfg->pools[0].auth_token, sizeof(cfg->pools[0].auth_token), "");
+        } else {
+            cfg->pools[0].auth_token[0] = '\0';
+        }
+
+        cfg->pool_failover_enabled = false;
+        cfg->pool_strategy = 0;  /* Priority-weighted (doesn't matter for single pool) */
+
+        printf(GREEN "\n✓ Single pool configured: %s:%d\n" RESET, cfg->pools[0].host, cfg->pools[0].port);
+        return 0;
+    }
+
+    /* Multi-pool configuration */
+    int num_pools = wizard_ask_int("How many coordinators to connect to?", 2, WIZARD_MAX_POOLS, 2);
+    cfg->pool_count = num_pools;
+
+    printf("\n" CYAN "Pool Selection Strategy:" RESET "\n");
+    const char *strategy_options[] = {
+        "Priority-weighted (distribute based on priority)",
+        "Round-robin (equal distribution)",
+        "Failover-only (use pools in priority order)"
+    };
+    cfg->pool_strategy = wizard_ask_choice("Select strategy:", strategy_options, 3, 0);
+
+    cfg->pool_failover_enabled = wizard_ask_yesno("Enable automatic failover?", true);
+
+    printf("\n" YELLOW "Configure each coordinator:\n" RESET);
+    for (int i = 0; i < num_pools; i++) {
+        printf("\n" BOLD "Pool #%d of %d:" RESET "\n", i + 1, num_pools);
+
+        cfg->pools[i].enabled = true;
+
+        char default_host[32];
+        snprintf(default_host, sizeof(default_host), i == 0 ? "localhost" : "coordinator%d.local", i + 1);
+        wizard_ask_string("  Hostname", cfg->pools[i].host, sizeof(cfg->pools[i].host), default_host);
+
+        cfg->pools[i].port = wizard_ask_int("  Port", 1, 65535, 7777 + i);
+
+        if (cfg->pool_strategy == 0) {  /* Priority-weighted */
+            int default_priority = (i == 0) ? 100 : 50;  /* First pool gets higher default priority */
+            cfg->pools[i].priority = wizard_ask_int("  Priority (1-100, higher = more work)", 1, 100, default_priority);
+        } else {
+            cfg->pools[i].priority = 100;  /* Equal priority for other strategies */
+        }
+
+        if (wizard_ask_yesno("  Require authentication?", false)) {
+            wizard_ask_string("  Auth token", cfg->pools[i].auth_token, sizeof(cfg->pools[i].auth_token), "");
+        } else {
+            cfg->pools[i].auth_token[0] = '\0';
+        }
+
+        printf(GREEN "  ✓ Pool configured\n" RESET);
+    }
+
+    /* Initialize remaining pool slots as disabled */
+    for (int i = num_pools; i < WIZARD_MAX_POOLS; i++) {
+        cfg->pools[i].enabled = false;
+        cfg->pools[i].host[0] = '\0';
+        cfg->pools[i].port = 0;
+        cfg->pools[i].priority = 0;
+        cfg->pools[i].auth_token[0] = '\0';
+    }
+
+    printf("\n" GREEN "✓ Multi-pool configuration complete (%d pools)\n" RESET, num_pools);
+    return 0;
 }

@@ -66,6 +66,9 @@ extern "C" {
 /* Maximum federated coordinators */
 #define DIST_MAX_FEDERATION 8
 
+/* Maximum pools for multi-pool client */
+#define DIST_MAX_POOLS 8
+
 /* Maximum message size */
 #define DIST_MAX_MSG_SIZE 8192
 
@@ -347,6 +350,45 @@ typedef struct {
     int response_timeout_sec;                   /* Timeout waiting for coordinator response (default: 60) */
     int reconnect_delay_sec;                    /* Delay before reconnecting on connection loss (default: 5) */
 } dist_worker_client_t;
+
+/* Active range tracking for multi-pool deconfliction */
+typedef struct {
+    char range_start[65];       /* Hex string - start of range */
+    char range_end[65];         /* Hex string - end of range */
+    int pool_index;             /* Which pool this range is from */
+    uint64_t assigned_time;     /* When this range was assigned (for timeout/cleanup) */
+} active_range_t;
+
+/* Connection state tracking per pool for automatic failover */
+typedef struct {
+    bool connected;             /* Current connection status */
+    uint64_t last_heartbeat;    /* Last successful heartbeat timestamp */
+    uint64_t last_connect_attempt; /* Last connection attempt timestamp */
+    int failure_count;          /* Consecutive failure count (reset on success) */
+    int reconnect_delay_sec;    /* Current reconnect delay (exponential backoff) */
+    bool is_healthy;            /* Overall health status based on recent activity */
+} pool_connection_state_t;
+
+/* Multi-pool client state */
+typedef struct {
+    /* Pool connections */
+    dist_worker_client_t clients[DIST_MAX_POOLS];  /* Array of worker clients (one per pool) */
+    int pool_count;                                 /* Number of active pools */
+
+    /* Work distribution */
+    int current_pool_index;                         /* Current pool index for round-robin distribution */
+
+    /* Range deconfliction - track active ranges to avoid duplicate work across pools */
+    active_range_t active_ranges[DIST_MAX_POOLS * 2];  /* Active ranges from all pools (2 per pool max) */
+    int active_range_count;                             /* Number of currently active ranges */
+    platform_mutex_t range_mutex;                       /* Protects active_ranges array for concurrent access */
+
+    /* Connection state tracking for automatic failover */
+    pool_connection_state_t pool_states[DIST_MAX_POOLS]; /* Connection state per pool */
+
+    /* Thread safety */
+    platform_mutex_t mutex;                          /* Protects multi-pool state for thread-safe access */
+} dist_multipool_client_t;
 
 /* ============================================================================
  * Coordinator Functions
@@ -690,6 +732,115 @@ void dist_worker_set_local_progress(dist_worker_client_t *client, int count);
  * @return 0 on success, -1 on error (TLS not available)
  */
 int dist_worker_enable_tls(dist_worker_client_t *client, bool verify_server);
+
+/* ============================================================================
+ * Multi-Pool Client Functions
+ * ============================================================================ */
+
+/**
+ * Initialize multi-pool client manager
+ * Creates a multi-pool manager that can connect to multiple coordinators
+ * @param multipool Output multi-pool client state
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_init(dist_multipool_client_t *multipool);
+
+/**
+ * Add a pool to the multi-pool manager
+ * @param multipool Multi-pool client state
+ * @param coordinator_host Coordinator hostname/IP
+ * @param coordinator_port Coordinator port (0 = default)
+ * @param perf_score Performance score from sysinfo
+ * @return Pool index on success, -1 on error (max pools reached or invalid params)
+ */
+int dist_multipool_add_pool(dist_multipool_client_t *multipool,
+                             const char *coordinator_host,
+                             int coordinator_port,
+                             double perf_score);
+
+/**
+ * Connect to all pools in the multi-pool manager
+ * Attempts to connect to all configured pools, continues even if some fail
+ * @param multipool Multi-pool client state
+ * @return Number of successful connections (>= 0), or -1 on error
+ */
+int dist_multipool_connect_all(dist_multipool_client_t *multipool);
+
+/**
+ * Request work from pools using weighted round-robin
+ * Tries pools in round-robin order, skipping disconnected pools
+ * @param multipool Multi-pool client state
+ * @param range_start Output: start of assigned range (hex, 65 bytes min)
+ * @param range_end Output: end of assigned range (hex, 65 bytes min)
+ * @return 0 if work assigned, 1 if no more work, -1 on error
+ */
+int dist_multipool_request_work(dist_multipool_client_t *multipool,
+                                 char *range_start, char *range_end);
+
+/**
+ * Send heartbeat to all connected pools
+ * Detects disconnections and updates connection status
+ * @param multipool Multi-pool client state
+ * @param keys_since_last Keys processed since last heartbeat
+ * @return Number of successful heartbeats sent, or -1 on error
+ */
+int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
+                                   uint64_t keys_since_last);
+
+/**
+ * Attempt to reconnect to failed pools with exponential backoff
+ * Only attempts reconnection if enough time has passed since last attempt
+ * Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s
+ * @param multipool Multi-pool client state
+ * @return Number of successful reconnections, or -1 on error
+ */
+int dist_multipool_reconnect(dist_multipool_client_t *multipool);
+
+/**
+ * Check if a range conflicts with any active ranges from other pools
+ * @param multipool Multi-pool client state
+ * @param range_start Start of range to check (hex string)
+ * @param range_end End of range to check (hex string)
+ * @param pool_index Pool index this range would be from
+ * @return 1 if conflict detected, 0 if no conflict, -1 on error
+ */
+int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
+                                         const char *range_start,
+                                         const char *range_end,
+                                         int pool_index);
+
+/**
+ * Mark a range as completed and remove from active tracking
+ * Call this after successfully processing a work unit to allow future requests in that range
+ * @param multipool Multi-pool client state
+ * @param range_start Hex string of range start
+ * @param range_end Hex string of range end
+ * @return 0 on success (range removed), 1 if range not found, -1 on error
+ */
+int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
+                                    const char *range_start,
+                                    const char *range_end);
+
+/**
+ * Shutdown multi-pool client and disconnect all pools
+ * @param multipool Multi-pool client state
+ */
+void dist_multipool_shutdown(dist_multipool_client_t *multipool);
+
+/**
+ * Start background reconnection thread for failed pools
+ * Spawns a thread that periodically checks for failed pools and attempts
+ * reconnection with exponential backoff (every 5 seconds)
+ * @param multipool Multi-pool client state
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_start_reconnect_thread(dist_multipool_client_t *multipool);
+
+/**
+ * Stop the background reconnection thread
+ * Signals the thread to exit and waits for it to finish
+ */
+void dist_multipool_stop_reconnect_thread(void);
 
 /* ============================================================================
  * Multi-Coordinator Federation Functions

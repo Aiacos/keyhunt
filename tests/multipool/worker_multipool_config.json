@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "puzzle_number": 66,
+  "target_address": "13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so",
+  "range_start": "20000000000000000",
+  "range_end": "3ffffffffffffffff",
+  "bits": 66,
+  "pools": [
+    {
+      "host": "127.0.0.1",
+      "port": 7771,
+      "priority": 60,
+      "auth_token": "",
+      "enabled": true
+    },
+    {
+      "host": "127.0.0.1",
+      "port": 7772,
+      "priority": 40,
+      "auth_token": "",
+      "enabled": true
+    }
+  ],
+  "pool_count": 2,
+  "pool_failover_enabled": 1,
+  "pool_strategy": 0,
+  "server_host": "",
+  "server_port": 0,
+  "auth_token": "",
+  "work_unit_size": 1099511627776,
+  "checkpoint_interval_sec": 300,
+  "mode": "address",
+  "key_type": "compress",
+  "random_mode": false,
+  "threads": 2,
+  "gpu_percent": 0,
+  "bsgs_n": 0,
+  "bsgs_k": 0,
+  "community_enabled": false,
+  "community_source": "",
+  "community_sync_interval_sec": 3600,
+  "community_last_sync": 0,
+  "total_ranges": 0,
+  "local_completed": 0,
+  "community_excluded": 0,
+  "privatekeys_percent": 0.0,
+  "progress_file": "tests/multipool/worker_progress.txt",
+  "exclusion_file": "",
+  "webhook_discord_url": "",
+  "webhook_telegram_url": "",
+  "report_progress_enabled": false,
+  "report_progress_url": ""
+}

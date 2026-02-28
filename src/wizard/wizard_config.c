@@ -190,6 +190,26 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     fprintf(f, "    \"bits\": %d\n", cfg->bits);
     fprintf(f, "  },\n");
 
+    /* Multi-pool configuration */
+    fprintf(f, "  \"pools\": {\n");
+    fprintf(f, "    \"pool_count\": %d,\n", cfg->pool_count);
+    fprintf(f, "    \"failover_enabled\": %s,\n", cfg->pool_failover_enabled ? "true" : "false");
+    fprintf(f, "    \"strategy\": %d,\n", cfg->pool_strategy);
+    fprintf(f, "    \"pool_list\": [\n");
+    for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+        const pool_config_t *pool = &cfg->pools[i];
+        fprintf(f, "      {\n");
+        fprintf(f, "        \"host\": \"%s\",\n", pool->host);
+        fprintf(f, "        \"port\": %d,\n", pool->port);
+        fprintf(f, "        \"priority\": %d,\n", pool->priority);
+        fprintf(f, "        \"auth_token\": \"%s\",\n", pool->auth_token);
+        fprintf(f, "        \"enabled\": %s\n", pool->enabled ? "true" : "false");
+        fprintf(f, "      }%s\n", (i < cfg->pool_count - 1) ? "," : "");
+    }
+    fprintf(f, "    ]\n");
+    fprintf(f, "  },\n");
+
+    /* Legacy single-server configuration (DEPRECATED - for backwards compatibility) */
     fprintf(f, "  \"server\": {\n");
     fprintf_json_string(f, "host", cfg->server_host, 1);
     fprintf(f, "    \"port\": %d,\n", cfg->server_port);
@@ -341,12 +361,77 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     json_get_string(json, "range_end", cfg->range_end, sizeof(cfg->range_end), "");
     cfg->bits = json_get_int(json, "bits", 71);
 
+    /* Multi-pool configuration (new format) */
+    cfg->pool_count = json_get_int(json, "pool_count", 0);
+    cfg->pool_failover_enabled = json_get_bool(json, "failover_enabled", true);
+    cfg->pool_strategy = json_get_int(json, "strategy", 0);  /* Default: priority-weighted */
+
+    /* Parse pool list */
+    if (cfg->pool_count > 0 && cfg->pool_count <= WIZARD_MAX_POOLS) {
+        char *pool_list_start = strstr(json, "\"pool_list\"");
+        if (pool_list_start) {
+            pool_list_start = strchr(pool_list_start, '[');
+            if (pool_list_start) {
+                char *scan = pool_list_start + 1;
+                for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+                    pool_config_t *pool = &cfg->pools[i];
+
+                    /* Find opening brace of this pool object */
+                    scan = strchr(scan, '{');
+                    if (!scan) break;
+
+                    /* Find closing brace */
+                    char *obj_end = strchr(scan, '}');
+                    if (!obj_end) break;
+
+                    /* Temporarily null-terminate this object */
+                    char saved = *obj_end;
+                    *obj_end = '\0';
+
+                    /* Parse pool fields */
+                    json_get_string(scan, "host", pool->host, sizeof(pool->host), "");
+                    pool->port = json_get_int(scan, "port", 7777);
+                    pool->priority = json_get_int(scan, "priority", 50);
+                    json_get_string(scan, "auth_token", pool->auth_token, sizeof(pool->auth_token), "");
+                    pool->enabled = json_get_bool(scan, "enabled", true);
+
+                    /* Initialize runtime state */
+                    pool->connected = false;
+                    pool->last_connected = 0;
+                    pool->keys_processed = 0;
+                    pool->reconnect_backoff_sec = 1;
+
+                    /* Restore character */
+                    *obj_end = saved;
+                    scan = obj_end + 1;
+                }
+            }
+        }
+    }
+
+    /* Legacy single-server configuration (backwards compatibility) */
     json_get_string(json, "host", cfg->server_host, sizeof(cfg->server_host), "0.0.0.0");
     cfg->server_port = json_get_int(json, "port", 7777);
     cfg->work_unit_size = json_get_hex(json, "work_unit_size", 0x100000000ULL);
     cfg->checkpoint_interval_sec = json_get_int(json, "checkpoint_interval", 60);
     cfg->server_also_worker = json_get_bool(json, "also_worker", true);
     json_get_string(json, "auth_token", cfg->auth_token, sizeof(cfg->auth_token), "");
+
+    /* If no pools configured but legacy server fields exist, migrate to single pool */
+    if (cfg->pool_count == 0 && cfg->server_host[0] != '\0' && cfg->server_port > 0) {
+        cfg->pool_count = 1;
+        strncpy(cfg->pools[0].host, cfg->server_host, sizeof(cfg->pools[0].host) - 1);
+        cfg->pools[0].port = cfg->server_port;
+        cfg->pools[0].priority = 100;  /* Single pool gets max priority */
+        strncpy(cfg->pools[0].auth_token, cfg->auth_token, sizeof(cfg->pools[0].auth_token) - 1);
+        cfg->pools[0].enabled = true;
+        cfg->pools[0].connected = false;
+        cfg->pools[0].last_connected = 0;
+        cfg->pools[0].keys_processed = 0;
+        cfg->pools[0].reconnect_backoff_sec = 1;
+        cfg->pool_failover_enabled = false;  /* Single pool = no failover needed */
+        cfg->pool_strategy = 0;
+    }
 
     json_get_string(json, "mode", cfg->mode, sizeof(cfg->mode), "address");
     json_get_string(json, "key_type", cfg->key_type, sizeof(cfg->key_type), "compress");
