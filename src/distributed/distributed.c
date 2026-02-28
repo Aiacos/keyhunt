@@ -3809,7 +3809,50 @@ int dist_multipool_request_work(dist_multipool_client_t *multipool,
         int result = dist_worker_request_work(client, range_start, range_end);
 
         if (result == 0) {
-            /* Work assigned successfully */
+            /* Work assigned successfully - check for range conflicts */
+            int conflict = dist_multipool_check_range_conflict(multipool, range_start, range_end, pool_index);
+
+            if (conflict == 1) {
+                /* Range conflict detected - reject this work and try next pool */
+                fprintf(stderr, "[multipool] Range conflict detected for %s -> %s from pool %d, trying next pool\n",
+                        range_start, range_end, pool_index);
+                error_count++;
+                continue;  /* Try next pool */
+            } else if (conflict == -1) {
+                /* Error checking conflict */
+                fprintf(stderr, "[multipool] Error checking range conflict for pool %d\n", pool_index);
+                error_count++;
+                continue;  /* Try next pool */
+            }
+
+            /* No conflict - add to active range tracking */
+            platform_mutex_lock(&multipool->range_mutex);
+
+            if (multipool->active_range_count >= DIST_MAX_POOLS * 2) {
+                platform_mutex_unlock(&multipool->range_mutex);
+                fprintf(stderr, "[multipool] Active range limit reached (%d), cannot accept more work\n",
+                        multipool->active_range_count);
+                error_count++;
+                continue;  /* Try next pool */
+            }
+
+            /* Add range to active tracking */
+            active_range_t *new_range = &multipool->active_ranges[multipool->active_range_count];
+            strncpy(new_range->range_start, range_start, 65);
+            new_range->range_start[64] = '\0';
+            strncpy(new_range->range_end, range_end, 65);
+            new_range->range_end[64] = '\0';
+            new_range->pool_index = pool_index;
+            new_range->assigned_time = (uint64_t)time(NULL);
+            multipool->active_range_count++;
+
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Added active range #%d: %s -> %s (pool %d)\n",
+                       multipool->active_range_count, range_start, range_end, pool_index);
+            }
+
+            platform_mutex_unlock(&multipool->range_mutex);
+
             /* Update current pool index for next request (round-robin) */
             multipool->current_pool_index = (pool_index + 1) % multipool->pool_count;
 
