@@ -177,7 +177,7 @@ TEST_EXE := run_tests$(EXE_EXT)
 # Create obj directory structure
 OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/bech32 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/diagnostics $(OBJDIR)/error $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
-.PHONY: all clean legacy bsgsd directories test run_tests sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
+.PHONY: all clean legacy bsgsd directories test test-e2e test-all run_tests sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 
 all: directories $(KEYHUNT_EXE)
 
@@ -332,6 +332,15 @@ endif
 # Run all tests
 test: $(TEST_EXE)
 	./$(TEST_EXE)
+
+# E2E mode tests (run keyhunt binary as subprocess)
+test-e2e: $(KEYHUNT_EXE)
+	@echo ""
+	@echo ">>> Running E2E Mode Tests"
+	@bash tests/test_e2e_modes.sh
+
+# Run both unit tests and E2E tests
+test-all: test test-e2e
 
 # Generic rules for building object files
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp | directories
