@@ -66,6 +66,9 @@ extern "C" {
 /* Maximum federated coordinators */
 #define DIST_MAX_FEDERATION 8
 
+/* Maximum pools for multi-pool client */
+#define DIST_MAX_POOLS 8
+
 /* Maximum message size */
 #define DIST_MAX_MSG_SIZE 8192
 
@@ -347,6 +350,19 @@ typedef struct {
     int response_timeout_sec;                   /* Timeout waiting for coordinator response (default: 60) */
     int reconnect_delay_sec;                    /* Delay before reconnecting on connection loss (default: 5) */
 } dist_worker_client_t;
+
+/* Multi-pool client state */
+typedef struct {
+    /* Pool connections */
+    dist_worker_client_t clients[DIST_MAX_POOLS];  /* Array of worker clients (one per pool) */
+    int pool_count;                                 /* Number of active pools */
+
+    /* Work distribution */
+    int current_pool_index;                         /* Current pool index for round-robin distribution */
+
+    /* Thread safety */
+    platform_mutex_t mutex;                          /* Protects multi-pool state for thread-safe access */
+} dist_multipool_client_t;
 
 /* ============================================================================
  * Coordinator Functions
