@@ -82,7 +82,7 @@ TEST(intgroup_modinv) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 }
@@ -102,7 +102,7 @@ TEST(intgroup_modinv_single_element) {
 
     /* Verify: original * inverse ≡ 1 (mod p) */
     Int result;
-    result.ModMulK1(&original, &values[0]);
+    result.ModMul(&original, &values[0]);
     ASSERT_TRUE(result.IsOne());
 }
 
@@ -124,10 +124,10 @@ TEST(intgroup_modinv_two_elements) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
 
-    result.ModMulK1(&original[0], &values[0]);
+    result.ModMul(&original[0], &values[0]);
     ASSERT_TRUE(result.IsOne());
 
-    result.ModMulK1(&original[1], &values[1]);
+    result.ModMul(&original[1], &values[1]);
     ASSERT_TRUE(result.IsOne());
 }
 
@@ -151,7 +151,7 @@ TEST(intgroup_modinv_ten_elements) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 }
@@ -176,7 +176,7 @@ TEST(intgroup_modinv_hundred_elements) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 
@@ -203,7 +203,7 @@ TEST(intgroup_modinv_optimized_single) {
 
     /* Verify: original * inverse ≡ 1 (mod p) */
     Int result;
-    result.ModMulK1(&original, &values[0]);
+    result.ModMul(&original, &values[0]);
     ASSERT_TRUE(result.IsOne());
 }
 
@@ -227,7 +227,7 @@ TEST(intgroup_modinv_optimized_ten_elements) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 }
@@ -252,7 +252,7 @@ TEST(intgroup_modinv_optimized_hundred_elements) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 
@@ -355,7 +355,7 @@ TEST(intgroup_modinv_large_values) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 }
@@ -386,7 +386,7 @@ TEST(intgroup_modinv_optimized_large_values) {
     /* Verify: original[i] * inverse[i] ≡ 1 (mod p) for all i */
     Int result;
     for (int i = 0; i < SIZE; i++) {
-        result.ModMulK1(&original[i], &values[i]);
+        result.ModMul(&original[i], &values[i]);
         ASSERT_TRUE(result.IsOne());
     }
 }
@@ -441,8 +441,8 @@ TEST(modular_arithmetic_modadd_overflow) {
     Int a, b, result;
 
     /* Test: Addition that exceeds P should wrap correctly */
-    /* Use values near P to test overflow handling */
-    a.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");  /* P - 1 */
+    /* Use P - 1 to test overflow handling */
+    a.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2E");  /* P - 1 */
     b.SetInt64(10);
     result.Set(&a);
     result.ModAdd(&b);

@@ -345,11 +345,17 @@ TEST(sha256_avx512_mixed) {
 TEST(sha256_simd_consistency) {
     uint8_t scalar_digest[32];
 
-    /* Compute with scalar */
+    /* Verify scalar against known test vector (448-bit / 56-byte input) */
     sha256((uint8_t*)test_input_448, 56, scalar_digest);
-
-    /* Verify against known test vector first */
     ASSERT_MEM_EQ(test_expected_448, scalar_digest, 32);
+
+    /* For SIMD consistency test, use "abc" (3 bytes) instead of the 56-byte
+     * input. The 56-byte message requires TWO SHA-256 blocks (56 + 1 + 8 = 65
+     * > 64), but sha256avx2_1B/sha256avx512_1B are single-block (1B) compression
+     * functions that process exactly one 64-byte block. Using a message that
+     * fits in a single padded block ensures correct comparison with scalar. */
+    sha256((uint8_t*)test_input_abc, 3, scalar_digest);
+    ASSERT_MEM_EQ(test_expected_abc, scalar_digest, 32);
 
     /* Compute with AVX2 if available */
     if (sha256_avx2_available()) {
@@ -358,7 +364,7 @@ TEST(sha256_simd_consistency) {
 
         for (int i = 0; i < 8; i++) {
             uint8_t padded[64];
-            sha256_pad_block(padded, test_input_448, 56);
+            sha256_pad_block(padded, test_input_abc, 3);
             for (int j = 0; j < 16; j++) {
                 inputs[i][j] = ((uint32_t)padded[j*4] << 24) |
                                ((uint32_t)padded[j*4+1] << 16) |
@@ -386,7 +392,7 @@ TEST(sha256_simd_consistency) {
 
         for (int i = 0; i < 16; i++) {
             uint8_t padded[64];
-            sha256_pad_block(padded, test_input_448, 56);
+            sha256_pad_block(padded, test_input_abc, 3);
             for (int j = 0; j < 16; j++) {
                 inputs[i][j] = ((uint32_t)padded[j*4] << 24) |
                                ((uint32_t)padded[j*4+1] << 16) |

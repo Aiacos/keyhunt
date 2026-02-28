@@ -39,7 +39,9 @@
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
 static int g_tests_failed = 0;
+static int g_tests_skipped = 0;
 static int g_current_test_failed = 0;
+static int g_current_test_skipped = 0;
 static const char *g_current_test_name = NULL;
 
 /* Initialize test framework */
@@ -47,6 +49,7 @@ static const char *g_current_test_name = NULL;
     g_tests_run = 0; \
     g_tests_passed = 0; \
     g_tests_failed = 0; \
+    g_tests_skipped = 0; \
     printf(CLR_CYAN CLR_BOLD "\n=== KEYHUNT UNIT TESTS ===" CLR_RESET "\n\n"); \
 } while(0)
 
@@ -58,11 +61,15 @@ static const char *g_current_test_name = NULL;
 #define RUN_TEST(name) do { \
     g_current_test_name = #name; \
     g_current_test_failed = 0; \
+    g_current_test_skipped = 0; \
     g_tests_run++; \
     printf("  Running: " CLR_BOLD "%s" CLR_RESET " ... ", #name); \
     fflush(stdout); \
     test_##name(); \
-    if (g_current_test_failed) { \
+    if (g_current_test_skipped) { \
+        g_tests_skipped++; \
+        printf(CLR_YELLOW "SKIPPED" CLR_RESET "\n"); \
+    } else if (g_current_test_failed) { \
         g_tests_failed++; \
         printf(CLR_RED "FAILED" CLR_RESET "\n"); \
     } else { \
@@ -76,6 +83,7 @@ static const char *g_current_test_name = NULL;
     printf("\n" CLR_CYAN "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" CLR_RESET "\n"), \
     printf("  Total:  %d\n", g_tests_run), \
     printf("  " CLR_GREEN "Passed: %d" CLR_RESET "\n", g_tests_passed), \
+    (g_tests_skipped > 0 ? printf("  " CLR_YELLOW "Skipped: %d" CLR_RESET "\n", g_tests_skipped) : 0), \
     (g_tests_failed > 0 ? printf("  " CLR_RED "Failed: %d" CLR_RESET "\n", g_tests_failed) : 0), \
     printf(CLR_CYAN "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" CLR_RESET "\n\n"), \
     (g_tests_failed > 0 ? 1 : 0) \
@@ -168,6 +176,13 @@ static const char *g_current_test_name = NULL;
         g_current_test_failed = 1; \
         return; \
     } \
+} while(0)
+
+/* Skip a test with a reason */
+#define SKIP_TEST(reason) do { \
+    printf("\n    (Skipped: %s)", reason); \
+    g_current_test_skipped = 1; \
+    return; \
 } while(0)
 
 /* Test section markers */

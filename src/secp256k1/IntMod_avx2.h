@@ -95,113 +95,89 @@ static inline void ModMulK1_avx2(const uint64_t *a, const uint64_t *b, uint64_t 
     r512[7] = 0;
 
     // === 256*256 multiplication ===
-    // Column 0: a * b[0]
-    r512[0] = _umul128(a[0], b[0], &t[1]);
-    r512[1] = _umul128(a[1], b[0], &t[2]);
-    c = _addcarry_u64(0, r512[1], t[1], &r512[1]);
-    r512[2] = _umul128(a[2], b[0], &t[3]);
-    c = _addcarry_u64(c, r512[2], t[2], &r512[2]);
-    r512[3] = _umul128(a[3], b[0], &t[4]);
-    c = _addcarry_u64(c, r512[3], t[3], &r512[3]);
-    c = _addcarry_u64(c, 0ULL, t[4], &r512[4]);
+    // Uses imm_umul pattern from Int.h: multiply 4-word array by single word,
+    // producing 5-word result with a single carry chain per column.
+    // Previous version split columns into sub-groups with separate carry chains,
+    // which lost carries between sub-groups.
+    {
+        uint64_t h, carry;
 
-    // Column 1: a * b[1]
-    t[0] = _umul128(a[0], b[1], &t[1]);
-    t[2] = _umul128(a[1], b[1], &t[3]);
+        // Column 0: r512 = a * b[0] (produces r512[0..4])
+        r512[0] = _umul128(a[0], b[0], &h); carry = h;
+        c = _addcarry_u64(0, _umul128(a[1], b[0], &h), carry, &r512[1]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[2], b[0], &h), carry, &r512[2]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[3], b[0], &h), carry, &r512[3]); carry = h;
+        _addcarry_u64(c, 0ULL, carry, &r512[4]);
 
-    c = _addcarry_u64(0, r512[1], t[0], &r512[1]);
-    c = _addcarry_u64(c, r512[2], t[1], &r512[2]);
-    c = _addcarry_u64(c, r512[3], t[2], &r512[3]);
-    c = _addcarry_u64(c, r512[4], t[3], &r512[4]);
-    c = _addcarry_u64(c, r512[5], 0ULL, &r512[5]);
+        // Column 1: t = a * b[1], then r512[1..5] += t[0..4]
+        t[0] = _umul128(a[0], b[1], &h); carry = h;
+        c = _addcarry_u64(0, _umul128(a[1], b[1], &h), carry, &t[1]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[2], b[1], &h), carry, &t[2]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[3], b[1], &h), carry, &t[3]); carry = h;
+        _addcarry_u64(c, 0ULL, carry, &t[4]);
 
-    t[0] = _umul128(a[2], b[1], &t[1]);
-    t[2] = _umul128(a[3], b[1], &t[3]);
-    c = _addcarry_u64(0, r512[3], t[0], &r512[3]);
-    c = _addcarry_u64(c, r512[4], t[1], &r512[4]);
-    c = _addcarry_u64(c, r512[5], t[2], &r512[5]);
-    c = _addcarry_u64(c, r512[6], t[3], &r512[6]);
+        c = _addcarry_u64(0, r512[1], t[0], &r512[1]);
+        c = _addcarry_u64(c, r512[2], t[1], &r512[2]);
+        c = _addcarry_u64(c, r512[3], t[2], &r512[3]);
+        c = _addcarry_u64(c, r512[4], t[3], &r512[4]);
+        c = _addcarry_u64(c, r512[5], t[4], &r512[5]);
 
-    // Column 2: a * b[2]
-    t[0] = _umul128(a[0], b[2], &t[1]);
-    c = _addcarry_u64(0, r512[2], t[0], &r512[2]);
-    c = _addcarry_u64(c, r512[3], t[1], &r512[3]);
-    t[0] = _umul128(a[1], b[2], &t[1]);
-    c = _addcarry_u64(c, r512[3], t[0], &r512[3]);
-    c = _addcarry_u64(c, r512[4], t[1], &r512[4]);
-    c = _addcarry_u64(c, r512[5], 0ULL, &r512[5]);
-    c = _addcarry_u64(c, r512[6], 0ULL, &r512[6]);
+        // Column 2: t = a * b[2], then r512[2..6] += t[0..4]
+        t[0] = _umul128(a[0], b[2], &h); carry = h;
+        c = _addcarry_u64(0, _umul128(a[1], b[2], &h), carry, &t[1]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[2], b[2], &h), carry, &t[2]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[3], b[2], &h), carry, &t[3]); carry = h;
+        _addcarry_u64(c, 0ULL, carry, &t[4]);
 
-    t[0] = _umul128(a[2], b[2], &t[1]);
-    c = _addcarry_u64(0, r512[4], t[0], &r512[4]);
-    c = _addcarry_u64(c, r512[5], t[1], &r512[5]);
-    c = _addcarry_u64(c, r512[6], 0ULL, &r512[6]);
+        c = _addcarry_u64(0, r512[2], t[0], &r512[2]);
+        c = _addcarry_u64(c, r512[3], t[1], &r512[3]);
+        c = _addcarry_u64(c, r512[4], t[2], &r512[4]);
+        c = _addcarry_u64(c, r512[5], t[3], &r512[5]);
+        c = _addcarry_u64(c, r512[6], t[4], &r512[6]);
 
-    t[0] = _umul128(a[3], b[2], &t[1]);
-    c = _addcarry_u64(0, r512[5], t[0], &r512[5]);
-    c = _addcarry_u64(c, r512[6], t[1], &r512[6]);
-    c = _addcarry_u64(c, r512[7], 0ULL, &r512[7]);
+        // Column 3: t = a * b[3], then r512[3..7] += t[0..4]
+        t[0] = _umul128(a[0], b[3], &h); carry = h;
+        c = _addcarry_u64(0, _umul128(a[1], b[3], &h), carry, &t[1]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[2], b[3], &h), carry, &t[2]); carry = h;
+        c = _addcarry_u64(c, _umul128(a[3], b[3], &h), carry, &t[3]); carry = h;
+        _addcarry_u64(c, 0ULL, carry, &t[4]);
 
-    // Column 3: a * b[3]
-    t[0] = _umul128(a[0], b[3], &t[1]);
-    c = _addcarry_u64(0, r512[3], t[0], &r512[3]);
-    c = _addcarry_u64(c, r512[4], t[1], &r512[4]);
-    c = _addcarry_u64(c, r512[5], 0ULL, &r512[5]);
-    c = _addcarry_u64(c, r512[6], 0ULL, &r512[6]);
-    c = _addcarry_u64(c, r512[7], 0ULL, &r512[7]);
-
-    t[0] = _umul128(a[1], b[3], &t[1]);
-    c = _addcarry_u64(0, r512[4], t[0], &r512[4]);
-    c = _addcarry_u64(c, r512[5], t[1], &r512[5]);
-    c = _addcarry_u64(c, r512[6], 0ULL, &r512[6]);
-    c = _addcarry_u64(c, r512[7], 0ULL, &r512[7]);
-
-    t[0] = _umul128(a[2], b[3], &t[1]);
-    c = _addcarry_u64(0, r512[5], t[0], &r512[5]);
-    c = _addcarry_u64(c, r512[6], t[1], &r512[6]);
-    c = _addcarry_u64(c, r512[7], 0ULL, &r512[7]);
-
-    t[0] = _umul128(a[3], b[3], &t[1]);
-    c = _addcarry_u64(0, r512[6], t[0], &r512[6]);
-    c = _addcarry_u64(c, r512[7], t[1], &r512[7]);
+        c = _addcarry_u64(0, r512[3], t[0], &r512[3]);
+        c = _addcarry_u64(c, r512[4], t[1], &r512[4]);
+        c = _addcarry_u64(c, r512[5], t[2], &r512[5]);
+        c = _addcarry_u64(c, r512[6], t[3], &r512[6]);
+        c = _addcarry_u64(c, r512[7], t[4], &r512[7]);
+    }
 
     // === Reduction step 1: from 512 to 320 bits ===
-    // High 256 bits (r512[4:7]) * 0x1000003D1, add to low 256 bits
+    // Multiply high 256 bits (r512[4:7]) by 0x1000003D1 and add to low 256 bits.
     // secp256k1 prime: p = 2^256 - 0x1000003D1
+    //
+    // Uses single-pass multiplication matching the scalar fallback in IntMod.cpp.
+    // Previous per-word reduction had carry propagation bugs.
+    {
+        uint64_t h, carry;
+        uint64_t rt[5];
+        unsigned char rc = 0;
+        rt[0] = _umul128(r512[4], 0x1000003D1ULL, &h); carry = h;
+        rc = _addcarry_u64(rc, _umul128(r512[5], 0x1000003D1ULL, &h), carry, &rt[1]); carry = h;
+        rc = _addcarry_u64(rc, _umul128(r512[6], 0x1000003D1ULL, &h), carry, &rt[2]); carry = h;
+        rc = _addcarry_u64(rc, _umul128(r512[7], 0x1000003D1ULL, &h), carry, &rt[3]); carry = h;
+        _addcarry_u64(rc, 0ULL, carry, &rt[4]);
 
-    t[0] = _umul128(r512[4], 0x1000003D1ULL, &t[1]);
-    t[2] = _umul128(r512[5], 0x1000003D1ULL, &t[3]);
+        c = _addcarry_u64(0, r512[0], rt[0], &r512[0]);
+        c = _addcarry_u64(c, r512[1], rt[1], &r512[1]);
+        c = _addcarry_u64(c, r512[2], rt[2], &r512[2]);
+        c = _addcarry_u64(c, r512[3], rt[3], &r512[3]);
 
-    // Reduction from 512 to 320 bits using secp256k1-specific modulus
-    // (scalar operations with carry tracking)
-    c = _addcarry_u64(0, r512[0], t[0], &r512[0]);
-    c = _addcarry_u64(c, r512[1], t[1], &r512[1]);
-    c = _addcarry_u64(c, r512[2], 0ULL, &r512[2]);
-    c = _addcarry_u64(c, r512[3], 0ULL, &r512[3]);
-    unsigned char c2 = c;
-
-    c = _addcarry_u64(0, r512[1], t[2], &r512[1]);
-    c = _addcarry_u64(c, r512[2], t[3], &r512[2]);
-    c = _addcarry_u64(c, r512[3], 0ULL, &r512[3]);
-    c2 = _addcarry_u64(c2, c, 0, &t[4]);
-
-    t[0] = _umul128(r512[6], 0x1000003D1ULL, &t[1]);
-    c = _addcarry_u64(0, r512[2], t[0], &r512[2]);
-    c = _addcarry_u64(c, r512[3], t[1], &r512[3]);
-    c2 = _addcarry_u64(c2, c, t[4], &t[4]);
-
-    t[0] = _umul128(r512[7], 0x1000003D1ULL, &t[1]);
-    c = _addcarry_u64(0, r512[3], t[0], &r512[3]);
-    c = _addcarry_u64(c, t[4], t[1], &t[4]);
-
-    // === Reduction step 2: from 320 to 256 bits ===
-    // If there's any overflow in t[4], multiply by 0x1000003D1 and add
-    // No overflow possible here: t[4]+c <= 0x1000003D1ULL
-    al = _umul128(t[4], 0x1000003D1ULL, &ah);
-    c = _addcarry_u64(0, r512[0], al, &r[0]);
-    c = _addcarry_u64(c, r512[1], ah, &r[1]);
-    c = _addcarry_u64(c, r512[2], 0ULL, &r[2]);
-    c = _addcarry_u64(c, r512[3], 0ULL, &r[3]);
+        // === Reduction step 2: from 320 to 256 bits ===
+        // No overflow possible here: rt[4]+c <= 0x1000003D1ULL
+        al = _umul128(rt[4] + c, 0x1000003D1ULL, &ah);
+        c = _addcarry_u64(0, r512[0], al, &r[0]);
+        c = _addcarry_u64(c, r512[1], ah, &r[1]);
+        c = _addcarry_u64(c, r512[2], 0ULL, &r[2]);
+        c = _addcarry_u64(c, r512[3], 0ULL, &r[3]);
+    }
 
     // Probability of carry here or that result > P is very very unlikely
 }
