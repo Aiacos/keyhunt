@@ -1338,8 +1338,20 @@ int wizard_client_run(wizard_config_t *cfg) {
                 printf("║ Addr: %-52s ║\n", found_addr);
                 printf("╚═══════════════════════════════════════════════════════════╝\n");
 
-                /* Report to all connected pools (will be implemented in subtask 5-5) */
-                /* For now, we continue to next work unit */
+                /* Report to all connected pools */
+                int pools_notified = 0;
+                for (int i = 0; i < multipool.pool_count; i++) {
+                    dist_worker_client_t *pool_client = &multipool.clients[i];
+                    if (pool_client->connected) {
+                        if (dist_worker_report_found(pool_client, found_key, found_addr) == 0) {
+                            pools_notified++;
+                        } else {
+                            fprintf(stderr, "[!] Warning: Failed to report result to pool %d (%s:%d)\n",
+                                    i, pool_client->coordinator_host, pool_client->coordinator_port);
+                        }
+                    }
+                }
+                printf("[+] Reported result to %d/%d pool(s)\n", pools_notified, multipool.pool_count);
 
                 /* Save locally (restricted permissions — sensitive data) */
                 int key_fd = open("FOUND_KEY.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
