@@ -188,7 +188,7 @@ static inline void ModMulK1_avx2(const uint64_t *a, const uint64_t *b, uint64_t 
     t[0] = _umul128(r512[6], 0x1000003D1ULL, &t[1]);
     c = _addcarry_u64(0, r512[2], t[0], &r512[2]);
     c = _addcarry_u64(c, r512[3], t[1], &r512[3]);
-    c2 = _addcarry_u64(c2, c, 0, &t[4]);
+    c2 = _addcarry_u64(c2, c, t[4], &t[4]);
 
     t[0] = _umul128(r512[7], 0x1000003D1ULL, &t[1]);
     c = _addcarry_u64(0, r512[3], t[0], &r512[3]);

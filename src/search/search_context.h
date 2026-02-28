@@ -303,8 +303,8 @@ void *thread_bPload_2blooms(void *vargp);
 /*  Sort/search functions declared in bsgs/bsgs_sort.h (extern "C")   */
 /* ------------------------------------------------------------------ */
 
-int bsgs_secondcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privatekey);
-int bsgs_thirdcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privatekey);
+int bsgs_secondcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
+int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
 void calcualteindex(int i, Int *key);
 
 #endif /* SEARCH_CONTEXT_H */

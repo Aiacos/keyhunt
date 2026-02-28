@@ -822,7 +822,9 @@ void benchmark_show_performance_history(void) {
     // Display each benchmark
     for (int i = 0; i < count; i++) {
         char date_str[32];
-        strftime(date_str, sizeof(date_str), "%Y-%m-%d %H:%M", localtime(&results[i].timestamp));
+        struct tm tm_buf;
+        localtime_r(&results[i].timestamp, &tm_buf);
+        strftime(date_str, sizeof(date_str), "%Y-%m-%d %H:%M", &tm_buf);
 
         printf("%-19s %-10s %12.2f %12.2f %12.2f\n",
                date_str,

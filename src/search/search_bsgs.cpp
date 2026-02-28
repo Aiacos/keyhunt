@@ -75,7 +75,7 @@ void calcualteindex(int i, Int *key) {
  * Performs a second BSGS search in a smaller range using the secondary
  * bloom filter (bloom_bPx2nd) with 1/32 the size of the primary filter.
  */
-int bsgs_secondcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privatekey) {
+int bsgs_secondcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey) {
     int i = 0, found = 0, r = 0;
     Int base_key;
     Point base_point, point_aux;
@@ -115,7 +115,7 @@ int bsgs_secondcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privat
  * Final verification using the bPtable and bloom_bPx3rd filter.
  * If a match is found here, the private key is computed and verified.
  */
-int bsgs_thirdcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *privatekey) {
+int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey) {
     uint64_t j = 0;
     int i = 0, found = 0, r = 0;
     Int base_key, calculatedkey;
@@ -169,7 +169,10 @@ int bsgs_thirdcheck(Int *start_range, uint32_t a, uint32_t k_index, Int *private
                 calcualteindex(i, &calculatedkey);
                 privatekey->Set(&calculatedkey);
                 privatekey->Add(&base_key);
-                found = 1;
+                point_aux = secp->ComputePublicKey(privatekey);
+                if (point_aux.x.IsEqual(&OriginalPointsBSGS[k_index].x)) {
+                    found = 1;
+                }
             }
         }
         i++;

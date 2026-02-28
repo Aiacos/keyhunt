@@ -801,6 +801,16 @@ static int search_range_subprocess(const char *start, const char *end,
         }
     }
 
+    /* Validate paths before shell execution */
+    if (!is_safe_path(g_executable_path)) {
+        fprintf(stderr, "[-] Executable path contains unsafe characters: %s\n", g_executable_path);
+        return -1;
+    }
+    if (!is_safe_path(g_target_file)) {
+        fprintf(stderr, "[-] Target file path contains unsafe characters: %s\n", g_target_file);
+        return -1;
+    }
+
     /* Build command with absolute path.
      * Use larger status interval (-s 5) to reduce output overhead.
      * The main bottleneck is often stdout parsing, so less output = faster. */

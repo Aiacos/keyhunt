@@ -365,7 +365,8 @@ void *thread_process_bsgs(void *vargp)	{
 	Point pp, pn;
 
 	// Unsigned integer variables
-	uint32_t k, l, r, salir, thread_number, cycles;
+	uint32_t k, l, r, salir, thread_number;
+	uint64_t cycles;
 
 	// Other variables
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
@@ -443,7 +444,7 @@ platform_mutex_unlock(&bsgs_thread);
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
-				uint32_t j = 0;
+				uint64_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
@@ -528,7 +529,8 @@ void *thread_process_bsgs_random(void *vargp)	{
 	char *aux_c,*hextemp;
 	Int base_key,keyfound,n_range_random;
 	Point base_point,point_aux,point_found,offset_point;
-	uint32_t l,k,r,salir,thread_number,cycles;
+	uint32_t l,k,r,salir,thread_number;
+	uint64_t cycles;
 
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	Point startP;
@@ -615,7 +617,7 @@ platform_mutex_unlock(&bsgs_thread);
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
-				uint32_t j = 0;
+				uint64_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
@@ -1003,7 +1005,8 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	Int base_key,keyfound,dy,dyn,_s,_p,intaux;
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	struct thread_rand_state rand_state;
-	uint32_t k,l,r,salir,thread_number,entrar,cycles;
+	uint32_t k,l,r,salir,thread_number,entrar;
+	uint64_t cycles;
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 
 	grp->Set(dx);
@@ -1053,7 +1056,7 @@ void *thread_process_bsgs_dance(void *vargp)	{
 platform_mutex_lock(&bsgs_thread);
 	switch(r)	{
 		case 0:	//TOP
-			if(n_range_end.IsGreater(&BSGS_CURRENT))	{
+			if(n_range_end.IsGreater(&BSGS_CURRENT) && n_range_end.IsGreaterOrEqual(&BSGS_N_double))	{
 				/*
 					n_range_end.Sub(&BSGS_N);
 					n_range_end.Sub(&BSGS_N);
@@ -1116,7 +1119,7 @@ platform_mutex_unlock(&bsgs_thread);
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
-				uint32_t j = 0;
+				uint64_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
@@ -1204,7 +1207,8 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	char *aux_c,*hextemp;
 	Int base_key,keyfound;
 	Point base_point,point_aux,point_found,offset_point;
-	uint32_t k,l,r,salir,thread_number,entrar,cycles;
+	uint32_t k,l,r,salir,thread_number,entrar;
+	uint64_t cycles;
 
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	Point startP;
@@ -1261,7 +1265,7 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	do	{
 
 platform_mutex_lock(&bsgs_thread);
-		if(n_range_end.IsGreater(&n_range_start))	{
+		if(n_range_end.IsGreater(&n_range_start) && n_range_end.IsGreaterOrEqual(&BSGS_N_double))	{
 			n_range_end.Sub(&BSGS_N_double);
 			if(n_range_end.IsLower(&n_range_start))	{
 				base_key.Set(&n_range_start);
@@ -1300,7 +1304,7 @@ platform_mutex_unlock(&bsgs_thread);
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
-				uint32_t j = 0;
+				uint64_t j = 0;
 				while( j < cycles && bsgs_found[k]== 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
@@ -1387,7 +1391,8 @@ void *thread_process_bsgs_both(void *vargp)	{
 	char *aux_c,*hextemp;
 	Int base_key,keyfound;
 	Point base_point,point_aux,point_found,offset_point;
-	uint32_t k,l,r,salir,thread_number,entrar,cycles;
+	uint32_t k,l,r,salir,thread_number,entrar;
+	uint64_t cycles;
 
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	Point startP;
@@ -1451,7 +1456,7 @@ void *thread_process_bsgs_both(void *vargp)	{
 platform_mutex_lock(&bsgs_thread);
 		switch(r)	{
 			case 0:	//TOP
-				if(n_range_end.IsGreater(&BSGS_CURRENT))	{
+				if(n_range_end.IsGreater(&BSGS_CURRENT) && n_range_end.IsGreaterOrEqual(&BSGS_N_double))	{
 						n_range_end.Sub(&BSGS_N_double);
 						/*
 						n_range_end.Sub(&BSGS_N);
@@ -1512,7 +1517,7 @@ platform_mutex_unlock(&bsgs_thread);
 		for(k = 0; k < bsgs_point_number ; k++)	{
 			if(bsgs_found[k] == 0)	{
 					startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
-					uint32_t j = 0;
+					uint64_t j = 0;
 					while( j < cycles && bsgs_found[k]== 0 )	{
 						// Use optimized batch point computation
 						bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);

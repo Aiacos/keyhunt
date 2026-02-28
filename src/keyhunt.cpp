@@ -790,7 +790,7 @@ gpu_backend_info_t g_gpu_backend_info;
 
 // BSGS configuration and buffers
 uint64_t BSGS_XVALUE_RAM = 0;
-uint64_t BSGS_BUFFERXPOINTLENGTH = 0;
+uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
 uint64_t BSGS_BUFFERREGISTERLENGTH = 0;
 uint64_t bloom_bP_totalbytes = 0;
 uint64_t bloom_bP2_totalbytes = 0;
