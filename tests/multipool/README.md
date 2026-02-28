@@ -27,6 +27,15 @@ Verify that a worker can simultaneously connect to 2 coordinators, receive work 
 - `worker_multipool_config.json` - Worker with both coordinators
 - `run_test.sh` - Automated test orchestration script
 
+## Available Tests
+
+This directory contains multiple test scripts:
+
+1. **run_test.sh** - Basic multi-pool connection and work distribution test (subtask-7-1)
+2. **run_failover_test.sh** - Automatic failover and reconnection test (subtask-7-2)
+
+See individual test documentation for details.
+
 ## Running the Test
 
 ### Automatic Test (Recommended)
@@ -85,7 +94,15 @@ Terminal 3 - Start Worker:
 ✓ Each coordinator tracks worker progress independently
 ✓ Per-pool statistics displayed in worker output
 
-### Failover Testing (Optional)
+### Failover Testing
+For detailed failover testing, use the dedicated failover test:
+```bash
+./run_failover_test.sh
+```
+
+See [FAILOVER_TEST.md](FAILOVER_TEST.md) for complete documentation.
+
+Expected behavior:
 ✓ Kill one coordinator → worker continues with remaining pool
 ✓ Restart coordinator → worker reconnects automatically
 ✓ Exponential backoff visible in logs (1s, 2s, 4s, 8s...)
