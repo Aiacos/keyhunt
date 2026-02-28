@@ -793,52 +793,363 @@ cd tests && make test_int
 ./run_tests bsgs
 ```
 
-### Adding New Test Modules
+### Writing a New Test Module
 
-To add a new test module (e.g., for a new component):
+This section provides a complete step-by-step guide to creating a new test module from scratch. We'll create a test module for a hypothetical "Config" component.
 
-#### 1. Create Test File
+#### Step 1: Create the Test File
 
-Create `tests/test_mycomponent.cpp`:
+Create `tests/test_config.cpp` with the following structure:
 
 ```cpp
-#include "test_framework.h"
-#include "../src/mycomponent.h"
+/*
+ * test_config.cpp - Unit tests for the Config component
+ *
+ * Tests configuration loading and validation:
+ * - Loading from files
+ * - Default values
+ * - Error handling for invalid configs
+ */
 
-TEST(test_basic) {
-    // Test code here
-    ASSERT_TRUE(1 == 1);
+#include "test_framework.h"
+#include "../src/config.h"
+
+/* ============================================================================
+ * Basic Loading Tests
+ * ============================================================================ */
+
+TEST(config_load_default) {
+    Config cfg;
+    config_init(&cfg);
+    ASSERT_NOT_NULL(&cfg);
+    ASSERT_EQ(DEFAULT_TIMEOUT, cfg.timeout);
 }
 
-int run_mycomponent_tests(void) {
+TEST(config_load_from_file) {
+    Config cfg;
+    int result = config_load(&cfg, "test_config.json");
+    ASSERT_EQ(0, result);
+    ASSERT_STR_EQ("production", cfg.mode);
+}
+
+/* ============================================================================
+ * Validation Tests
+ * ============================================================================ */
+
+TEST(config_validate_timeout) {
+    Config cfg;
+    cfg.timeout = -1;
+    ASSERT_FALSE(config_validate(&cfg));
+}
+
+TEST(config_validate_port_range) {
+    Config cfg;
+    cfg.port = 99999;  /* Invalid port */
+    ASSERT_FALSE(config_validate(&cfg));
+}
+
+/* ============================================================================
+ * Error Handling Tests
+ * ============================================================================ */
+
+TEST(config_load_nonexistent_file) {
+    Config cfg;
+    int result = config_load(&cfg, "nonexistent.json");
+    ASSERT_NEQ(0, result);  /* Should return error code */
+}
+
+TEST(config_parse_invalid_json) {
+    Config cfg;
+    int result = config_load(&cfg, "tests/invalid.json");
+    ASSERT_NEQ(0, result);
+}
+
+/* ============================================================================
+ * Test Module Entry Point
+ * ============================================================================ */
+
+int run_config_tests(void) {
     TEST_INIT();
-    RUN_TEST(test_basic);
+
+    TEST_SECTION("Basic Loading");
+    RUN_TEST(config_load_default);
+    RUN_TEST(config_load_from_file);
+
+    TEST_SECTION("Validation");
+    RUN_TEST(config_validate_timeout);
+    RUN_TEST(config_validate_port_range);
+
+    TEST_SECTION("Error Handling");
+    RUN_TEST(config_load_nonexistent_file);
+    RUN_TEST(config_parse_invalid_json);
+
     return TEST_RESULTS();
 }
 ```
 
-#### 2. Update run_tests.cpp
+**Key Elements:**
+- **File header comment**: Describes what component is being tested
+- **Include test_framework.h**: Must be first include
+- **Include component header**: The code under test
+- **Organize with comments**: Use block comments to group related tests
+- **TEST() macros**: Define individual test cases
+- **run_*_tests() function**: Entry point that calls all tests
+- **TEST_INIT()**: Initialize framework at start of entry point
+- **TEST_SECTION()**: Group tests visually for better output
+- **RUN_TEST()**: Execute each test
+- **TEST_RESULTS()**: Return exit code (0 = success, 1 = failure)
 
-Add forward declaration and call:
+#### Step 2: Add Forward Declaration to run_tests.cpp
+
+Open `tests/run_tests.cpp` and add your module's forward declaration at the top with the other declarations:
 
 ```cpp
-// Forward declaration
-int run_mycomponent_tests(void);
+/* Forward declarations for all test modules */
+int run_int_tests(void);
+int run_hash_tests(void);
+int run_bloom_tests(void);
+int run_config_tests(void);  // <-- Add this line
+/* ... other declarations ... */
+```
 
-// In main()
-if (module == NULL || strcmp(module, "mycomponent") == 0) {
-    printf(CLR_BOLD "\n>>> Running MyComponent Tests\n" CLR_RESET);
-    total_failures += run_mycomponent_tests();
+**Location**: Add after existing forward declarations, before the `main()` function.
+
+#### Step 3: Add Module Execution to run_tests.cpp
+
+In the `main()` function of `run_tests.cpp`, add the logic to run your new test module:
+
+```cpp
+/* Config tests */
+if (module == NULL || strcmp(module, "config") == 0) {
+    printf(CLR_BOLD "\n>>> Running Config Tests\n" CLR_RESET);
+    total_failures += run_config_tests();
 }
 ```
 
-#### 3. Update Makefile
+**Location**: Add after existing module blocks, before the final results summary.
 
-Add to `tests/Makefile`:
+**Pattern to follow:**
+```cpp
+if (module == NULL || strcmp(module, "your_module_name") == 0) {
+    printf(CLR_BOLD "\n>>> Running YourModule Tests\n" CLR_RESET);
+    total_failures += run_your_module_tests();
+}
+```
+
+- First condition `module == NULL`: Runs when `./run_tests` is called without arguments (run all)
+- Second condition `strcmp(module, "config") == 0`: Runs when `./run_tests config` is called
+- Module name should match the command-line argument users will use
+
+#### Step 4: Update the Help Text in run_tests.cpp
+
+Add your module to the usage documentation in `show_usage()`:
+
+```cpp
+void show_usage(const char *program) {
+    printf("Usage: %s [module]\n\n", program);
+    printf("Available test modules:\n");
+    printf("  int          - Int (256-bit integer) tests\n");
+    printf("  hash         - Hash and crypto tests\n");
+    printf("  bloom        - Bloom filter tests\n");
+    printf("  config       - Configuration tests\n");  // <-- Add this
+    /* ... */
+}
+```
+
+#### Step 5: Add Build Target to Makefile
+
+Open `tests/Makefile` and add compilation rules for your test module.
+
+**Add to TEST_OBJS variable:**
 
 ```makefile
-test_mycomponent: test_mycomponent.cpp test_framework.h
-	$(CXX) $(CXXFLAGS) -o $@ $< ../src/mycomponent.cpp
+TEST_OBJS = test_int.o \
+            test_hash.o \
+            test_bloom.o \
+            test_config.o  # <-- Add this
+```
+
+**Add individual build rule:**
+
+```makefile
+# Config tests
+test_config.o: test_config.cpp test_framework.h ../src/config.h
+	$(CXX) $(CXXFLAGS) -c test_config.cpp -o test_config.o
+```
+
+**If your component has source files, link them:**
+
+```makefile
+# If config.cpp exists
+run_tests: $(TEST_OBJS) run_tests.o ../src/config.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# Add rule to build config.o if needed
+../src/config.o: ../src/config.cpp ../src/config.h
+	$(CXX) $(CXXFLAGS) -c ../src/config.cpp -o ../src/config.o
+```
+
+#### Step 6: Build and Run Your Tests
+
+```bash
+# Clean build
+cd tests
+make clean
+
+# Build all tests
+make
+
+# Run only your new module
+./run_tests config
+
+# Run all tests (including your new module)
+./run_tests
+```
+
+**Expected output:**
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║           KEYHUNT UNIT TEST SUITE                            ║
+╚═══════════════════════════════════════════════════════════════╝
+
+>>> Running Config Tests
+
+=== KEYHUNT UNIT TESTS ===
+
+[Basic Loading]
+  Running: config_load_default ... PASSED
+  Running: config_load_from_file ... PASSED
+
+[Validation]
+  Running: config_validate_timeout ... PASSED
+  Running: config_validate_port_range ... PASSED
+
+[Error Handling]
+  Running: config_load_nonexistent_file ... PASSED
+  Running: config_parse_invalid_json ... PASSED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Total:  6
+  Passed: 6
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+#### Complete Checklist
+
+When adding a new test module, ensure you complete all these steps:
+
+- [ ] **Step 1**: Created `tests/test_<name>.cpp` with proper structure
+  - [ ] Included `test_framework.h`
+  - [ ] Included component headers
+  - [ ] Defined tests with `TEST()` macro
+  - [ ] Created `run_<name>_tests()` entry point function
+  - [ ] Used `TEST_INIT()`, `TEST_SECTION()`, `RUN_TEST()`, `TEST_RESULTS()`
+
+- [ ] **Step 2**: Added forward declaration `int run_<name>_tests(void);` to `run_tests.cpp`
+
+- [ ] **Step 3**: Added execution block to `main()` in `run_tests.cpp`
+  - [ ] Handles both `module == NULL` and specific module name
+  - [ ] Prints section header
+  - [ ] Accumulates failures in `total_failures`
+
+- [ ] **Step 4**: Updated help text in `show_usage()` function
+
+- [ ] **Step 5**: Updated `tests/Makefile`
+  - [ ] Added to `TEST_OBJS`
+  - [ ] Added build rule for `.o` file
+  - [ ] Linked component source files if needed
+
+- [ ] **Step 6**: Built and verified tests run successfully
+
+#### Real-World Example: test_int.cpp
+
+The `tests/test_int.cpp` file is an excellent reference implementation showing all best practices:
+
+**Structure:**
+- Clear file header documenting what's tested
+- Organized into sections with block comments
+- Comprehensive coverage: construction, arithmetic, comparisons, bit operations
+- Both positive and edge case tests
+- Clean entry point with organized `TEST_SECTION()` blocks
+
+**To use as a template:**
+```bash
+# Copy structure from test_int.cpp
+cp tests/test_int.cpp tests/test_mynewcomponent.cpp
+
+# Modify:
+# 1. Update file header comment
+# 2. Change include from "secp256k1/Int.h" to your component
+# 3. Replace all Int-specific tests with your component's tests
+# 4. Rename entry point: run_int_tests() -> run_mynewcomponent_tests()
+# 5. Follow steps 2-6 above
+```
+
+#### Tips for Writing Good Tests
+
+1. **Test one thing per test**: Each `TEST()` should verify a single behavior
+2. **Use descriptive names**: `config_load_invalid_json` is better than `test3`
+3. **Test edge cases**: Null pointers, empty strings, maximum values, zero, negative numbers
+4. **Test error paths**: Don't just test success - verify errors are handled correctly
+5. **Keep tests independent**: Tests should not depend on each other's state
+6. **Use appropriate assertions**: Choose the most specific assertion (e.g., `ASSERT_STR_EQ` for strings)
+7. **Add comments for complex setups**: Explain non-obvious test logic
+8. **Group related tests**: Use `TEST_SECTION()` to organize output
+
+#### Common Pitfalls to Avoid
+
+❌ **Don't**: Mix multiple assertions for unrelated things in one test
+```cpp
+TEST(everything) {
+    ASSERT_EQ(5, add(2, 3));
+    ASSERT_STR_EQ("hello", format_string());  // Unrelated!
+}
+```
+
+✅ **Do**: Separate into focused tests
+```cpp
+TEST(add_returns_sum) {
+    ASSERT_EQ(5, add(2, 3));
+}
+
+TEST(format_string_returns_greeting) {
+    ASSERT_STR_EQ("hello", format_string());
+}
+```
+
+❌ **Don't**: Forget to handle memory cleanup
+```cpp
+TEST(memory_leak) {
+    char *buf = malloc(100);
+    process_buffer(buf);
+    // Missing free(buf)!
+}
+```
+
+✅ **Do**: Clean up resources
+```cpp
+TEST(proper_cleanup) {
+    char *buf = malloc(100);
+    ASSERT_NOT_NULL(buf);
+    process_buffer(buf);
+    free(buf);  // Proper cleanup
+}
+```
+
+❌ **Don't**: Use magic numbers
+```cpp
+TEST(unclear_assertion) {
+    ASSERT_EQ(42, calculate_checksum(data, 100));  // Why 42?
+}
+```
+
+✅ **Do**: Use named constants or comments
+```cpp
+TEST(checksum_calculation) {
+    const int EXPECTED_CHECKSUM = 42;  // Verified manually
+    ASSERT_EQ(EXPECTED_CHECKSUM, calculate_checksum(data, 100));
+}
 ```
 
 ### Best Practices
