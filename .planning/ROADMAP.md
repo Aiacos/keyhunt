@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 4 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Fix 36 pre-existing test failures and add SKIP_TEST macro
+- [x] 01-01-PLAN.md — Fix 36 pre-existing test failures and add SKIP_TEST macro
 - [ ] 01-02-PLAN.md — Add NIST/IETF/bitcoin-core reference crypto test vectors
 - [ ] 01-03-PLAN.md — E2E tests for ADDRESS, BSGS, XPOINT modes
 - [ ] 01-04-PLAN.md — E2E tests for RMD160, VANITY, MINIKEYS modes + coverage gate
@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Baseline | 0/4 | Planning complete | - |
+| 1. Test Baseline | 1/4 | In progress | - |
 | 2. Sanitizer Coverage | 0/TBD | Not started | - |
 | 3. Config Migration | 0/TBD | Not started | - |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |

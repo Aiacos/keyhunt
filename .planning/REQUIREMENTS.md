@@ -9,8 +9,8 @@ Requirements for production-ready release. Each maps to roadmap phases.
 
 ### Testing Foundation
 
-- [ ] **TEST-01**: All 19 pre-existing test failures fixed (test_point ×8, test_intgroup ×11)
-- [ ] **TEST-02**: SHA256 test input size mismatches corrected (uint32_t[8] → uint32_t[16])
+- [x] **TEST-01**: All 19 pre-existing test failures fixed (test_point x8, test_intgroup x11) -- completed in 01-01, also fixed AVX2 ModMulK1 bug
+- [x] **TEST-02**: SHA256 test input size mismatches corrected (uint32_t[8] -> uint32_t[16]) -- completed in 01-01
 - [ ] **TEST-03**: NIST/IETF test vectors for SHA256 (FIPS 180-4 examples)
 - [ ] **TEST-04**: NIST/IETF test vectors for RIPEMD160
 - [ ] **TEST-05**: Test vectors for secp256k1 point operations (addition, doubling, scalar multiplication)
