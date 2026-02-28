@@ -827,6 +827,21 @@ int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
  */
 void dist_multipool_shutdown(dist_multipool_client_t *multipool);
 
+/**
+ * Start background reconnection thread for failed pools
+ * Spawns a thread that periodically checks for failed pools and attempts
+ * reconnection with exponential backoff (every 5 seconds)
+ * @param multipool Multi-pool client state
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_start_reconnect_thread(dist_multipool_client_t *multipool);
+
+/**
+ * Stop the background reconnection thread
+ * Signals the thread to exit and waits for it to finish
+ */
+void dist_multipool_stop_reconnect_thread(void);
+
 /* ============================================================================
  * Multi-Coordinator Federation Functions
  * ============================================================================ */

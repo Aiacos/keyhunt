@@ -333,6 +333,15 @@ void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     (void)multipool;
 }
 
+int dist_multipool_start_reconnect_thread(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    return -1;
+}
+
+void dist_multipool_stop_reconnect_thread(void) {
+    /* No-op on Windows */
+}
+
 #else /* POSIX implementation */
 
 #include <sys/socket.h>
@@ -343,6 +352,20 @@ void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
+
+/* ============================================================================
+ * Multi-Pool Reconnection Thread State
+ * ============================================================================ */
+
+/* Background reconnection thread for failed pools */
+static pthread_t g_reconnect_thread;
+static volatile int g_reconnect_thread_running = 0;
+static pthread_mutex_t g_reconnect_mutex = PTHREAD_MUTEX_INITIALIZER;
+static dist_multipool_client_t *g_reconnect_multipool = NULL;
+
+/* Reconnection thread configuration */
+#define RECONNECT_CHECK_INTERVAL_SEC 5  /* Check for failed pools every 5 seconds */
 
 /* ============================================================================
  * TLS/SSL Support (Optional - requires OpenSSL)
@@ -4105,6 +4128,114 @@ int dist_multipool_reconnect(dist_multipool_client_t *multipool) {
 }
 
 /**
+ * Background thread that periodically attempts to reconnect to failed pools.
+ * This thread runs continuously in the background, checking for failed pools
+ * and attempting reconnection with exponential backoff.
+ * @param arg Pointer to dist_multipool_client_t
+ * @return NULL
+ */
+static void *reconnect_thread_func(void *arg) {
+    (void)arg;  /* multipool is accessed via global g_reconnect_multipool */
+
+    while (g_reconnect_thread_running) {
+        /* Sleep in small increments to respond quickly to shutdown */
+        for (int i = 0; i < RECONNECT_CHECK_INTERVAL_SEC && g_reconnect_thread_running; i++) {
+            sleep(1);
+        }
+
+        if (!g_reconnect_thread_running) break;
+
+        /* Attempt reconnection to failed pools */
+        pthread_mutex_lock(&g_reconnect_mutex);
+        dist_multipool_client_t *multipool = g_reconnect_multipool;
+        pthread_mutex_unlock(&g_reconnect_mutex);
+
+        if (multipool) {
+            int reconnected = dist_multipool_reconnect(multipool);
+            if (reconnected > 0 && getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Background thread reconnected %d pool(s)\n", reconnected);
+            }
+        }
+    }
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection thread exiting\n");
+    }
+
+    return NULL;
+}
+
+/**
+ * Start the background reconnection thread.
+ * This spawns a thread that periodically checks for failed pools and attempts
+ * to reconnect with exponential backoff.
+ * @param multipool Multi-pool client state
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_start_reconnect_thread(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    /* Check if thread is already running */
+    pthread_mutex_lock(&g_reconnect_mutex);
+    if (g_reconnect_thread_running) {
+        pthread_mutex_unlock(&g_reconnect_mutex);
+        if (getenv("KEYHUNT_DEBUG")) {
+            fprintf(stderr, "[multipool] Reconnection thread already running\n");
+        }
+        return 0;  /* Already running, not an error */
+    }
+
+    g_reconnect_multipool = multipool;
+    g_reconnect_thread_running = 1;
+    pthread_mutex_unlock(&g_reconnect_mutex);
+
+    if (pthread_create(&g_reconnect_thread, NULL, reconnect_thread_func, NULL) != 0) {
+        pthread_mutex_lock(&g_reconnect_mutex);
+        g_reconnect_thread_running = 0;
+        g_reconnect_multipool = NULL;
+        pthread_mutex_unlock(&g_reconnect_mutex);
+        fprintf(stderr, "[multipool] Failed to create reconnection thread\n");
+        return -1;
+    }
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection thread started (check interval: %ds)\n",
+               RECONNECT_CHECK_INTERVAL_SEC);
+    }
+
+    return 0;
+}
+
+/**
+ * Stop the background reconnection thread.
+ * This signals the thread to exit and waits for it to finish.
+ */
+void dist_multipool_stop_reconnect_thread(void) {
+    pthread_mutex_lock(&g_reconnect_mutex);
+    if (!g_reconnect_thread_running) {
+        pthread_mutex_unlock(&g_reconnect_mutex);
+        return;  /* Thread not running */
+    }
+
+    g_reconnect_thread_running = 0;
+    pthread_mutex_unlock(&g_reconnect_mutex);
+
+    /* Wait for thread to finish */
+    pthread_join(g_reconnect_thread, NULL);
+
+    pthread_mutex_lock(&g_reconnect_mutex);
+    g_reconnect_multipool = NULL;
+    pthread_mutex_unlock(&g_reconnect_mutex);
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection thread stopped\n");
+    }
+}
+
+/**
  * Check if a range conflicts with any active ranges from other pools
  * Uses hex string comparison to detect overlapping ranges
  * @param multipool Multi-pool client state
@@ -4262,6 +4393,9 @@ void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     }
 
     printf("[multipool] Shutting down multi-pool manager...\n");
+
+    /* Stop reconnection thread first */
+    dist_multipool_stop_reconnect_thread();
 
     platform_mutex_lock(&multipool->mutex);
 
