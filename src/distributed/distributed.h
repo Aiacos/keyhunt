@@ -351,6 +351,14 @@ typedef struct {
     int reconnect_delay_sec;                    /* Delay before reconnecting on connection loss (default: 5) */
 } dist_worker_client_t;
 
+/* Active range tracking for multi-pool deconfliction */
+typedef struct {
+    char range_start[65];       /* Hex string - start of range */
+    char range_end[65];         /* Hex string - end of range */
+    int pool_index;             /* Which pool this range is from */
+    uint64_t assigned_time;     /* When this range was assigned (for timeout/cleanup) */
+} active_range_t;
+
 /* Multi-pool client state */
 typedef struct {
     /* Pool connections */
@@ -359,6 +367,11 @@ typedef struct {
 
     /* Work distribution */
     int current_pool_index;                         /* Current pool index for round-robin distribution */
+
+    /* Range deconfliction - track active ranges to avoid duplicate work across pools */
+    active_range_t active_ranges[DIST_MAX_POOLS * 2];  /* Active ranges from all pools (2 per pool max) */
+    int active_range_count;                             /* Number of currently active ranges */
+    platform_mutex_t range_mutex;                       /* Protects active_ranges array for concurrent access */
 
     /* Thread safety */
     platform_mutex_t mutex;                          /* Protects multi-pool state for thread-safe access */
