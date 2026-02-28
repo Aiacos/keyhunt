@@ -708,6 +708,37 @@ void dist_worker_set_local_progress(dist_worker_client_t *client, int count);
 int dist_worker_enable_tls(dist_worker_client_t *client, bool verify_server);
 
 /* ============================================================================
+ * Multi-Pool Client Functions
+ * ============================================================================ */
+
+/**
+ * Initialize multi-pool client manager
+ * Creates a multi-pool manager that can connect to multiple coordinators
+ * @param multipool Output multi-pool client state
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_init(dist_multipool_client_t *multipool);
+
+/**
+ * Add a pool to the multi-pool manager
+ * @param multipool Multi-pool client state
+ * @param coordinator_host Coordinator hostname/IP
+ * @param coordinator_port Coordinator port (0 = default)
+ * @param perf_score Performance score from sysinfo
+ * @return Pool index on success, -1 on error (max pools reached or invalid params)
+ */
+int dist_multipool_add_pool(dist_multipool_client_t *multipool,
+                             const char *coordinator_host,
+                             int coordinator_port,
+                             double perf_score);
+
+/**
+ * Shutdown multi-pool client and disconnect all pools
+ * @param multipool Multi-pool client state
+ */
+void dist_multipool_shutdown(dist_multipool_client_t *multipool);
+
+/* ============================================================================
  * Multi-Coordinator Federation Functions
  * ============================================================================ */
 

@@ -277,6 +277,25 @@ void dist_federation_shutdown(dist_coordinator_t *coordinator) {
     (void)coordinator;
 }
 
+/* Multi-Pool Client Functions */
+int dist_multipool_init(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    fprintf(stderr, "[distributed] Not supported on Windows\n");
+    return -1;
+}
+
+int dist_multipool_add_pool(dist_multipool_client_t *multipool,
+                             const char *coordinator_host,
+                             int coordinator_port,
+                             double perf_score) {
+    (void)multipool; (void)coordinator_host; (void)coordinator_port; (void)perf_score;
+    return -1;
+}
+
+void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
+    (void)multipool;
+}
+
 #else /* POSIX implementation */
 
 #include <sys/socket.h>
@@ -3549,6 +3568,129 @@ int dist_coordinator_enable_tls(dist_coordinator_t *coordinator,
     (void)key_file;
     return -1;
 #endif
+}
+
+/* ============================================================================
+ * Multi-Pool Client Functions (POSIX)
+ * ============================================================================ */
+
+/**
+ * Initialize multi-pool client manager
+ * @param multipool Multi-pool client state to initialize
+ * @return 0 on success, -1 on error
+ */
+int dist_multipool_init(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    /* Zero out the structure */
+    memset(multipool, 0, sizeof(dist_multipool_client_t));
+
+    /* Initialize mutex for thread-safe access */
+    if (platform_mutex_init(&multipool->mutex) != 0) {
+        fprintf(stderr, "[multipool] Failed to initialize mutex\n");
+        return -1;
+    }
+
+    multipool->pool_count = 0;
+    multipool->current_pool_index = 0;
+
+    printf("[multipool] Multi-pool manager initialized\n");
+    return 0;
+}
+
+/**
+ * Add a pool to the multi-pool manager
+ * @param multipool Multi-pool client state
+ * @param coordinator_host Coordinator hostname/IP
+ * @param coordinator_port Coordinator port (0 = default DIST_DEFAULT_PORT)
+ * @param perf_score Performance score from sysinfo
+ * @return Pool index on success, -1 on error
+ */
+int dist_multipool_add_pool(dist_multipool_client_t *multipool,
+                             const char *coordinator_host,
+                             int coordinator_port,
+                             double perf_score) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!coordinator_host || strlen(coordinator_host) == 0) {
+        fprintf(stderr, "[multipool] Invalid coordinator host\n");
+        return -1;
+    }
+
+    /* Thread-safe pool addition */
+    platform_mutex_lock(&multipool->mutex);
+
+    /* Check if max pools reached */
+    if (multipool->pool_count >= DIST_MAX_POOLS) {
+        platform_mutex_unlock(&multipool->mutex);
+        fprintf(stderr, "[multipool] Maximum pools (%d) reached\n", DIST_MAX_POOLS);
+        return -1;
+    }
+
+    /* Get the next available pool slot */
+    int pool_index = multipool->pool_count;
+    dist_worker_client_t *client = &multipool->clients[pool_index];
+
+    /* Initialize the worker client for this pool */
+    int result = dist_worker_init(client, coordinator_host, coordinator_port, perf_score);
+    if (result != 0) {
+        platform_mutex_unlock(&multipool->mutex);
+        fprintf(stderr, "[multipool] Failed to initialize pool %d (%s:%d)\n",
+                pool_index, coordinator_host, coordinator_port);
+        return -1;
+    }
+
+    /* Increment pool count */
+    multipool->pool_count++;
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    printf("[multipool] Added pool %d: %s:%d (perf_score=%.2f)\n",
+           pool_index, coordinator_host,
+           coordinator_port > 0 ? coordinator_port : DIST_DEFAULT_PORT,
+           perf_score);
+
+    return pool_index;
+}
+
+/**
+ * Shutdown multi-pool client and disconnect all pools
+ * @param multipool Multi-pool client state
+ */
+void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        return;
+    }
+
+    printf("[multipool] Shutting down multi-pool manager...\n");
+
+    platform_mutex_lock(&multipool->mutex);
+
+    /* Disconnect all active pools */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+        if (client->connected) {
+            printf("[multipool] Disconnecting from pool %d (%s:%d)\n",
+                   i, client->coordinator_host, client->coordinator_port);
+            dist_worker_disconnect(client);
+        }
+    }
+
+    multipool->pool_count = 0;
+    multipool->current_pool_index = 0;
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    /* Destroy mutex */
+    platform_mutex_destroy(&multipool->mutex);
+
+    printf("[multipool] Multi-pool manager shutdown complete\n");
 }
 
 #endif /* !PLATFORM_WINDOWS */
