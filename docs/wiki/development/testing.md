@@ -148,6 +148,575 @@ The framework provides comprehensive assertion macros:
 - On success: Silent (no output)
 - Early return: Failed assertions immediately exit the current test function
 
+### API Reference
+
+This section provides detailed documentation for all test framework macros.
+
+#### TEST_INIT()
+
+**Description:** Initializes the test framework and resets all counters.
+
+**Syntax:**
+```c
+TEST_INIT()
+```
+
+**Usage:** Call once at the beginning of your test module's entry point function, before running any tests.
+
+**Example:**
+```c
+int run_my_tests(void) {
+    TEST_INIT();  // Initialize framework
+
+    RUN_TEST(test_feature_1);
+    RUN_TEST(test_feature_2);
+
+    return TEST_RESULTS();
+}
+```
+
+**Notes:**
+- Resets test counters (tests run, passed, failed)
+- Prints colored test suite header banner
+- Must be called before any `RUN_TEST()` calls
+
+---
+
+#### TEST(name)
+
+**Description:** Defines a new test function.
+
+**Syntax:**
+```c
+TEST(test_name) {
+    // Test code here
+}
+```
+
+**Parameters:**
+- `test_name`: Identifier for the test (no quotes, must be valid C identifier)
+
+**Usage:** Use to define individual test cases. The test name will be displayed when the test runs.
+
+**Example:**
+```c
+TEST(addition_works) {
+    int result = 2 + 2;
+    ASSERT_EQ(4, result);
+}
+
+TEST(string_comparison) {
+    const char *str = "hello";
+    ASSERT_STR_EQ("hello", str);
+}
+```
+
+**Notes:**
+- Expands to a function: `void test_<name>(void)`
+- Test names should be descriptive and follow naming convention: `test_<feature>_<behavior>`
+- Tests should be self-contained and independent
+
+---
+
+#### RUN_TEST(name)
+
+**Description:** Executes a single test and tracks its result.
+
+**Syntax:**
+```c
+RUN_TEST(test_name)
+```
+
+**Parameters:**
+- `test_name`: Name of the test to run (must match a `TEST()` definition)
+
+**Usage:** Call from test module entry point to execute a defined test.
+
+**Example:**
+```c
+TEST(my_test) {
+    ASSERT_TRUE(1 == 1);
+}
+
+int run_tests(void) {
+    TEST_INIT();
+    RUN_TEST(my_test);  // Executes test_my_test()
+    return TEST_RESULTS();
+}
+```
+
+**Output:**
+```
+  Running: my_test ... PASSED
+```
+
+**Notes:**
+- Prints test name and result (PASSED in green or FAILED in red)
+- Updates global pass/fail counters
+- On failure, test function returns early after first failed assertion
+
+---
+
+#### TEST_RESULTS()
+
+**Description:** Prints test results summary and returns appropriate exit code.
+
+**Syntax:**
+```c
+return TEST_RESULTS();
+```
+
+**Return Value:**
+- `0` if all tests passed
+- `1` if any test failed
+
+**Usage:** Call at the end of test module entry point to display results and return exit code.
+
+**Example:**
+```c
+int run_my_tests(void) {
+    TEST_INIT();
+
+    RUN_TEST(test_add);
+    RUN_TEST(test_subtract);
+    RUN_TEST(test_multiply);
+
+    return TEST_RESULTS();  // Print summary and return exit code
+}
+```
+
+**Output:**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Total:  3
+  Passed: 3
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Notes:**
+- Must be called after all tests have run
+- Exit code enables CI/CD integration (non-zero = failure)
+- Failed test count is displayed in red when failures occur
+
+---
+
+#### TEST_SECTION(name)
+
+**Description:** Prints a section header to group related tests visually.
+
+**Syntax:**
+```c
+TEST_SECTION("Section Name")
+```
+
+**Parameters:**
+- `name`: String literal describing the test section
+
+**Usage:** Use to organize tests into logical groups for better readability.
+
+**Example:**
+```c
+int run_math_tests(void) {
+    TEST_INIT();
+
+    TEST_SECTION("Arithmetic Operations");
+    RUN_TEST(test_add);
+    RUN_TEST(test_subtract);
+    RUN_TEST(test_multiply);
+
+    TEST_SECTION("Edge Cases");
+    RUN_TEST(test_overflow);
+    RUN_TEST(test_division_by_zero);
+
+    return TEST_RESULTS();
+}
+```
+
+**Output:**
+```
+[Arithmetic Operations]
+  Running: test_add ... PASSED
+  Running: test_subtract ... PASSED
+  Running: test_multiply ... PASSED
+
+[Edge Cases]
+  Running: test_overflow ... PASSED
+  Running: test_division_by_zero ... PASSED
+```
+
+**Notes:**
+- Purely cosmetic - doesn't affect test execution or results
+- Helps structure test output for large test suites
+- Section names are displayed in yellow
+
+---
+
+#### ASSERT_TRUE(cond)
+
+**Description:** Asserts that a condition evaluates to true.
+
+**Syntax:**
+```c
+ASSERT_TRUE(condition)
+```
+
+**Parameters:**
+- `condition`: Expression that should evaluate to non-zero (true)
+
+**Usage:** Use for boolean checks and general condition validation.
+
+**Example:**
+```c
+TEST(value_is_positive) {
+    int value = get_user_count();
+    ASSERT_TRUE(value > 0);
+    ASSERT_TRUE(value < 1000000);
+}
+
+TEST(pointer_is_valid) {
+    void *ptr = allocate_buffer();
+    ASSERT_TRUE(ptr != NULL);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_TRUE failed at test_example.cpp:42
+    Condition: value > 0
+```
+
+**Notes:**
+- Test function exits immediately on failure
+- Condition is printed as-is in error message
+- Use `ASSERT_FALSE()` for inverse checks
+
+---
+
+#### ASSERT_FALSE(cond)
+
+**Description:** Asserts that a condition evaluates to false.
+
+**Syntax:**
+```c
+ASSERT_FALSE(condition)
+```
+
+**Parameters:**
+- `condition`: Expression that should evaluate to zero (false)
+
+**Usage:** Use to verify that conditions are NOT true.
+
+**Example:**
+```c
+TEST(buffer_not_empty) {
+    char buffer[100];
+    read_data(buffer, sizeof(buffer));
+    ASSERT_FALSE(buffer[0] == '\0');  // Should have data
+}
+
+TEST(error_flag_not_set) {
+    int status = initialize_system();
+    ASSERT_FALSE(status & ERROR_FLAG);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_FALSE failed at test_example.cpp:56
+    Condition: status & ERROR_FLAG
+```
+
+---
+
+#### ASSERT_EQ(expected, actual)
+
+**Description:** Asserts that two integer values are equal.
+
+**Syntax:**
+```c
+ASSERT_EQ(expected_value, actual_value)
+```
+
+**Parameters:**
+- `expected`: Expected value (evaluated first)
+- `actual`: Actual value to compare
+
+**Usage:** Use for numeric equality checks (integers, characters, enums).
+
+**Example:**
+```c
+TEST(function_returns_correct_value) {
+    int result = calculate_sum(2, 3);
+    ASSERT_EQ(5, result);
+}
+
+TEST(array_size_correct) {
+    int count = get_element_count();
+    ASSERT_EQ(10, count);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_EQ failed at test_example.cpp:23
+    Expected: 5
+    Actual:   7
+```
+
+**Notes:**
+- Values are cast to `long long` for display
+- For strings, use `ASSERT_STR_EQ()`
+- For floating-point, use `ASSERT_DOUBLE_EQ()`
+
+---
+
+#### ASSERT_NEQ(not_expected, actual)
+
+**Description:** Asserts that two values are NOT equal.
+
+**Syntax:**
+```c
+ASSERT_NEQ(not_expected_value, actual_value)
+```
+
+**Parameters:**
+- `not_expected`: Value that should NOT match
+- `actual`: Actual value to compare
+
+**Usage:** Use to verify values differ (non-zero returns, unique IDs, etc.).
+
+**Example:**
+```c
+TEST(function_does_not_return_error) {
+    int status = perform_operation();
+    ASSERT_NEQ(-1, status);  // Should not be error code
+}
+
+TEST(unique_identifiers) {
+    int id1 = generate_id();
+    int id2 = generate_id();
+    ASSERT_NEQ(id1, id2);  // Must be unique
+}
+```
+
+**On Failure:**
+```
+    ASSERT_NEQ failed at test_example.cpp:67
+    Expected not: -1
+    Actual:       -1
+```
+
+---
+
+#### ASSERT_STR_EQ(expected, actual)
+
+**Description:** Asserts that two null-terminated strings are equal.
+
+**Syntax:**
+```c
+ASSERT_STR_EQ(expected_string, actual_string)
+```
+
+**Parameters:**
+- `expected`: Expected string (const char*)
+- `actual`: Actual string to compare (const char*)
+
+**Usage:** Use for string comparisons (uses `strcmp()` internally).
+
+**Example:**
+```c
+TEST(name_formatting) {
+    char buffer[100];
+    format_name(buffer, "John", "Doe");
+    ASSERT_STR_EQ("John Doe", buffer);
+}
+
+TEST(config_value_correct) {
+    const char *mode = get_config_mode();
+    ASSERT_STR_EQ("production", mode);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_STR_EQ failed at test_example.cpp:89
+    Expected: "hello world"
+    Actual:   "hello"
+```
+
+**Notes:**
+- Both strings must be null-terminated
+- Case-sensitive comparison
+- For memory comparison, use `ASSERT_MEM_EQ()`
+
+---
+
+#### ASSERT_MEM_EQ(expected, actual, len)
+
+**Description:** Asserts that two memory regions contain identical bytes.
+
+**Syntax:**
+```c
+ASSERT_MEM_EQ(expected_buffer, actual_buffer, length)
+```
+
+**Parameters:**
+- `expected`: Pointer to expected data
+- `actual`: Pointer to actual data
+- `len`: Number of bytes to compare
+
+**Usage:** Use for binary data comparison (hashes, byte arrays, structs).
+
+**Example:**
+```c
+TEST(hash_calculation) {
+    uint8_t expected_hash[32] = { 0xAB, 0xCD, ... };
+    uint8_t actual_hash[32];
+
+    calculate_hash(data, actual_hash);
+    ASSERT_MEM_EQ(expected_hash, actual_hash, 32);
+}
+
+TEST(struct_serialization) {
+    struct Config original = { .id = 42, .enabled = 1 };
+    struct Config deserialized;
+
+    serialize(&original, buffer);
+    deserialize(buffer, &deserialized);
+
+    ASSERT_MEM_EQ(&original, &deserialized, sizeof(struct Config));
+}
+```
+
+**On Failure:**
+```
+    ASSERT_MEM_EQ failed at test_example.cpp:104
+    Memory comparison failed for 32 bytes
+```
+
+**Notes:**
+- Uses `memcmp()` internally
+- Both pointers must be valid
+- Length must not exceed buffer sizes
+
+---
+
+#### ASSERT_NULL(ptr)
+
+**Description:** Asserts that a pointer is NULL.
+
+**Syntax:**
+```c
+ASSERT_NULL(pointer)
+```
+
+**Parameters:**
+- `ptr`: Pointer that should be NULL
+
+**Usage:** Use to verify functions return NULL on error or when data is absent.
+
+**Example:**
+```c
+TEST(invalid_lookup_returns_null) {
+    void *result = find_user("nonexistent");
+    ASSERT_NULL(result);
+}
+
+TEST(allocation_fails_gracefully) {
+    void *ptr = try_allocate(SIZE_MAX);  // Should fail
+    ASSERT_NULL(ptr);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_NULL failed at test_example.cpp:78
+    Pointer is not NULL
+```
+
+---
+
+#### ASSERT_NOT_NULL(ptr)
+
+**Description:** Asserts that a pointer is NOT NULL.
+
+**Syntax:**
+```c
+ASSERT_NOT_NULL(pointer)
+```
+
+**Parameters:**
+- `ptr`: Pointer that should be valid (non-NULL)
+
+**Usage:** Use to verify successful allocations and valid object creation.
+
+**Example:**
+```c
+TEST(memory_allocation_succeeds) {
+    void *buffer = malloc(1024);
+    ASSERT_NOT_NULL(buffer);
+    free(buffer);
+}
+
+TEST(object_creation) {
+    MyObject *obj = create_object();
+    ASSERT_NOT_NULL(obj);
+    destroy_object(obj);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_NOT_NULL failed at test_example.cpp:92
+    Pointer is NULL
+```
+
+---
+
+#### ASSERT_DOUBLE_EQ(expected, actual, epsilon)
+
+**Description:** Asserts that two floating-point values are equal within a tolerance.
+
+**Syntax:**
+```c
+ASSERT_DOUBLE_EQ(expected_value, actual_value, epsilon)
+```
+
+**Parameters:**
+- `expected`: Expected floating-point value
+- `actual`: Actual floating-point value
+- `epsilon`: Maximum acceptable difference (tolerance)
+
+**Usage:** Use for floating-point comparisons (accounts for rounding errors).
+
+**Example:**
+```c
+TEST(pi_approximation) {
+    double pi = calculate_pi(1000);
+    ASSERT_DOUBLE_EQ(3.14159265, pi, 0.00001);
+}
+
+TEST(percentage_calculation) {
+    double percent = calculate_percentage(1, 3);
+    ASSERT_DOUBLE_EQ(33.333, percent, 0.001);
+}
+```
+
+**On Failure:**
+```
+    ASSERT_DOUBLE_EQ failed at test_example.cpp:112
+    Expected: 3.141593
+    Actual:   3.140000
+    Diff:     0.001593 (max: 0.001000)
+```
+
+**Notes:**
+- Never compare floats with `ASSERT_EQ()` - use this macro instead
+- Choose epsilon based on expected precision
+- Difference is calculated as `fabs(expected - actual)`
+
+---
+
 #### Test Organization
 
 Use `TEST_SECTION()` to group related tests:
