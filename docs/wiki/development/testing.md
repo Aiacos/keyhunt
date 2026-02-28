@@ -28,6 +28,295 @@ Expected: Finds 32 private keys quickly. All keys from 0x1 to 0x20 should be fou
 ./keyhunt -m xpoint -f tests/120.txt -t 4 -b 125 -R -q
 ```
 
+## Unit Test Framework
+
+Keyhunt includes a lightweight, zero-dependency unit test framework for automated testing of core components. The framework is designed for simplicity, portability, and fast compilation without requiring external libraries like Google Test or Catch2.
+
+### Architecture
+
+The test framework consists of three main components:
+
+#### 1. **test_framework.h** (Header-Only Framework)
+
+Located at `tests/test_framework.h`, this is the core testing infrastructure:
+
+- **Header-only design**: No separate compilation needed
+- **Macro-based API**: Simple `TEST()` and `ASSERT_*()` macros
+- **Colored output**: Terminal colors for pass/fail visualization
+- **Zero dependencies**: Pure C with stdio/stdlib only
+
+**Key Features:**
+- Test definition with `TEST(name)` macro
+- Test execution with `RUN_TEST(name)` macro
+- Comprehensive assertion macros (see below)
+- Automatic test counting and results summary
+- Section markers for organizing related tests
+
+#### 2. **run_tests.cpp** (Main Test Runner)
+
+Located at `tests/run_tests.cpp`, this is the entry point for running tests:
+
+- **Unified interface**: Single binary runs all or selected test modules
+- **Modular execution**: Run specific test suites (e.g., `./run_tests int`)
+- **Module integration**: Links together all test modules
+- **Help system**: Built-in usage documentation
+
+**Supported test modules:**
+```
+./run_tests              # Run all tests
+./run_tests int          # Int (256-bit integer) tests
+./run_tests hash         # Hash and crypto tests
+./run_tests bloom        # Bloom filter tests
+./run_tests bsgs         # BSGS integration tests
+./run_tests bsgs_ops     # BSGS operations tests
+./run_tests bsgs_sort    # BSGS sort/search tests
+./run_tests gpu          # GPU backend tests
+./run_tests multi_gpu    # Multi-GPU integration tests
+./run_tests distributed  # Distributed mode tests
+./run_tests wizard       # Wizard tests
+./run_tests point        # Point operation tests
+./run_tests intgroup     # IntGroup batch inversion tests
+./run_tests sha512       # SHA512 SIMD tests
+./run_tests sha256       # SHA256 SIMD tests
+./run_tests search_xpoint # XPOINT search mode tests
+./run_tests search_rmd160 # RMD160 search mode tests
+./run_tests fused        # Fused hash pipeline tests
+./run_tests extended     # Extended range tests
+```
+
+#### 3. **Test Modules** (Individual Test Files)
+
+Each component has its own test file (e.g., `test_int.cpp`, `test_bloom.cpp`):
+
+- **Isolated testing**: Each module tests one component
+- **Standardized structure**: All follow the same pattern
+- **Entry point function**: Each provides `int run_*_tests(void)`
+- **Independent execution**: Can be compiled/run standalone
+
+### Writing Tests
+
+#### Basic Test Structure
+
+```cpp
+#include "test_framework.h"
+#include "../src/component.h"  // Component under test
+
+// Define a test
+TEST(test_basic_functionality) {
+    int result = my_function(5);
+    ASSERT_EQ(10, result);
+    ASSERT_TRUE(result > 0);
+}
+
+TEST(test_error_handling) {
+    void *ptr = allocate_memory(0);
+    ASSERT_NULL(ptr);
+}
+
+// Test module entry point
+int run_component_tests(void) {
+    TEST_INIT();
+
+    TEST_SECTION("Basic Functionality");
+    RUN_TEST(test_basic_functionality);
+
+    TEST_SECTION("Error Handling");
+    RUN_TEST(test_error_handling);
+
+    return TEST_RESULTS();
+}
+```
+
+#### Available Assertions
+
+The framework provides comprehensive assertion macros:
+
+| Assertion | Purpose | Example |
+|-----------|---------|---------|
+| `ASSERT_TRUE(cond)` | Condition must be true | `ASSERT_TRUE(x > 0)` |
+| `ASSERT_FALSE(cond)` | Condition must be false | `ASSERT_FALSE(ptr == NULL)` |
+| `ASSERT_EQ(expected, actual)` | Values must be equal | `ASSERT_EQ(42, result)` |
+| `ASSERT_NEQ(not_expected, actual)` | Values must differ | `ASSERT_NEQ(0, count)` |
+| `ASSERT_STR_EQ(expected, actual)` | Strings must match | `ASSERT_STR_EQ("hello", str)` |
+| `ASSERT_MEM_EQ(expected, actual, len)` | Memory must match | `ASSERT_MEM_EQ(buf1, buf2, 32)` |
+| `ASSERT_NULL(ptr)` | Pointer must be NULL | `ASSERT_NULL(error_ptr)` |
+| `ASSERT_NOT_NULL(ptr)` | Pointer must not be NULL | `ASSERT_NOT_NULL(result)` |
+| `ASSERT_DOUBLE_EQ(expected, actual, epsilon)` | Floats equal within tolerance | `ASSERT_DOUBLE_EQ(3.14, pi, 0.01)` |
+
+**Assertion Behavior:**
+- On failure: Prints file/line, expected vs actual values, and marks test as failed
+- On success: Silent (no output)
+- Early return: Failed assertions immediately exit the current test function
+
+#### Test Organization
+
+Use `TEST_SECTION()` to group related tests:
+
+```cpp
+int run_my_tests(void) {
+    TEST_INIT();
+
+    TEST_SECTION("Core Operations");
+    RUN_TEST(test_add);
+    RUN_TEST(test_subtract);
+
+    TEST_SECTION("Edge Cases");
+    RUN_TEST(test_overflow);
+    RUN_TEST(test_zero_division);
+
+    return TEST_RESULTS();
+}
+```
+
+### Running Tests
+
+#### Build Tests
+
+```bash
+# Build all unit tests
+make tests
+
+# Build specific test module
+cd tests && make test_int
+```
+
+#### Run All Tests
+
+```bash
+./run_tests
+```
+
+**Output:**
+```
+╔═══════════════════════════════════════════════════════════════╗
+║           KEYHUNT UNIT TEST SUITE                            ║
+╚═══════════════════════════════════════════════════════════════╝
+
+>>> Running Int Tests
+
+=== KEYHUNT UNIT TESTS ===
+
+[Arithmetic Operations]
+  Running: test_add ... PASSED
+  Running: test_subtract ... PASSED
+  Running: test_multiply ... PASSED
+
+[Edge Cases]
+  Running: test_overflow ... PASSED
+  Running: test_underflow ... PASSED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Total:  5
+  Passed: 5
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+#### Run Specific Module
+
+```bash
+# Run only Int tests
+./run_tests int
+
+# Run only hash tests
+./run_tests hash
+
+# Run only BSGS tests
+./run_tests bsgs
+```
+
+### Adding New Test Modules
+
+To add a new test module (e.g., for a new component):
+
+#### 1. Create Test File
+
+Create `tests/test_mycomponent.cpp`:
+
+```cpp
+#include "test_framework.h"
+#include "../src/mycomponent.h"
+
+TEST(test_basic) {
+    // Test code here
+    ASSERT_TRUE(1 == 1);
+}
+
+int run_mycomponent_tests(void) {
+    TEST_INIT();
+    RUN_TEST(test_basic);
+    return TEST_RESULTS();
+}
+```
+
+#### 2. Update run_tests.cpp
+
+Add forward declaration and call:
+
+```cpp
+// Forward declaration
+int run_mycomponent_tests(void);
+
+// In main()
+if (module == NULL || strcmp(module, "mycomponent") == 0) {
+    printf(CLR_BOLD "\n>>> Running MyComponent Tests\n" CLR_RESET);
+    total_failures += run_mycomponent_tests();
+}
+```
+
+#### 3. Update Makefile
+
+Add to `tests/Makefile`:
+
+```makefile
+test_mycomponent: test_mycomponent.cpp test_framework.h
+	$(CXX) $(CXXFLAGS) -o $@ $< ../src/mycomponent.cpp
+```
+
+### Best Practices
+
+1. **One component per test file**: Keep tests focused and organized
+2. **Test both success and failure**: Cover happy path and error cases
+3. **Use descriptive test names**: `test_add_overflow_returns_max` not `test1`
+4. **Group related tests**: Use `TEST_SECTION()` for readability
+5. **Keep tests fast**: Unit tests should complete in milliseconds
+6. **Avoid external dependencies**: Tests should be self-contained
+7. **Test edge cases**: Zero, negative, maximum values, NULL pointers
+8. **Use appropriate assertions**: Choose the most specific assertion available
+
+### Continuous Integration
+
+The unit test suite integrates with CI pipelines:
+
+```bash
+# Pre-commit hook
+make tests && ./run_tests || exit 1
+
+# CI workflow
+make tests
+./run_tests
+if [ $? -ne 0 ]; then
+    echo "Unit tests failed!"
+    exit 1
+fi
+```
+
+### Troubleshooting
+
+**Tests don't compile:**
+- Check include paths in Makefile
+- Verify component source files are linked
+- Ensure C++17 standard is enabled
+
+**Tests crash:**
+- Run with Valgrind: `valgrind ./run_tests int`
+- Check for uninitialized variables
+- Verify pointer validity before dereferencing
+
+**Tests are slow:**
+- Profile with `-pg` flag
+- Reduce test iteration counts
+- Consider moving to integration tests if testing large data
+
 ## Test Data Files
 
 Located in `tests/` directory:
