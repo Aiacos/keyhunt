@@ -170,6 +170,7 @@ keyhunt_legacy: $(LEGACY_EXE)
 
 clean:
 	$(RM) keyhunt keyhunt_legacy bsgsd run_tests keyhunt_pgo_gen keyhunt_pgo benchmark_intgroup test_intgroup_avx2
+	$(RM) keyhunt.exe keyhunt_legacy.exe bsgsd.exe run_tests.exe keyhunt_pgo_gen.exe keyhunt_pgo.exe benchmark_intgroup.exe test_intgroup_avx2.exe
 	$(RM) -r $(OBJDIR)
 	$(RM) -f *.gcda *.gcno *.profraw *.profdata default.profraw gmon.out
 
@@ -294,6 +295,10 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c | directories
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.cu | directories
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+# sqlite3 is third-party code — suppress its fallthrough warnings
+$(OBJDIR)/database/sqlite3.o: $(SRCDIR)/database/sqlite3.c | directories
+	$(CC) $(CFLAGS) -Wno-implicit-fallthrough -c $< -o $@
 
 # Specific rules for C files that need C++ compilation
 $(OBJDIR)/core/util.o: $(SRCDIR)/core/util.c | directories
