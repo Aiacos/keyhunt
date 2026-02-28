@@ -146,6 +146,324 @@ genhtml coverage.info --output-directory coverage_report
 
 **Use when:** Identifying untested code paths or measuring test completeness.
 
+## Common Test Patterns
+
+This section demonstrates how to write effective unit tests for keyhunt, based on real examples from the test suite.
+
+### 1. Basic Test Structure
+
+Tests use the lightweight `TEST()` macro from `test_framework.h`. Here's the anatomy of a simple test:
+
+```cpp
+#include "test_framework.h"
+#include "secp256k1/Int.h"
+
+TEST(int_add_simple) {
+    Int a(100);
+    Int b(200);
+    a.Add(&b);
+    ASSERT_EQ(300, a.GetInt64());
+}
+```
+
+**Key elements:**
+- `TEST(name)`: Defines a test function (automatically prefixed with `test_`)
+- `ASSERT_EQ(expected, actual)`: Verifies equality
+- Clear, descriptive test names indicating what is being tested
+
+**Available assertion macros:**
+- `ASSERT_TRUE(condition)` - Verify condition is true
+- `ASSERT_FALSE(condition)` - Verify condition is false
+- `ASSERT_EQ(expected, actual)` - Verify numeric equality
+- `ASSERT_NEQ(not_expected, actual)` - Verify numeric inequality
+- `ASSERT_STR_EQ(expected, actual)` - Verify string equality
+- `ASSERT_MEM_EQ(expected, actual, len)` - Verify memory block equality
+- `ASSERT_NULL(ptr)` - Verify pointer is NULL
+- `ASSERT_NOT_NULL(ptr)` - Verify pointer is not NULL
+- `ASSERT_DOUBLE_EQ(expected, actual, epsilon)` - Verify floating-point equality
+
+### 2. Grouping Tests with TEST_SECTION
+
+Use `TEST_SECTION()` to organize related tests visually in the output:
+
+```cpp
+int main(int argc, char *argv[]) {
+    TEST_INIT();
+
+    TEST_SECTION("Addition Tests");
+    RUN_TEST(int_add_simple);
+    RUN_TEST(int_add_uint64);
+    RUN_TEST(int_add_zero);
+    RUN_TEST(int_add_carry);
+
+    TEST_SECTION("Subtraction Tests");
+    RUN_TEST(int_sub_simple);
+    RUN_TEST(int_sub_uint64);
+    RUN_TEST(int_sub_to_zero);
+
+    TEST_SECTION("Multiplication Tests");
+    RUN_TEST(int_mult_simple);
+    RUN_TEST(int_mult_large);
+
+    return TEST_RESULTS();
+}
+```
+
+**Output:**
+```
+=== KEYHUNT UNIT TESTS ===
+
+[Addition Tests]
+  Running: int_add_simple ... PASSED
+  Running: int_add_uint64 ... PASSED
+  Running: int_add_zero ... PASSED
+  Running: int_add_carry ... PASSED
+
+[Subtraction Tests]
+  Running: int_sub_simple ... PASSED
+  ...
+```
+
+### 3. Testing with Data Files
+
+Many tests require test data files from the `tests/` directory. Here's how to structure such tests:
+
+**Example: Testing hash functions with official test vectors**
+
+```cpp
+#include "test_framework.h"
+#include "hash/ripemd160.h"
+#include <cstring>
+#include <cstdio>
+
+/* Helper function to convert hex string to bytes */
+static void hex_to_bytes(const char *hex, unsigned char *bytes, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        sscanf(hex + 2*i, "%2hhx", &bytes[i]);
+    }
+}
+
+TEST(ripemd160_abc) {
+    unsigned char input[] = "abc";
+    unsigned char digest[20];
+    unsigned char expected[20];
+
+    /* RIPEMD160("abc") = 8eb208f7e05d987a9b044a8e98c6b087f15a0bfc */
+    hex_to_bytes("8eb208f7e05d987a9b044a8e98c6b087f15a0bfc", expected, 20);
+
+    ripemd160(input, 3, digest);
+    ASSERT_MEM_EQ(expected, digest, 20);
+}
+
+TEST(ripemd160_million_a) {
+    /* Test with 1 million 'a' characters */
+    const size_t len = 1000000;
+    unsigned char *input = (unsigned char *)malloc(len);
+    ASSERT_NOT_NULL(input);
+
+    memset(input, 'a', len);
+
+    unsigned char digest[20];
+    unsigned char expected[20];
+
+    /* Expected hash from official test vectors */
+    hex_to_bytes("52783243c1697bdbe16d37f97f68f08325dc1528", expected, 20);
+
+    ripemd160(input, len, digest);
+    ASSERT_MEM_EQ(expected, digest, 20);
+
+    free(input);
+}
+```
+
+**Key patterns:**
+- Use helper functions (`hex_to_bytes`) to prepare test data
+- Clean up dynamically allocated memory with `free()`
+- Use `ASSERT_NOT_NULL()` to verify allocations succeeded
+- Test with both small and large inputs
+- Use official test vectors when available
+
+**Example: Testing with files from tests/ directory**
+
+```cpp
+TEST(address_search_with_testfile) {
+    /* This would be a functional test that uses test data files */
+    FILE *fp = fopen("tests/1to32.txt", "r");
+    ASSERT_NOT_NULL(fp);
+
+    /* Read and validate test data */
+    char line[256];
+    int count = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        count++;
+        /* Validate address format, etc. */
+    }
+
+    fclose(fp);
+    ASSERT_EQ(32, count);  /* Verify file has expected number of entries */
+}
+```
+
+### 4. CI Integration (GitHub Actions)
+
+Tests are automatically run in GitHub Actions CI on every push and pull request. Here's how the CI workflow integrates with the test suite:
+
+**From `.github/workflows/ci.yml`:**
+
+```yaml
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Build test runner
+        run: |
+          make run_tests COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3"
+
+      - name: Run tests
+        timeout-minutes: 5
+        run: |
+          timeout 240 ./run_tests 2>&1 | tee test_output.txt
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test_output.txt
+```
+
+**Key CI features:**
+- **Timeouts**: Tests have a 5-minute timeout to prevent CI hangs
+- **Multiple platforms**: Tests run on `ubuntu-latest` and `ubuntu-22.04`
+- **Artifact upload**: Test output is saved and can be downloaded from failed runs
+- **Generic builds**: CI uses `-march=x86-64` instead of `-march=native` for compatibility
+
+**Testing CI locally:**
+
+To verify tests will pass in CI before pushing:
+
+```bash
+# Clean build with CI-compatible flags
+make clean
+make run_tests COMMON_FLAGS="-m64 -march=x86-64 -mtune=generic -mssse3"
+
+# Run tests with timeout (same as CI)
+timeout 240 ./run_tests
+```
+
+### 5. Setup and Teardown Patterns
+
+For tests that require initialization or cleanup, use the test function itself:
+
+```cpp
+TEST(complex_test_with_setup) {
+    /* Setup */
+    Int *values = (Int *)malloc(100 * sizeof(Int));
+    ASSERT_NOT_NULL(values);
+
+    /* Initialize test data */
+    for (int i = 0; i < 100; i++) {
+        values[i].SetInt64(i);
+    }
+
+    /* Test operations */
+    Int sum;
+    for (int i = 0; i < 100; i++) {
+        sum.Add(&values[i]);
+    }
+
+    ASSERT_EQ(4950, sum.GetInt64());  /* Sum of 0..99 */
+
+    /* Teardown */
+    free(values);
+}
+```
+
+**Pattern:**
+1. Allocate/initialize resources
+2. Verify allocation with `ASSERT_NOT_NULL`
+3. Perform test operations
+4. Clean up resources before test exits
+
+### 6. Testing Edge Cases
+
+Always test boundary conditions and edge cases:
+
+```cpp
+TEST(int_add_overflow) {
+    Int a((uint64_t)0xFFFFFFFFFFFFFFFFULL);
+    a.Add((uint64_t)1);
+    /* Should carry over to next 64-bit block */
+    ASSERT_FALSE(a.IsZero());
+    ASSERT_EQ(0, a.GetInt64());  /* Lower 64 bits wrap to 0 */
+}
+
+TEST(ripemd160_empty_input) {
+    unsigned char input[] = "";
+    unsigned char digest[20];
+    ripemd160(input, 0, digest);
+    /* Verify digest is not all zeros */
+    int all_zero = 1;
+    for (int i = 0; i < 20; i++) {
+        if (digest[i] != 0) {
+            all_zero = 0;
+            break;
+        }
+    }
+    ASSERT_FALSE(all_zero);
+}
+```
+
+**Common edge cases to test:**
+- Zero values
+- Maximum/minimum values
+- Empty inputs
+- Overflow/underflow
+- NULL pointers
+- Boundary values (powers of 2, etc.)
+
+### 7. Deterministic Testing
+
+Ensure tests produce consistent results across runs:
+
+```cpp
+TEST(ripemd160_deterministic) {
+    /* Same input should always produce same output */
+    unsigned char input[] = "deterministic test";
+    unsigned char digest1[20];
+    unsigned char digest2[20];
+
+    ripemd160(input, strlen((char*)input), digest1);
+    ripemd160(input, strlen((char*)input), digest2);
+
+    ASSERT_MEM_EQ(digest1, digest2, 20);
+}
+
+TEST(ripemd160_different_inputs) {
+    /* Different inputs should produce different outputs */
+    unsigned char input1[] = "test1";
+    unsigned char input2[] = "test2";
+    unsigned char digest1[20];
+    unsigned char digest2[20];
+
+    ripemd160(input1, 5, digest1);
+    ripemd160(input2, 5, digest2);
+
+    /* Digests should be different */
+    int same = (memcmp(digest1, digest2, 20) == 0);
+    ASSERT_FALSE(same);
+}
+```
+
 ### Test Output Format
 
 Tests produce colored, structured output:
