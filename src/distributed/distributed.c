@@ -309,6 +309,14 @@ int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
     return -1;
 }
 
+int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
+                                         const char *range_start,
+                                         const char *range_end,
+                                         int pool_index) {
+    (void)multipool; (void)range_start; (void)range_end; (void)pool_index;
+    return -1;
+}
+
 void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     (void)multipool;
 }
@@ -3611,8 +3619,16 @@ int dist_multipool_init(dist_multipool_client_t *multipool) {
         return -1;
     }
 
+    /* Initialize range mutex for thread-safe range tracking */
+    if (platform_mutex_init(&multipool->range_mutex) != 0) {
+        fprintf(stderr, "[multipool] Failed to initialize range mutex\n");
+        platform_mutex_destroy(&multipool->mutex);
+        return -1;
+    }
+
     multipool->pool_count = 0;
     multipool->current_pool_index = 0;
+    multipool->active_range_count = 0;
 
     printf("[multipool] Multi-pool manager initialized\n");
     return 0;
@@ -3907,6 +3923,88 @@ int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
 }
 
 /**
+ * Check if a range conflicts with any active ranges from other pools
+ * Uses hex string comparison to detect overlapping ranges
+ * @param multipool Multi-pool client state
+ * @param range_start Start of range to check (hex string)
+ * @param range_end End of range to check (hex string)
+ * @param pool_index Pool index this range would be from
+ * @return 1 if conflict detected, 0 if no conflict, -1 on error
+ */
+int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
+                                         const char *range_start,
+                                         const char *range_end,
+                                         int pool_index) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!range_start || !range_end) {
+        fprintf(stderr, "[multipool] NULL range pointers\n");
+        return -1;
+    }
+
+    if (pool_index < 0 || pool_index >= DIST_MAX_POOLS) {
+        fprintf(stderr, "[multipool] Invalid pool index: %d\n", pool_index);
+        return -1;
+    }
+
+    /* Thread-safe range conflict check */
+    platform_mutex_lock(&multipool->range_mutex);
+
+    /* Check against all active ranges */
+    for (int i = 0; i < multipool->active_range_count; i++) {
+        const active_range_t *active = &multipool->active_ranges[i];
+
+        /* Skip ranges from the same pool (not a conflict) */
+        if (active->pool_index == pool_index) {
+            continue;
+        }
+
+        /* Check if ranges overlap
+         * Two ranges overlap if: start1 <= end2 AND start2 <= end1
+         * Equivalently: NOT (end1 < start2 OR end2 < start1)
+         *
+         * For hex strings of equal length, strcmp works correctly:
+         * - strcmp(a, b) < 0 means a < b
+         * - strcmp(a, b) <= 0 means a <= b
+         */
+        int new_end_vs_active_start = strcmp(range_end, active->range_start);
+        int active_end_vs_new_start = strcmp(active->range_end, range_start);
+
+        /* Ranges overlap if:
+         * new_end >= active_start AND active_end >= new_start
+         * i.e., NOT (new_end < active_start OR active_end < new_start)
+         */
+        if (!(new_end_vs_active_start < 0 || active_end_vs_new_start < 0)) {
+            /* Conflict detected! */
+            platform_mutex_unlock(&multipool->range_mutex);
+
+            if (getenv("KEYHUNT_DEBUG")) {
+                fprintf(stderr, "[multipool] Range conflict detected:\n");
+                fprintf(stderr, "[multipool]   New range [%d]: %s - %s\n",
+                        pool_index, range_start, range_end);
+                fprintf(stderr, "[multipool]   Active range [%d]: %s - %s\n",
+                        active->pool_index, active->range_start, active->range_end);
+            }
+
+            return 1;  /* Conflict found */
+        }
+    }
+
+    platform_mutex_unlock(&multipool->range_mutex);
+
+    /* No conflict found */
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] No conflict for range [%d]: %s - %s (checked %d active ranges)\n",
+               pool_index, range_start, range_end, multipool->active_range_count);
+    }
+
+    return 0;
+}
+
+/**
  * Shutdown multi-pool client and disconnect all pools
  * @param multipool Multi-pool client state
  */
@@ -3931,11 +4029,13 @@ void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
 
     multipool->pool_count = 0;
     multipool->current_pool_index = 0;
+    multipool->active_range_count = 0;
 
     platform_mutex_unlock(&multipool->mutex);
 
-    /* Destroy mutex */
+    /* Destroy mutexes */
     platform_mutex_destroy(&multipool->mutex);
+    platform_mutex_destroy(&multipool->range_mutex);
 
     printf("[multipool] Multi-pool manager shutdown complete\n");
 }

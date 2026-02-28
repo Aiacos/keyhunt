@@ -775,6 +775,19 @@ int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
                                    uint64_t keys_since_last);
 
 /**
+ * Check if a range conflicts with any active ranges from other pools
+ * @param multipool Multi-pool client state
+ * @param range_start Start of range to check (hex string)
+ * @param range_end End of range to check (hex string)
+ * @param pool_index Pool index this range would be from
+ * @return 1 if conflict detected, 0 if no conflict, -1 on error
+ */
+int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
+                                         const char *range_start,
+                                         const char *range_end,
+                                         int pool_index);
+
+/**
  * Shutdown multi-pool client and disconnect all pools
  * @param multipool Multi-pool client state
  */
