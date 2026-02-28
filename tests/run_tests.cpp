@@ -20,6 +20,7 @@
  *   ./run_tests sha512       # Run only SHA512 SIMD tests
  *   ./run_tests search_xpoint # Run only XPOINT search mode tests
  *   ./run_tests search_rmd160 # Run only RMD160 search mode tests
+ *   ./run_tests extended      # Run only extended range tests
  */
 
 #include <stdio.h>
@@ -43,6 +44,7 @@ int run_sha256_simd_tests(void);
 int run_search_xpoint_tests(void);
 int run_search_rmd160_tests(void);
 int run_fused_hash_tests(void);
+int run_extended_range_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -80,6 +82,7 @@ static void print_usage(const char *prog) {
     printf("  search_xpoint Run XPOINT search mode tests\n");
     printf("  search_rmd160 Run RMD160 search mode tests\n");
     printf("  fused        Run fused hash pipeline tests\n");
+    printf("  extended     Run extended range (256-bit) tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -178,6 +181,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "fused") == 0) {
         printf(CLR_BOLD "\n>>> Running Fused Hash Pipeline Tests\n" CLR_RESET);
         total_failures += run_fused_hash_tests();
+    }
+
+    if (module == NULL || strcmp(module, "extended") == 0) {
+        printf(CLR_BOLD "\n>>> Running Extended Range Tests\n" CLR_RESET);
+        total_failures += run_extended_range_tests();
     }
 
     /* Final summary */

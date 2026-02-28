@@ -23,6 +23,8 @@
 #include "../cli.h"
 
 #ifdef __cplusplus
+/* Forward declaration of Int class for C++ compilation */
+class Int;
 extern "C" {
 #endif
 
@@ -93,6 +95,15 @@ typedef struct {
     uint64_t n_value;             /* N value (baby steps count) */
     int      k_factor;            /* K multiplication factor */
     uint64_t m_value;             /* M value (sqrt of N) */
+
+    /* Extended precision parameters (for bit ranges > 64) */
+#ifdef __cplusplus
+    Int*     n_value_int;         /* N value as Int* (256-bit precision) */
+    Int*     m_value_int;         /* M value as Int* (256-bit precision) */
+#else
+    void*    n_value_int;         /* N value as Int* (opaque in C) */
+    void*    m_value_int;         /* M value as Int* (opaque in C) */
+#endif
 
     /* Bloom filter parameters */
     int      bloom_multiplier;    /* Bloom filter size multiplier */
@@ -393,6 +404,23 @@ const char* kh_bsgs_mode_name(bsgs_mode_t mode);
  */
 uint64_t kh_bsgs_calc_memory(uint64_t n, int k, uint64_t *bloom_out, uint64_t *table_out);
 
+#ifdef __cplusplus
+/**
+ * Calculate BSGS memory requirements using Int (256-bit) arithmetic
+ *
+ * This version supports N values beyond uint64_t range by using Int arithmetic.
+ * Calculates M = sqrt(N) and total memory = bloom + bP table.
+ *
+ * @param n_int Pointer to Int representing N value
+ * @param k K factor (multiplication factor)
+ * @param m_int_out Optional output pointer to store calculated M value (caller must free)
+ * @param bloom_out Optional output pointer for bloom filter bytes
+ * @param table_out Optional output pointer for bP table bytes
+ * @return Total bytes needed (UINT64_MAX if overflow occurs)
+ */
+uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *bloom_out, uint64_t *table_out);
+#endif
+
 /**
  * Apply autotune settings to main config
  *
@@ -449,6 +477,31 @@ void kh_env_overrides_init(env_overrides_t *env);
 
 #ifdef __cplusplus
 }
+
+/* ============================================================================
+ * Helper Functions for Int/uint64_t Conversion (C++ only)
+ * ============================================================================ */
+
+/**
+ * Convert a uint64_t value to an Int* (256-bit integer).
+ *
+ * @param value  The 64-bit unsigned integer to convert
+ * @return       Newly allocated Int* (caller must free)
+ */
+Int* uint64_to_int(uint64_t value);
+
+/**
+ * Safely convert an Int* to uint64_t, checking for overflow.
+ *
+ * @param value     The Int* to convert (can be NULL)
+ * @param overflow  Output flag set to true if value doesn't fit in 64 bits (can be NULL)
+ * @return          The lower 64 bits of the Int value (0 if value is NULL)
+ *
+ * Note: Returns the lower 64 bits even on overflow. Check the overflow flag
+ *       to determine if data was lost.
+ */
+uint64_t int_to_uint64_safe(Int* value, bool* overflow);
+
 #endif
 
 #endif /* KEYHUNT_CONFIG_CONFIG_H */

@@ -24,11 +24,13 @@
 #include "../platform/platform.h"
 #include "../output.h"
 #include "../bsgs/bsgs_ops.h"
+#include "../core/sysinfo.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
 #include "../secure_file.h"
+#include <cmath>
 
 /* ------------------------------------------------------------------ */
 /*  Additional extern globals used by BSGS threads                     */
@@ -81,6 +83,266 @@ extern platform_mutex_t *bPload_mutex;
 extern void profile_set_thread(int idx);
 
 /* ============================================================================
+ * BSGS N/M Value Validation
+ * ============================================================================ */
+
+/* External system info for RAM availability */
+extern system_info_t g_sysinfo;
+
+/**
+ * suggest_practical_alternatives - Calculate and suggest practical N/K values
+ *
+ * When the user requests a bit range that exceeds practical limits (e.g., -b 160),
+ * this function calculates alternative parameters that would fit in available RAM.
+ *
+ * @param thread_id      Thread number for reporting
+ * @param bit_range      User's requested bit range (e.g., 160)
+ * @param current_k      Current K factor
+ */
+static void suggest_practical_alternatives(uint32_t thread_id, int bit_range, int current_k) {
+	uint64_t available_ram_mb = g_sysinfo.ram_available;
+	if (available_ram_mb == 0) {
+		available_ram_mb = 4096; /* Fallback: assume 4 GB */
+	}
+
+	/* Use 60% of available RAM as safe target */
+	uint64_t target_ram_mb = (available_ram_mb * 60) / 100;
+	uint64_t target_ram_bytes = target_ram_mb * 1024 * 1024;
+
+	output_info("\n[Thread %u] Suggesting practical alternatives for your system:\n", thread_id);
+	output_info("  Available RAM: %llu MB\n", (unsigned long long)available_ram_mb);
+	output_info("  Safe target:   %llu MB (60%% of available)\n\n", (unsigned long long)target_ram_mb);
+
+	/* BSGS memory formula: Total = M * K * 20 bytes (approximate, with bloom overhead)
+	 * Where M = sqrt(N) = sqrt(2^bit_range) = 2^(bit_range/2)
+	 *
+	 * Example calculations for different bit ranges:
+	 * - 66-bit:  M = 2^33  = 8.6 billion entries
+	 * - 125-bit: M = 2^62.5 ~= 6.5e18 entries
+	 * - 160-bit: M = 2^80  = 1.2e24 entries (impractical!)
+	 */
+
+	output_info("  Recommended configurations:\n\n");
+
+	/* Strategy 1: Keep K factor, reduce bit range */
+	int max_bit_for_k = 0;
+	for (int b = 40; b <= 125; b += 5) {
+		/* Rough approximation: M = 2^(b/2), Memory = M * K * 20 bytes */
+		/* For precise calculation, we'd need to compute sqrt(2^b), but this estimates well */
+		double m_bits = (double)b / 2.0;
+		double m_approx = pow(2.0, m_bits);
+		uint64_t mem_approx = (uint64_t)(m_approx * current_k * 20.0);
+
+		if (mem_approx > UINT64_MAX || mem_approx > target_ram_bytes) {
+			break;
+		}
+		max_bit_for_k = b;
+	}
+
+	if (max_bit_for_k > 0) {
+		output_info("  Strategy 1: Keep K = %d, reduce bit range\n", current_k);
+		output_info("    Maximum practical bit range: %d bits\n", max_bit_for_k);
+		output_info("    Command: ./keyhunt -m bsgs -f targets.txt -b %d -k %d\n\n",
+		            max_bit_for_k, current_k);
+	}
+
+	/* Strategy 2: Keep bit range at practical maximum (125), adjust K factor */
+	if (bit_range > 125) {
+		int max_k_for_125 = 1;
+		for (int k = 1; k <= 4096; k *= 2) {
+			double m_125 = pow(2.0, 125.0 / 2.0); /* M for 125-bit range */
+			uint64_t mem_approx = (uint64_t)(m_125 * k * 20.0);
+
+			if (mem_approx > UINT64_MAX || mem_approx > target_ram_bytes) {
+				break;
+			}
+			max_k_for_125 = k;
+		}
+
+		if (max_k_for_125 >= 1) {
+			output_info("  Strategy 2: Use 125-bit range (practical maximum), adjust K factor\n");
+			output_info("    Maximum K factor: %d\n", max_k_for_125);
+			output_info("    Command: ./keyhunt -m bsgs -f targets.txt -b 125 -k %d\n\n",
+			            max_k_for_125);
+		}
+	}
+
+	/* Strategy 3: Use smaller K factor for current bit range (if practical) */
+	int min_k_for_current = 0;
+	if (bit_range <= 125) {
+		for (int k = 1; k <= current_k; k *= 2) {
+			double m_bits = (double)bit_range / 2.0;
+			double m_approx = pow(2.0, m_bits);
+			uint64_t mem_approx = (uint64_t)(m_approx * k * 20.0);
+
+			if (mem_approx <= target_ram_bytes && mem_approx < UINT64_MAX) {
+				min_k_for_current = k;
+			} else {
+				break;
+			}
+		}
+
+		if (min_k_for_current > 0 && min_k_for_current < current_k) {
+			output_info("  Strategy 3: Reduce K factor for %d-bit range\n", bit_range);
+			output_info("    Suggested K factor: %d\n", min_k_for_current);
+			output_info("    Command: ./keyhunt -m bsgs -f targets.txt -b %d -k %d\n\n",
+			            bit_range, min_k_for_current);
+		}
+	}
+
+	output_info("  Note: For ranges beyond 160 bits, BSGS is generally impractical.\n");
+	output_info("        Consider using address search mode instead.\n\n");
+}
+
+/**
+ * validate_bsgs_nm_values - Validate BSGS N/M values for practical ranges
+ *
+ * This function checks if the BSGS N and M values (Int 256-bit types) fit
+ * within practical computation limits. The values originate from:
+ * - config->bsgs.n_value_int: N value as Int* (256-bit precision)
+ * - config->bsgs.m_value_int: M value as Int* (256-bit precision)
+ *
+ * These are converted to working Int globals (BSGS_N, BSGS_M) during
+ * initialization in keyhunt.cpp. This function validates them at thread
+ * startup to ensure practical memory and computation constraints.
+ *
+ * Practical limits:
+ * - N <= 2^80 (~1.2e24): Ensures reasonable computation time
+ * - M <= 2^64 (~1.8e19): Ensures M can fit in uint64_t for array indexing
+ * - Memory: M * K * ~20 bytes per entry (bloom + table)
+ *
+ * Graceful degradation: If N > uint64_t, suggests reducing K factor or using smaller N
+ *
+ * @param thread_id  Thread number for error reporting
+ * @return           0 on success, -1 if values are impractical
+ *
+ * Example warnings:
+ * - N > 2^80: "BSGS N value is beyond practical computation range"
+ * - M > 2^64: "BSGS M value exceeds addressable memory limits"
+ * - N > 2^64: Suggests practical alternatives with different N/K combinations
+ */
+static int validate_bsgs_nm_values(uint32_t thread_id) {
+	bool n_overflow = false;
+	bool m_overflow = false;
+
+	/* Check if higher bits are set (indicating overflow beyond 64 bits) */
+	for (int i = 1; i < NB64BLOCK; i++) {
+		if (BSGS_N.bits64[i] != 0) {
+			n_overflow = true;
+		}
+		if (BSGS_M.bits64[i] != 0) {
+			m_overflow = true;
+		}
+	}
+
+	/* Check if N > 2^80 (practical limit for BSGS computation)
+	 * 2^80 = 0x100000000000000000000 (21 hex digits)
+	 * If bit 80 or higher is set, it's beyond practical range */
+	bool n_beyond_practical = false;
+	if (n_overflow) {
+		/* If any bit beyond bit 63 is set, check if beyond 2^80 */
+		/* 2^80 requires bits64[1] to have bit 16 or higher set (80-64=16) */
+		if (BSGS_N.bits64[1] >= (1ULL << 16)) {
+			n_beyond_practical = true;
+		}
+		/* Or any higher limb is set */
+		for (int i = 2; i < NB64BLOCK; i++) {
+			if (BSGS_N.bits64[i] != 0) {
+				n_beyond_practical = true;
+				break;
+			}
+		}
+	}
+
+	/* Report warnings for impractical ranges */
+	if (n_beyond_practical) {
+		output_error("\n[Thread %u] ERROR: BSGS N value is beyond practical computation range (>2^80)\n", thread_id);
+		output_error("  Current N would require astronomical computation time and memory.\n");
+		output_error("  For reference:\n");
+		output_error("    - Puzzle #66:  N = 2^66  (practical with BSGS)\n");
+		output_error("    - Puzzle #125: N = 2^125 (practical with BSGS)\n");
+		output_error("    - N > 2^160:   Impractical even with perfect hardware\n\n");
+
+		/* Estimate bit range from N value for better suggestions */
+		int estimated_bits = 0;
+		for (int i = NB64BLOCK - 1; i >= 0; i--) {
+			if (BSGS_N.bits64[i] != 0) {
+				/* Find highest set bit in this limb */
+				uint64_t limb = BSGS_N.bits64[i];
+				int bit_pos = 63;
+				while (bit_pos >= 0 && !(limb & (1ULL << bit_pos))) {
+					bit_pos--;
+				}
+				estimated_bits = i * 64 + bit_pos + 1;
+				break;
+			}
+		}
+
+		if (estimated_bits > 0) {
+			suggest_practical_alternatives(thread_id, estimated_bits, KFACTOR);
+		}
+
+		return -1;
+	}
+
+	if (m_overflow) {
+		output_warning("\n[Thread %u] WARNING: BSGS M value exceeds 64-bit addressable range\n", thread_id);
+		output_warning("  M = sqrt(N) = %s (hex)\n", BSGS_M.GetBase16());
+		output_warning("  This may cause memory allocation or indexing issues.\n\n");
+
+		/* Estimate bit range for suggestions */
+		int estimated_bits = 0;
+		for (int i = NB64BLOCK - 1; i >= 0; i--) {
+			if (BSGS_N.bits64[i] != 0) {
+				uint64_t limb = BSGS_N.bits64[i];
+				int bit_pos = 63;
+				while (bit_pos >= 0 && !(limb & (1ULL << bit_pos))) {
+					bit_pos--;
+				}
+				estimated_bits = i * 64 + bit_pos + 1;
+				break;
+			}
+		}
+
+		if (estimated_bits > 0) {
+			suggest_practical_alternatives(thread_id, estimated_bits, KFACTOR);
+		}
+
+		/* Continue execution but warn - may fail later during memory allocation */
+	}
+
+	if (n_overflow && !n_beyond_practical) {
+		output_warning("\n[Thread %u] WARNING: BSGS N value exceeds 64-bit range (but within 2^80 practical limit)\n", thread_id);
+		output_warning("  N = %s (hex)\n", BSGS_N.GetBase16());
+		output_warning("  Using extended precision (Int 256-bit) for computation.\n\n");
+
+		/* Provide helpful suggestions for N > 2^64 case */
+		int estimated_bits = 0;
+		for (int i = NB64BLOCK - 1; i >= 0; i--) {
+			if (BSGS_N.bits64[i] != 0) {
+				uint64_t limb = BSGS_N.bits64[i];
+				int bit_pos = 63;
+				while (bit_pos >= 0 && !(limb & (1ULL << bit_pos))) {
+					bit_pos--;
+				}
+				estimated_bits = i * 64 + bit_pos + 1;
+				break;
+			}
+		}
+
+		if (estimated_bits > 64) {
+			output_info("[Thread %u] Graceful degradation recommendations:\n", thread_id);
+			output_info("  Your N value is large (estimated %d bits) but theoretically feasible.\n", estimated_bits);
+			output_info("  However, you may want to consider more practical alternatives:\n\n");
+			suggest_practical_alternatives(thread_id, estimated_bits, KFACTOR);
+		}
+	}
+
+	/* Success: Values are within practical limits */
+	return 0;
+}
+
+/* ============================================================================
  * thread_process_bsgs - Sequential BSGS search
  * ============================================================================ */
 
@@ -122,6 +384,13 @@ void *thread_process_bsgs(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	// Initialize batch context
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
@@ -288,6 +557,13 @@ void *thread_process_bsgs_random(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
 
 	// Initialize batch context
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
@@ -747,6 +1023,14 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
+
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
 
 	// Initialize batch context
@@ -952,6 +1236,13 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	free(tt);
 	profile_set_thread((int)thread_number);
 
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
+
 	// Initialize batch context
 	if (bsgs_batch_init(&batch_ctx, BSGS_BATCH_SIZE) != 0) {
 		output_error("Failed to initialize BSGS batch context in thread %u\n", thread_number);
@@ -1126,6 +1417,14 @@ void *thread_process_bsgs_both(void *vargp)	{
 	thread_number = tt->nt;
 	free(tt);
 	profile_set_thread((int)thread_number);
+
+	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
+	if (validate_bsgs_nm_values(thread_number) != 0) {
+		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
+		delete grp;
+		return NULL;
+	}
+
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
 
 	// Initialize batch context

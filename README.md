@@ -1271,6 +1271,195 @@ sys     0m20.061s
 
 ```
 
+## Extended Range Support (256-bit)
+
+### Theoretical vs Practical Limits
+
+keyhunt now supports **theoretical 256-bit ranges** for BSGS mode using arbitrary-precision integer arithmetic (`Int` class). However, there are **hard practical limits** due to memory and computation constraints.
+
+#### Why 256-bit Support?
+
+The 256-bit support is implemented to:
+- **Future-proof** keyhunt for theoretical research and high-difficulty puzzles
+- **Remove artificial limitations** in the code (previous 64-bit ceiling)
+- **Gracefully degrade** with clear error messages instead of crashes
+- **Position keyhunt** beyond tools like Kangaroo (125-bit ceiling)
+
+#### Practical Reality
+
+**BSGS is only practical for ranges up to ~80 bits.** Beyond that, memory and computation become impossibly large:
+
+| Bit Range | M (sqrt(N)) | RAM Required | Practical? | Example |
+|-----------|-------------|--------------|------------|---------|
+| 66-bit    | 2^33        | ~8 GB        | ✅ Yes     | Puzzle #66 (solved) |
+| 80-bit    | 2^40        | ~2 TB        | ⚠️ Barely  | Requires high-end server |
+| 100-bit   | 2^50        | ~2 PB        | ❌ No      | Beyond all current hardware |
+| 125-bit   | 2^62        | ~16 EB       | ❌ No      | Puzzle #125 (theoretical) |
+| 160-bit   | 2^80        | ~21 YB       | ❌ No      | Exceeds addressable memory |
+| 256-bit   | 2^128       | ~6.8×10^29 YB| ❌ No      | Theoretical only |
+
+**Legend:**
+- **GB** = Gigabytes (10^9 bytes)
+- **TB** = Terabytes (10^12 bytes)
+- **PB** = Petabytes (10^15 bytes)
+- **EB** = Exabytes (10^18 bytes)
+- **YB** = Yottabytes (10^24 bytes)
+
+#### Memory Calculation Formula
+
+For BSGS mode, memory requirements scale as:
+
+```
+M = sqrt(N)   (where N = search range size)
+K = multiplier factor (default 1, can be increased for speed)
+
+Total RAM = (M * K * 3.5) + (M * K * 3.5 / 32) + (M * K * 3.5 / 1024) + (M / 32 * K * 16)
+          = Bloom1       + Bloom2               + Bloom3                + bP Table
+```
+
+**Example:** For a 66-bit range with K=1:
+- N = 2^66 = 73,786,976,294,838,206,464
+- M = sqrt(N) ≈ 2^33 = 8,589,934,592
+- Total RAM ≈ 8 GB
+
+**Example:** For a 125-bit range with K=128 (Puzzle #125):
+- N = 2^125
+- M = sqrt(N) ≈ 2^62.5
+- Total RAM ≈ 16 EB (exabytes) — **impossible!**
+
+### Hard Limits Enforced by keyhunt
+
+keyhunt validates parameters and provides clear error messages:
+
+#### 1. **N > 2^80** (Computation Limit)
+
+If you specify a range requiring N > 2^80, keyhunt will error:
+
+```bash
+$ ./keyhunt -m bsgs -f targets.txt -b 160
+
+[ERROR] BSGS N value is beyond practical computation range (>2^80)
+  N = 2^160 requires M = 2^80 = 1.2e24 entries
+
+  For reference:
+    - Puzzle #66:  2^66  range (8 GB RAM, practical)
+    - Puzzle #125: 2^125 range (16 EB RAM, impossible)
+    - Your range:  2^160 range (impractical!)
+
+  Suggestion: Use a smaller bit range (-b) or different search mode.
+```
+
+#### 2. **M > 2^64** (Memory Addressability Limit)
+
+If M (sqrt(N)) exceeds 2^64, keyhunt warns:
+
+```
+[WARNING] Practical limit exceeded:
+  M (sqrt(N)) exceeds 2^64, requiring impossibly large memory.
+  Ranges beyond 160-bit are impractical for BSGS mode.
+```
+
+#### 3. **Memory Requirements > Available RAM**
+
+If calculated RAM exceeds available system memory, keyhunt auto-corrects:
+
+```
+[!] N Value: N=0x1000000000000 requires 539072 MB but only 18328 MB available.
+    Auto-corrected to 0x10000000000 (33692 MB)
+```
+
+### Recommended Configurations
+
+#### For Puzzle #66 (Practical)
+
+```bash
+# Optimal for 16 GB RAM system
+./keyhunt -m bsgs -f 66.txt -b 66 -k 128 -t 16 -R -q -s 10
+```
+
+**Memory:** ~2 GB
+**Speed:** ~1.2 Pkeys/s
+**Practical:** ✅ Yes
+
+#### For Puzzle #80 (High-End Server)
+
+```bash
+# Requires ~2 TB RAM
+./keyhunt -m bsgs -f 80.txt -b 80 -k 8 -t 64 -R -q -s 10
+```
+
+**Memory:** ~2 TB
+**Speed:** Varies
+**Practical:** ⚠️ Barely (requires expensive server)
+
+#### For Puzzle #125 (Theoretical Only)
+
+```bash
+# This will ERROR due to memory limits
+./keyhunt -m bsgs -f 125.txt -b 125 -k 128 -R -q
+
+[WARNING] Practical limit exceeded:
+  M (sqrt(N)) exceeds 2^64, requiring impossibly large memory.
+```
+
+**Memory:** ~16 EB (impossible)
+**Practical:** ❌ No
+
+**Workaround:** Use smaller K factor or reduce bit range, but this reduces effectiveness drastically.
+
+### How 256-bit Support Works
+
+1. **CLI Parsing:** The `-b` flag now accepts values 1-256:
+   ```bash
+   ./keyhunt -m bsgs -f targets.txt -b 200  # Accepted, but will warn/error
+   ```
+
+2. **Arbitrary Precision:** N and M are calculated using `Int` class (256-bit precision):
+   ```cpp
+   Int n;
+   n.Set(&one);
+   n.ShiftL(bit_range);  // N = 2^bit_range
+   ```
+
+3. **Memory Calculation:** Uses `Int` arithmetic to avoid overflow:
+   ```cpp
+   Int m = int_sqrt(n);  // Newton's method for sqrt
+   ```
+
+4. **Validation:** Checks practical limits before allocating memory:
+   ```cpp
+   if (N > 2^80) → ERROR
+   if (M > 2^64) → WARNING
+   if (RAM > available) → AUTO-CORRECT or ERROR
+   ```
+
+5. **Graceful Degradation:** Provides actionable suggestions instead of crashes:
+   ```
+   Strategy 1: Keep K=128, reduce to -b 66 (requires 2048 MB)
+   Strategy 2: Use maximum -b 125, reduce K to 4 (requires 6144 MB)
+   Strategy 3: Keep -b 200, reduce K to 1 (still impractical)
+   ```
+
+### Technical Details
+
+For complete technical documentation about extended range support, see:
+- **[Parameter Validation Guide](docs/PARAMETER_VALIDATION.md)** - Auto-tuning and validation system
+- **[BSGS Extended Range Guide](docs/BSGS_EXTENDED_RANGE.md)** - Detailed memory scaling charts
+- **[Migration Guide](MIGRATION_GUIDE.md)** - Developer documentation for configuration system
+
+### Summary
+
+| Feature | Status |
+|---------|--------|
+| **Theoretical Range** | 256-bit (full secp256k1 curve) |
+| **Practical Range** | ~80-bit maximum |
+| **Memory Validation** | ✅ Automatic with clear errors |
+| **Auto-Correction** | ✅ Suggests optimal N/K values |
+| **Graceful Degradation** | ✅ No crashes, actionable messages |
+| **Future-Proof** | ✅ Ready for theoretical research |
+
+**Bottom Line:** While keyhunt now supports 256-bit ranges *in theory*, BSGS mode is only practical for ranges up to ~80 bits due to fundamental memory constraints. For higher bit ranges (130+), use **random search mode** (`-m address`) instead.
+
 ## Is my speed real?
 
 Since this is still a beta version we can have some doubt about the speed showed in the bsgs mode.

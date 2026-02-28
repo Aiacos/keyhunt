@@ -3,11 +3,13 @@
 
 #include "cli.h"
 #include "config/config.h"
+#include "secp256k1/Int.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
 #include <strings.h>  // for strcasecmp on Linux
+#include <ctype.h>    // for tolower
 
 // Mode name strings
 static const char *mode_names[] = {
@@ -197,6 +199,17 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
                         return -1;
                     }
                     args->bits = (int)val;
+
+                    // Use Int::ShiftL() to calculate 2^b for bit range (supports full 256-bit range)
+                    Int n_calc;
+                    n_calc.SetInt32(1);
+                    n_calc.ShiftL((uint32_t)val);
+                    char *n_hex = n_calc.GetBase16();
+                    if (n_hex != NULL) {
+                        strncpy(args->n_value, n_hex, sizeof(args->n_value) - 1);
+                        args->n_value[sizeof(args->n_value) - 1] = '\0';
+                        free(n_hex);
+                    }
                 }
                 break;
 
@@ -471,6 +484,59 @@ void cli_print(const cli_args_t *args) {
     printf("  Run wizard: %s\n", args->run_wizard ? "yes" : "no");
     printf("  Run benchmark: %s\n", args->run_benchmark ? "yes" : "no");
 }
+
+// ============================================================================
+// Extended N value parsing (C++ only - requires Int class)
+// ============================================================================
+
+int parse_n_value_extended(const char *value_str, Int *result) {
+    if (value_str == NULL || result == NULL) {
+        fprintf(stderr, "[E] parse_n_value_extended: NULL parameter\n");
+        return -1;
+    }
+
+    // Skip whitespace at the beginning
+    while (*value_str && isspace(*value_str)) {
+        value_str++;
+    }
+
+    // Check for empty string
+    if (*value_str == '\0') {
+        fprintf(stderr, "[E] parse_n_value_extended: Empty value string\n");
+        return -1;
+    }
+
+    // Handle "0x" or "0X" prefix
+    const char *hex_str = value_str;
+    if (value_str[0] == '0' && (value_str[1] == 'x' || value_str[1] == 'X')) {
+        hex_str = value_str + 2;  // Skip "0x" or "0X"
+    }
+
+    // Check if we have at least one hex digit after stripping prefix
+    if (*hex_str == '\0') {
+        fprintf(stderr, "[E] parse_n_value_extended: No hex digits after prefix\n");
+        return -1;
+    }
+
+    // Validate that all characters are valid hex digits
+    for (const char *p = hex_str; *p != '\0'; p++) {
+        if (!isxdigit(*p)) {
+            fprintf(stderr, "[E] parse_n_value_extended: Invalid hex character '%c' at position %ld\n",
+                    *p, (long)(p - value_str));
+            return -1;
+        }
+    }
+
+    // Parse the hex string using Int::SetBase16()
+    // Note: SetBase16() internally handles invalid characters and prints errors
+    result->SetBase16(hex_str);
+
+    return 0;
+}
+
+// ============================================================================
+// Config population
+// ============================================================================
 
 int cli_populate_config(const cli_args_t *args, void *cfg_ptr) {
     if (args == NULL || cfg_ptr == NULL) {
