@@ -466,6 +466,8 @@ platform_mutex_lock(&write_keys);
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
+								} else {
+									output_error("Could not write to KEYFOUNDKEYFOUND.txt\n");
 								}
 								free(hextemp);
 								free(aux_c);
@@ -636,6 +638,8 @@ platform_mutex_lock(&write_keys);
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
+								} else {
+									output_error("Could not write to KEYFOUNDKEYFOUND.txt\n");
 								}
 								free(hextemp);
 								free(aux_c);
@@ -1135,6 +1139,8 @@ platform_mutex_lock(&write_keys);
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
+								} else {
+									output_error("Could not write to KEYFOUNDKEYFOUND.txt\n");
 								}
 								free(hextemp);
 								free(aux_c);
@@ -1317,6 +1323,8 @@ platform_mutex_lock(&write_keys);
 								if(filekey != NULL)	{
 									fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 									fclose(filekey);
+								} else {
+									output_error("Could not write to KEYFOUNDKEYFOUND.txt\n");
 								}
 								free(hextemp);
 								free(aux_c);
@@ -1527,6 +1535,8 @@ platform_mutex_lock(&write_keys);
 									if(filekey != NULL)	{
 										fprintf(filekey,"Key found privkey %s\nPublickey %s\n",hextemp,aux_c);
 										fclose(filekey);
+									} else {
+										output_error("Could not write to KEYFOUNDKEYFOUND.txt\n");
 									}
 									free(hextemp);
 									free(aux_c);

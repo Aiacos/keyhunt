@@ -813,7 +813,7 @@ void *thread_process(void *vargp)	{
 										generate_binaddress_eth(endomorphism_beta[(4*j)+k],(uint8_t*)publickeyhashrmd160_endomorphism[2][k]);
 										generate_binaddress_eth(endomorphism_negeted_point[k],(uint8_t*)publickeyhashrmd160_endomorphism[3][k]);
 										endomorphism_negeted_point[k] = secp->Negation(endomorphism_beta2[(j*4)+k]);
-										generate_binaddress_eth(endomorphism_beta[(4*j)+k],(uint8_t*)publickeyhashrmd160_endomorphism[4][k]);
+										generate_binaddress_eth(endomorphism_beta2[(4*j)+k],(uint8_t*)publickeyhashrmd160_endomorphism[4][k]);
 										generate_binaddress_eth(endomorphism_negeted_point[k],(uint8_t*)publickeyhashrmd160_endomorphism[5][k]);
 									}
 								}

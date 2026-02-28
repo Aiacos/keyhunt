@@ -14,7 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#ifdef __linux__
+#if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
 #endif
 
@@ -25,7 +25,7 @@
 
 // Check AVX2 availability
 static bool check_avx2() {
-#ifdef __linux__
+#if defined(__GNUC__) || defined(__clang__)
     unsigned int eax, ebx, ecx, edx;
     if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
         return (ebx & (1 << 5)) != 0;
@@ -36,7 +36,7 @@ static bool check_avx2() {
 
 // Check AVX-512 availability
 static bool check_avx512() {
-#ifdef __linux__
+#if defined(__GNUC__) || defined(__clang__)
     unsigned int eax, ebx, ecx, edx;
     if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
         return (ebx & (1 << 16)) != 0;
@@ -52,7 +52,7 @@ static void* aligned_alloc_helper(size_t alignment, size_t size) {
     ptr = _aligned_malloc(size, alignment);
 #else
     if (posix_memalign(&ptr, alignment, size) != 0) {
-        ptr = malloc(size);
+        ptr = nullptr;
     }
 #endif
     return ptr;

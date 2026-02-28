@@ -7,7 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../platform/platform_types.h"
+#if !PLATFORM_WINDOWS
 #include <unistd.h>
+#endif
 
 /* ============================================================================
  * URL Validation (shell injection prevention)

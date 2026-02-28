@@ -1,11 +1,12 @@
 #include "parameter_validator.h"
+#include "../platform/platform_types.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
 // ANSI color codes for terminal output (disabled on Windows by default)
-#ifdef _WIN32
+#if PLATFORM_WINDOWS
 #define COLOR_RESET   ""
 #define COLOR_GREEN   ""
 #define COLOR_YELLOW  ""

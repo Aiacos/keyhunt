@@ -635,7 +635,7 @@ int vanity_rmd_total = 0;
 int *vanity_rmd_limits = NULL;
 uint8_t ***vanity_rmd_limit_values_A = NULL;
 uint8_t ***vanity_rmd_limit_values_B = NULL;
-int vanity_rmd_minimun_bytes_check_length = 0;
+int vanity_rmd_minimun_bytes_check_length = 999999;
 char **vanity_address_targets = NULL;
 struct bloom *vanity_bloom = NULL;
 bloom_extended_t bloom;
@@ -694,24 +694,27 @@ int g_gpu_range_percent = 0;
 
 // Multi-GPU worker instance (for signal handler access)
 static gpu_multi_worker_t *g_multi_gpu_workers = NULL;
+static volatile sig_atomic_t g_sigint_received = 0;
 
 /*
- * Signal handler for SIGINT (Ctrl+C) - gracefully stop multi-GPU workers
+ * Signal handler for SIGINT (Ctrl+C) - only sets flags (async-signal-safe)
  */
 #ifndef _WIN64
 static void sigint_handler(int sig) {
-	(void)sig; /* Unused parameter */
-
-	/* Set stop flag for GPU workers */
+	(void)sig;
+	g_sigint_received = 1;
 	g_gpu_should_stop.store(1, std::memory_order_release);
-
-	/* If multi-GPU workers are active, stop them gracefully */
-	if (g_multi_gpu_workers != NULL) {
-		output_info("\nReceived Ctrl+C, stopping multi-GPU workers...\n");
-		gpu_worker_stop(g_multi_gpu_workers, 10000); /* 10 second timeout */
-	}
 }
 #endif
+
+/* Call from main loop to handle deferred SIGINT cleanup */
+static void check_sigint_cleanup(void) {
+	if (g_sigint_received && g_multi_gpu_workers != NULL) {
+		output_info("\nReceived Ctrl+C, stopping multi-GPU workers...\n");
+		gpu_worker_stop(g_multi_gpu_workers, 10000);
+		g_multi_gpu_workers = NULL;
+	}
+}
 
 // Range and stride variables
 int bitrange = 0;
@@ -2216,6 +2219,10 @@ int main(int argc, char **argv)	{
 			char corrected_n[32];
 			snprintf(corrected_n, sizeof(corrected_n), "0x%llx", (unsigned long long)user_n_value);
 			str_N = strdup(corrected_n);
+			if (str_N == NULL) {
+				output_error("Memory allocation failed for N parameter\n");
+				exit(EXIT_FAILURE);
+			}
 		}
 
 		// If N wasn't specified and we're in BSGS mode, use recommended
@@ -2223,6 +2230,10 @@ int main(int argc, char **argv)	{
 			char auto_n[32];
 			snprintf(auto_n, sizeof(auto_n), "0x%llx", (unsigned long long)OPTIMAL_N);
 			str_N = strdup(auto_n);
+			if (str_N == NULL) {
+				output_error("Memory allocation failed for N parameter\n");
+				exit(EXIT_FAILURE);
+			}
 			FLAG_N = 1;
 		}
 
@@ -4151,6 +4162,7 @@ int main(int argc, char **argv)	{
 
 									// Check if we should stop (Ctrl+C, etc)
 									if (g_gpu_should_stop.load(std::memory_order_acquire)) {
+										check_sigint_cleanup();
 										break;
 									}
 								}
@@ -5191,7 +5203,8 @@ static platform_thread_return_t PLATFORM_THREAD_CALL gpu_hybrid_thread(void *arg
 	printf("[GPU] Work-stealing thread started\n");
 
 	// Loop: pull work blocks from shared pool until exhausted
-	while (!g_gpu_should_stop && g_work_pool.enabled) {
+	while (!g_gpu_should_stop.load(std::memory_order_acquire) && g_work_pool.enabled) {
+		check_sigint_cleanup();
 		Int block_start, block_end;
 
 		// Try to get a work block

@@ -312,6 +312,8 @@ void *thread_process_minikeys(void *vargp) {
 								if (keys != NULL) {
 									fprintf(keys, "Private Key: %s\npubkey: %s\nminikey: %s\naddress: %s\n", hextemp, public_key_uncompressed_hex, minikeys[k], address[k]);
 									fclose(keys);
+								} else {
+									output_error("Could not write to KEYFOUNDKEYFOUND.txt\n");
 								}
 								printf("\nHIT!! Private Key: %s\npubkey: %s\nminikey: %s\naddress: %s\n", hextemp, public_key_uncompressed_hex, minikeys[k], address[k]);
 								platform_mutex_unlock(&write_keys);

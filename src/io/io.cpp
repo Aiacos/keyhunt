@@ -243,6 +243,14 @@ bool readFileAddress(char *fileName) {
 
 			output_success("Bloom filter for %" PRIu64 " elements.\n", bloom.orig.entries);
 
+			/* Validate deserialized bloom size to prevent heap overflow from corrupted cache */
+			const uint64_t MAX_BLOOM_CACHE_BYTES = (uint64_t)16 * 1024 * 1024 * 1024; /* 16 GB */
+			if(bloom.orig.bytes == 0 || bloom.orig.bytes > MAX_BLOOM_CACHE_BYTES) {
+				output_error("Bloom filter cache has invalid size %" PRIu64 " bytes. Delete the .blm file and retry.\n", bloom.orig.bytes);
+				fclose(fileDescriptor);
+				return false;
+			}
+
 			const bool cache_fast = (bloom.orig.major == BLOOM_EXT_FAST_MAJOR && bloom.orig.minor == BLOOM_EXT_FAST_MINOR);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 			if (cache_fast) {
@@ -393,6 +401,11 @@ bool forceReadFileAddress(char *fileName) {
 	fseek(fileDescriptor, 0, SEEK_SET);
 	MAXLENGTHADDRESS = 20;
 
+	if(numberItems > SIZE_MAX / sizeof(struct address_value)) {
+		output_error("Too many items (%" PRIu64 "), allocation would overflow\n", numberItems);
+		fclose(fileDescriptor);
+		return false;
+	}
 	output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n", numberItems, (double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ -1);
@@ -495,6 +508,11 @@ bool forceReadFileAddressEth(char *fileName) {
 	MAXLENGTHADDRESS = 20;
 	N = numberItems;
 
+	if(numberItems > SIZE_MAX / sizeof(struct address_value)) {
+		output_error("Too many items (%" PRIu64 "), allocation would overflow\n", numberItems);
+		fclose(fileDescriptor);
+		return false;
+	}
 	output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n", numberItems, (double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ -1);
@@ -571,6 +589,11 @@ bool forceReadFileXPoint(char *fileName) {
 
 	MAXLENGTHADDRESS = 20;
 
+	if(numberItems > SIZE_MAX / sizeof(struct address_value)) {
+		output_error("Too many items (%" PRIu64 "), allocation would overflow\n", numberItems);
+		fclose(fileDescriptor);
+		return false;
+	}
 	output_success("Allocating memory for %" PRIu64 " elements: %.2f MB\n", numberItems, (double)(((double) sizeof(struct address_value)*numberItems)/(double)1048576));
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ - 1);
@@ -592,6 +615,7 @@ bool forceReadFileXPoint(char *fileName) {
 		trim(aux, " \t\n\r");
 		stringtokenizer(aux, &tokenizer_xpoint);
 		hextemp = nextToken(&tokenizer_xpoint);
+		bool entry_valid = false;
 		if(hextemp != NULL) {
 			lenaux = strlen(hextemp);
 			if(isValidHex(hextemp)) {
@@ -601,6 +625,7 @@ bool forceReadFileXPoint(char *fileName) {
 						if(r) {
 							memcpy(addressTable[i].value, rawvalue, 20);
 							bloom_ext_add(&bloom, rawvalue, MAXLENGTHADDRESS);
+							entry_valid = true;
 						}
 						else {
 							output_error("error hexs2bin\n");
@@ -611,6 +636,7 @@ bool forceReadFileXPoint(char *fileName) {
 						if(r) {
 							memcpy(addressTable[i].value, rawvalue, 20);
 							bloom_ext_add(&bloom, rawvalue, MAXLENGTHADDRESS);
+							entry_valid = true;
 						}
 						else {
 							output_error("error hexs2bin\n");
@@ -620,7 +646,8 @@ bool forceReadFileXPoint(char *fileName) {
 						r = hexs2bin(aux, (uint8_t*) rawvalue);
 						if(r) {
 							memcpy(addressTable[i].value, rawvalue+2, 20);
-							bloom_ext_add(&bloom, rawvalue, MAXLENGTHADDRESS);
+							bloom_ext_add(&bloom, rawvalue+2, MAXLENGTHADDRESS);
+							entry_valid = true;
 						}
 						else {
 							output_error("error hexs2bin\n");
@@ -638,9 +665,12 @@ bool forceReadFileXPoint(char *fileName) {
 		}
 		else {
 			output_error("Omiting line : %s\n", aux);
+		}
+		if(entry_valid) {
+			i++;
+		} else {
 			N--;
 		}
-		i++;
 	}
 	fclose(fileDescriptor);
 	return true;

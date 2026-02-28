@@ -20,17 +20,10 @@
  */
 
 #include "sort.h"
+#include "../search/search_context.h"
 #include <cstring>
 #include <cmath>
 #include <cstdint>
-
-/* ============================================================================
- * address_value structure definition (must match keyhunt.cpp)
- * ============================================================================ */
-
-struct address_value {
-	uint8_t value[20];
-};
 
 /* ============================================================================
  * Endian-aware comparison helpers for 20-byte hash values
