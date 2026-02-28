@@ -120,8 +120,10 @@ static int parse_telegram_url(const char *telegram_url,
         return -1;
     }
 
-    /* Find colon separator */
-    const char *colon = strchr(telegram_url, ':');
+    /* Find the LAST colon separator. Telegram bot tokens contain a colon
+     * (e.g., "123456789:ABCdef..."), so the format is "BOT_TOKEN:CHAT_ID"
+     * where we need the last colon to split token from chat_id. */
+    const char *colon = strrchr(telegram_url, ':');
     if (!colon) {
         /* No chat_id, just token */
         if (token) {
@@ -134,7 +136,7 @@ static int parse_telegram_url(const char *telegram_url,
         return 0;
     }
 
-    /* Split token and chat_id */
+    /* Split token and chat_id at last colon */
     size_t token_len = colon - telegram_url;
     if (token && token_len > 0) {
         size_t copy_len = (token_len < token_size - 1) ? token_len : token_size - 1;
@@ -802,15 +804,20 @@ static int search_range_subprocess(const char *start, const char *end,
     /* Build command with absolute path.
      * Use larger status interval (-s 5) to reduce output overhead.
      * The main bottleneck is often stdout parsing, so less output = faster. */
+    int cmd_len;
     if (strcmp(cfg->mode, "bsgs") == 0) {
-        snprintf(cmd, sizeof(cmd),
+        cmd_len = snprintf(cmd, sizeof(cmd),
             "timeout 600s '%s' -m bsgs -f '%s' -r %s:%s -t %d %s-q -s 5 2>&1",
             g_executable_path, g_target_file, start, end, cfg->threads, gpu_arg);
     } else {
-        snprintf(cmd, sizeof(cmd),
+        cmd_len = snprintf(cmd, sizeof(cmd),
             "timeout 600s '%s' -m %s -f '%s' -r %s:%s -t %d %s-l %s -q -s 5 2>&1",
             g_executable_path, cfg->mode, g_target_file, start, end,
             cfg->threads, gpu_arg, cfg->key_type);
+    }
+    if (cmd_len < 0 || cmd_len >= (int)sizeof(cmd)) {
+        fprintf(stderr, "[-] Command too long (%d bytes), buffer is %zu\n", cmd_len, sizeof(cmd));
+        return -1;
     }
 
     /* Run keyhunt subprocess */

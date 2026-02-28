@@ -281,7 +281,7 @@ void bsgs_batch_compute_points(
         pp.x.ModSub(&GSn[i].x);
 
         // ry = -p2.y - s*(rx - p2.x)
-        pp.y.Sub(&GSn[i].x, &pp.x);
+        pp.y.ModSub(&GSn[i].x, &pp.x);
         pp.y.ModMulK1(&_s);
         pp.y.ModSub(&GSn[i].y);
 
@@ -302,7 +302,7 @@ void bsgs_batch_compute_points(
         pn.x.ModSub(&GSn[i].x);
 
         // ry = -p2.y - s*(rx - p2.x)
-        pn.y.Sub(&GSn[i].x, &pn.x);
+        pn.y.ModSub(&GSn[i].x, &pn.x);
         pn.y.ModMulK1(&_s);
         pn.y.ModSub(&dyn);
 
@@ -322,7 +322,7 @@ void bsgs_batch_compute_points(
     pp.x.ModAdd(&_p);
     pp.x.ModSub(&_2GSn->x);
 
-    pp.y.Sub(&_2GSn->x, &pp.x);
+    pp.y.ModSub(&_2GSn->x, &pp.x);
     pp.y.ModMulK1(&_s);
     pp.y.ModSub(&_2GSn->y);
 

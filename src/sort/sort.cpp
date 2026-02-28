@@ -82,7 +82,8 @@ void _swap(struct address_value *a, struct address_value *b) {
 }
 
 void _sort(struct address_value *arr, int64_t n) {
-	uint32_t depthLimit = ((uint32_t) ceil(log(n))) * 2;
+	if (n <= 1) return;
+	uint32_t depthLimit = ((uint32_t) ceil(log2((double)n))) * 2;
 	_introsort(arr, depthLimit, n);
 }
 

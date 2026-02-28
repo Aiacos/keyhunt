@@ -397,8 +397,12 @@ bool forceReadFileAddress(char *fileName) {
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ -1);
 
-	if(!initBloomFilterExt(&bloom, numberItems))
+	if(!initBloomFilterExt(&bloom, numberItems)) {
+		free(addressTable);
+		addressTable = NULL;
+		fclose(fileDescriptor);
 		return false;
+	}
 
 	i = 0;
 	while(i < numberItems) {
@@ -461,6 +465,7 @@ bool forceReadFileAddress(char *fileName) {
 		}
 	}
 	N = numberItems;
+	fclose(fileDescriptor);
 	return true;
 }
 
@@ -494,8 +499,12 @@ bool forceReadFileAddressEth(char *fileName) {
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ -1);
 
-	if(!initBloomFilterExt(&bloom, N))
+	if(!initBloomFilterExt(&bloom, N)) {
+		free(addressTable);
+		addressTable = NULL;
+		fclose(fileDescriptor);
 		return false;
+	}
 
 	i = 0;
 	while(i < numberItems) {
@@ -568,8 +577,12 @@ bool forceReadFileXPoint(char *fileName) {
 
 	N = numberItems;
 
-	if(!initBloomFilterExt(&bloom, N))
+	if(!initBloomFilterExt(&bloom, N)) {
+		free(addressTable);
+		addressTable = NULL;
+		fclose(fileDescriptor);
 		return false;
+	}
 
 	i = 0;
 	while(i < N) {

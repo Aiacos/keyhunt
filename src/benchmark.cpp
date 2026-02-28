@@ -11,6 +11,12 @@
 #include <math.h>
 #include <time.h>
 #include <inttypes.h>
+#if PLATFORM_WINDOWS
+#include <windows.h>
+#define usleep(us) Sleep((us) / 1000)
+#else
+#include <unistd.h>
+#endif
 
 // Keyhunt version (used for database records)
 #define KEYHUNT_VERSION "0.2.230519"

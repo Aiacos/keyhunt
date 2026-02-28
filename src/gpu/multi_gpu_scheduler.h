@@ -62,7 +62,7 @@ multi_gpu_scheduler_t* multi_gpu_init(const multi_gpu_config_t *config);
  * @param sched Scheduler handle
  * @param state Output state structure
  */
-void multi_gpu_get_state(const multi_gpu_scheduler_t *sched,
+void multi_gpu_get_state(multi_gpu_scheduler_t *sched,
                          multi_gpu_state_t *state);
 
 /**

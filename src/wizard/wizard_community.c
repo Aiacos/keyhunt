@@ -78,8 +78,8 @@ static int fetch_url(const char *url, char **response, size_t *response_len) {
     while (!feof(fp) && len < MAX_RESPONSE_SIZE) {
         size_t n = fread(buf, 1, sizeof(buf), fp);
         if (n > 0) {
-            if (len + n >= capacity) {
-                capacity *= 2;
+            if (len + n + 1 >= capacity) {
+                while (capacity <= len + n + 1) capacity *= 2;
                 char *newbuf = realloc(*response, capacity);
                 if (!newbuf) {
                     free(*response);
@@ -146,6 +146,9 @@ int wizard_download_puzzles(puzzle_def_t **puzzles, int *count) {
         free(html);
         return -1;
     }
+
+    /* Cap puzzle count to prevent excessive allocation from malformed HTML */
+    if (n > 256) n = 256;
 
     printf("[+] Found %d puzzles\n", n);
 
@@ -882,9 +885,11 @@ bool wizard_is_in_scanned_region(const puzzle_def_t *puzzle,
     __uint128_t puzzle_end = parse_hex_128(puzzle->range_end);
     __uint128_t range_size = puzzle_end - puzzle_start + 1;
 
-    /* Calculate scanned boundary */
-    double boundary_d = (double)puzzle_start + (double)range_size * (percent_scanned / 100.0);
-    __uint128_t scanned_boundary = (__uint128_t)boundary_d;
+    /* Calculate scanned boundary using 128-bit arithmetic to avoid double precision loss */
+    uint64_t pct_millionths = (uint64_t)(percent_scanned / 100.0 * 1000000.0);
+    __uint128_t offset = (range_size / 1000000ULL) * pct_millionths;
+    offset += (range_size % 1000000ULL) * pct_millionths / 1000000ULL;
+    __uint128_t scanned_boundary = puzzle_start + offset;
 
     /* Check if range_start is below the scanned boundary */
     __uint128_t check_pos = parse_hex_128(range_start);

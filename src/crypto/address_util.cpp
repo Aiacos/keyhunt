@@ -87,7 +87,7 @@ extern void checkpointer(void *ptr, const char *file, const char *function, cons
  * ============================================================================ */
 
 void pubkeytopubaddress_dst(char *pkey, int length, char *dst)	{
-	char digest[60];
+	char digest[64];
 	size_t pubaddress_size = 40;
 	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
 	ripemd160_32((const unsigned char*)digest,(unsigned char*)(digest+1));
@@ -100,7 +100,7 @@ void pubkeytopubaddress_dst(char *pkey, int length, char *dst)	{
 }
 
 void rmd160toaddress_dst(char *rmd, char *dst){
-	char digest[60];
+	char digest[64];
 	size_t pubaddress_size = 40;
 	digest[0] = byte_encode_crypto;
 	memcpy(digest+1,rmd,20);

@@ -110,7 +110,7 @@ void _myheapsort(struct address_value *arr, int64_t n);
  *   array_length - Number of elements in buffer
  *
  * Returns:
- *   Index of match if found, -1 otherwise
+ *   1 if found, 0 if not found
  */
 int searchbinary(struct address_value *buffer, char *data, int64_t array_length);
 

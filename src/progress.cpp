@@ -198,10 +198,23 @@ static int parse_json_string(const char *json, const char *key, char *value, siz
     if (*pos != '"') return -1;
     pos++;
 
-    // Copy until closing quote
+    // Copy until closing quote, handling JSON escape sequences
     size_t i = 0;
     while (*pos && *pos != '"' && i < value_size - 1) {
-        value[i++] = *pos++;
+        if (*pos == '\\' && *(pos + 1)) {
+            pos++;
+            switch (*pos) {
+                case '"':  value[i++] = '"';  break;
+                case '\\': value[i++] = '\\'; break;
+                case 'n':  value[i++] = '\n'; break;
+                case 'r':  value[i++] = '\r'; break;
+                case 't':  value[i++] = '\t'; break;
+                default:   value[i++] = *pos; break;
+            }
+        } else {
+            value[i++] = *pos;
+        }
+        pos++;
     }
     value[i] = '\0';
 

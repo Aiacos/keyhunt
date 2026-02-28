@@ -163,12 +163,19 @@ void increment_minikey_N(char *rawbuffer) {
 	int i = 20, j = 0;
 	while (i > 0 && j < minikey_n_limit) {
 		rawbuffer[i] = rawbuffer[i] + minikeyN[i];
-		if (rawbuffer[i] > 57) {	/* Handling carry-over if value exceeds 57 */
+		if (rawbuffer[i] > 57) {
 			rawbuffer[i] = rawbuffer[i] % 58;
 			rawbuffer[i - 1]++;
 		}
 		i--;
 		j++;
+	}
+	/* Propagate any remaining carries from the addition above */
+	i = 20 - minikey_n_limit;
+	while (i >= 0 && rawbuffer[i] > 57) {
+		rawbuffer[i] = rawbuffer[i] % 58;
+		if (i > 0) rawbuffer[i - 1]++;
+		i--;
 	}
 }
 

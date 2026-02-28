@@ -82,17 +82,20 @@ int platform_thread_join(platform_thread_t thread, platform_thread_return_t *ret
     /* Wait for thread to terminate (blocking) */
     wait_result = WaitForSingleObject(thread, INFINITE);
     if (wait_result != WAIT_OBJECT_0) {
+        CloseHandle(thread);
         return -1;
     }
 
     /* Retrieve exit code if requested */
     if (retval != NULL) {
         if (!GetExitCodeThread(thread, &exit_code)) {
+            CloseHandle(thread);
             return -1;
         }
         *retval = exit_code;
     }
 
+    CloseHandle(thread);
     return 0;
 #else
     void *thread_retval;

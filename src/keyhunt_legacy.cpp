@@ -303,7 +303,7 @@ uint64_t BSGS_BUFFERREGISTERLENGTH = 36;
 /*
 BSGS Variables
 */
-int *bsgs_found;
+volatile int *bsgs_found;
 std::vector<Point> OriginalPointsBSGS;
 bool *OriginalPointsBSGScompressed;
 

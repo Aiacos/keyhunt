@@ -86,11 +86,11 @@ multi_gpu_scheduler_t* multi_gpu_init(const multi_gpu_config_t *config) {
     return sched;
 }
 
-void multi_gpu_get_state(const multi_gpu_scheduler_t *sched, multi_gpu_state_t *state) {
+void multi_gpu_get_state(multi_gpu_scheduler_t *sched, multi_gpu_state_t *state) {
     if (!sched || !state) return;
-    platform_mutex_lock((platform_mutex_t*)&((multi_gpu_scheduler_t*)sched)->lock);
+    platform_mutex_lock(&sched->lock);
     *state = sched->state;
-    platform_mutex_unlock((platform_mutex_t*)&((multi_gpu_scheduler_t*)sched)->lock);
+    platform_mutex_unlock(&sched->lock);
 }
 
 void multi_gpu_set_range(multi_gpu_scheduler_t *sched, uint64_t total_start, uint64_t total_end) {

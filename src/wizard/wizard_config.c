@@ -312,8 +312,18 @@ static void json_get_string(char *json, const char *key, char *buf, size_t bufsi
         return;
     }
     val++;  /* Skip opening quote */
-    char *end = strchr(val, '"');
-    if (!end) {
+    /* Find closing quote, respecting backslash escapes (count preceding backslashes) */
+    char *end = val;
+    while (*end) {
+        if (*end == '"') {
+            int nbs = 0;
+            char *bs = end - 1;
+            while (bs >= val && *bs == '\\') { nbs++; bs--; }
+            if ((nbs % 2) == 0) break;  /* Even backslashes: quote is unescaped */
+        }
+        end++;
+    }
+    if (!*end) {
         strncpy(buf, def, bufsize - 1);
         buf[bufsize - 1] = '\0';
         return;

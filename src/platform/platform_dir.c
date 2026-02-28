@@ -42,9 +42,9 @@ int platform_dir_create(const char *path)
 
 #if PLATFORM_WINDOWS
     if (!CreateDirectoryA(path, NULL)) {
-        /* Check if failure is because directory already exists */
+        /* Directory already exists is acceptable for create-or-reuse pattern */
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            return -1;
+            return 0;
         }
         return -1;
     }
@@ -52,6 +52,9 @@ int platform_dir_create(const char *path)
 #else
     /* Create directory with rwxr-xr-x permissions */
     if (mkdir(path, 0755) != 0) {
+        if (errno == EEXIST) {
+            return 0;
+        }
         return -1;
     }
     return 0;
@@ -242,7 +245,10 @@ int platform_dir_read(platform_dir_handle_t handle, platform_dir_entry_t *entry)
 #ifdef _DIRENT_HAVE_D_TYPE
         entry->is_directory = (ent->d_type == DT_DIR) ? 1 : 0;
 #else
-        /* Fallback: if d_type is not available, assume it's a file */
+        /* Fallback: d_type not available (NFS, older XFS).
+         * Without the directory path in the handle, stat() fallback is not possible.
+         * Default to 0 (file). Callers should not rely on is_directory on
+         * filesystems that lack d_type support. */
         entry->is_directory = 0;
 #endif
         return 1;  /* Entry found */

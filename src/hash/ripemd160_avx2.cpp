@@ -130,11 +130,11 @@ static inline void transpose_and_load(__m256i *w, const uint8_t *blk[8]) {
     // Perform 8 RIPEMD-160 in parallel using AVX2
     void Transform(__m256i *s, const uint8_t *blk[8]) {
 
-        __m256i a1 = _mm256_load_si256(s + 0);
-        __m256i b1 = _mm256_load_si256(s + 1);
-        __m256i c1 = _mm256_load_si256(s + 2);
-        __m256i d1 = _mm256_load_si256(s + 3);
-        __m256i e1 = _mm256_load_si256(s + 4);
+        __m256i a1 = _mm256_loadu_si256(s + 0);
+        __m256i b1 = _mm256_loadu_si256(s + 1);
+        __m256i c1 = _mm256_loadu_si256(s + 2);
+        __m256i d1 = _mm256_loadu_si256(s + 3);
+        __m256i e1 = _mm256_loadu_si256(s + 4);
         __m256i a2 = a1;
         __m256i b2 = b1;
         __m256i c2 = c1;

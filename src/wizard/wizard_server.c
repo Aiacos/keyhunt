@@ -81,8 +81,10 @@ static int parse_telegram_url(const char *telegram_url,
         return -1;
     }
 
-    /* Find colon separator */
-    const char *colon = strchr(telegram_url, ':');
+    /* Find the LAST colon separator. Telegram bot tokens contain a colon
+     * (e.g., "123456789:ABCdef..."), so the format is "BOT_TOKEN:CHAT_ID"
+     * where we need the last colon to split token from chat_id. */
+    const char *colon = strrchr(telegram_url, ':');
     if (!colon) {
         /* No chat_id, just token */
         if (token) {
@@ -117,6 +119,9 @@ static int parse_telegram_url(const char *telegram_url,
  * @param cfg Wizard configuration
  */
 static void check_and_notify_found_keys(dist_coordinator_t *coord, wizard_config_t *cfg) {
+    /* Lock result_mutex to safely read results written by worker threads */
+    platform_mutex_lock(&coord->result_mutex);
+
     /* Check if any new keys were found since last check */
     if (coord->result_count > g_last_result_count) {
         /* Send notifications for each new result */
@@ -148,6 +153,8 @@ static void check_and_notify_found_keys(dist_coordinator_t *coord, wizard_config
         /* Update last known count */
         g_last_result_count = coord->result_count;
     }
+
+    platform_mutex_unlock(&coord->result_mutex);
 }
 
 /* ============================================================================
@@ -283,7 +290,7 @@ static int check_local_client(pid_t pid) {
 static int check_worker_health(dist_coordinator_t *coord, time_t now) {
     int reclaimed = 0;
 
-    pthread_mutex_lock(&coord->work_mutex);
+    platform_mutex_lock(&coord->work_mutex);
 
     for (int i = 0; i < coord->worker_count; i++) {
         dist_worker_t *w = &coord->workers[i];
@@ -325,7 +332,7 @@ static int check_worker_health(dist_coordinator_t *coord, time_t now) {
         }
     }
 
-    pthread_mutex_unlock(&coord->work_mutex);
+    platform_mutex_unlock(&coord->work_mutex);
 
     return reclaimed;
 }
@@ -497,7 +504,7 @@ static void render_dashboard(const wizard_config_t *cfg, const dist_coordinator_
             int snapshot_count = 0;
 
             dist_coordinator_t *mutable_coord = (dist_coordinator_t *)coord;
-            pthread_mutex_lock(&mutable_coord->stats_mutex);
+            platform_mutex_lock(&mutable_coord->stats_mutex);
             for (int i = 0; i < coord->worker_count && snapshot_count < 6; i++) {
                 const dist_worker_t *w = &coord->workers[i];
                 if (!w->connected && w->keys_processed == 0) continue;
@@ -505,7 +512,7 @@ static void render_dashboard(const wizard_config_t *cfg, const dist_coordinator_
                 worker_gpu_speeds[snapshot_count] = w->gpu_speed_mkeys;
                 snapshot_count++;
             }
-            pthread_mutex_unlock(&mutable_coord->stats_mutex);
+            platform_mutex_unlock(&mutable_coord->stats_mutex);
 
             int shown = 0;
             int speed_idx = 0;

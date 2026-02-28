@@ -83,9 +83,9 @@ int wizard_http_get(const char *url, char **response, size_t *response_len) {
     while (!feof(fp) && len < WIZARD_HTTP_MAX_RESPONSE_SIZE) {
         size_t n = fread(buf, 1, sizeof(buf), fp);
         if (n > 0) {
-            /* Expand buffer if needed */
-            if (len + n >= capacity) {
-                capacity *= 2;
+            /* Expand buffer if needed, +1 for null terminator */
+            if (len + n + 1 >= capacity) {
+                while (capacity <= len + n + 1) capacity *= 2;
                 char *newbuf = realloc(*response, capacity);
                 if (!newbuf) {
                     free(*response);
@@ -216,9 +216,9 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
     while (!feof(fp) && len < WIZARD_HTTP_MAX_RESPONSE_SIZE) {
         size_t n = fread(buf, 1, sizeof(buf), fp);
         if (n > 0) {
-            /* Expand buffer if needed */
-            if (len + n >= capacity) {
-                capacity *= 2;
+            /* Expand buffer if needed, +1 for null terminator */
+            if (len + n + 1 >= capacity) {
+                while (capacity <= len + n + 1) capacity *= 2;
                 char *newbuf = realloc(*response, capacity);
                 if (!newbuf) {
                     free(*response);
@@ -250,7 +250,8 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
     /* Clean up temp file */
     if (tmp_file[0]) unlink(tmp_file);
 
-    if (status != 0 || len == 0) {
+    /* Only check exit status; len==0 is valid (e.g., HTTP 204 No Content) */
+    if (status != 0) {
         free(*response);
         *response = NULL;
         *response_len = 0;

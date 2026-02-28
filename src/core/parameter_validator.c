@@ -21,8 +21,11 @@
 
 // Helper: Calculate BSGS memory requirement
 static uint64_t calculate_bsgs_memory_mb(uint64_t n, int kfactor) {
-    // M = sqrt(N)
-    uint64_t m = (uint64_t)sqrt((double)n);
+    // M = sqrt(N), using sqrtl for precision with large values
+    uint64_t m = (uint64_t)sqrtl((long double)n);
+    // Correct floating-point imprecision
+    while (m > 0 && m * m > n) m--;
+    while (m < 0xFFFFFFFFULL && (m + 1) * (m + 1) <= n) m++;
 
     // bloom1 size in bytes: (M * K) * 3.5
     uint64_t bloom1_bytes = (m * kfactor * 35) / 10;
@@ -181,8 +184,10 @@ uint64_t validate_n_value(
         return user_n;
     }
 
-    // Check if M = sqrt(N) is valid for algorithm
-    uint64_t m = (uint64_t)sqrt((double)user_n);
+    // Check if M = sqrt(N) is valid for algorithm (sqrtl + correction for precision)
+    uint64_t m = (uint64_t)sqrtl((long double)user_n);
+    while (m > 0 && m * m > user_n) m--;
+    while (m < 0xFFFFFFFFULL && (m + 1) * (m + 1) <= user_n) m++;
     if (m * m != user_n) {
         // N is not a perfect square - round up
         result->status = PARAM_WARNING;

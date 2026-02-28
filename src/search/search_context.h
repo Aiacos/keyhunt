@@ -24,11 +24,7 @@
 #include "bloom/bloom.h"
 #include "bloom/bloom_wrapper.h"
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-#include <windows.h>
-#else
-#include <pthread.h>
-#endif
+#include "platform/platform.h"
 
 /* ------------------------------------------------------------------ */
 /*  Mode and crypto constants                                         */
@@ -147,19 +143,11 @@ extern std::vector<Point> GSn;   /* BSGS generator points */
 extern Point _2GSn;
 
 /* --- Synchronisation: thread handles and mutexes --- */
-#if defined(_WIN64) && !defined(__CYGWIN__)
-extern HANDLE *tid;
-extern HANDLE write_keys;
-extern HANDLE write_random;
-extern HANDLE bsgs_thread;
-extern HANDLE *bPload_mutex;
-#else
-extern pthread_t *tid;
-extern pthread_mutex_t write_keys;
-extern pthread_mutex_t write_random;
-extern pthread_mutex_t bsgs_thread;
-extern pthread_mutex_t *bPload_mutex;
-#endif
+extern platform_thread_t *tid;
+extern platform_mutex_t write_keys;
+extern platform_mutex_t write_random;
+extern platform_mutex_t bsgs_thread;
+extern platform_mutex_t *bPload_mutex;
 
 /* --- Thread progress counters --- */
 extern struct thread_counter *steps;
@@ -231,7 +219,7 @@ extern int minikey_n_limit;
 
 extern uint64_t BSGS_BUFFERXPOINTLENGTH;
 
-extern int *bsgs_found;
+extern volatile int *bsgs_found;
 extern std::vector<Point> OriginalPointsBSGS;
 extern bool *OriginalPointsBSGScompressed;
 
@@ -242,15 +230,9 @@ extern bloom_extended_t *bloom_bP;
 extern bloom_extended_t *bloom_bPx2nd;
 extern bloom_extended_t *bloom_bPx3rd;
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-extern std::vector<HANDLE> bloom_bP_mutex;
-extern std::vector<HANDLE> bloom_bPx2nd_mutex;
-extern std::vector<HANDLE> bloom_bPx3rd_mutex;
-#else
-extern pthread_mutex_t *bloom_bP_mutex;
-extern pthread_mutex_t *bloom_bPx2nd_mutex;
-extern pthread_mutex_t *bloom_bPx3rd_mutex;
-#endif
+extern platform_mutex_t *bloom_bP_mutex;
+extern platform_mutex_t *bloom_bPx2nd_mutex;
+extern platform_mutex_t *bloom_bPx3rd_mutex;
 
 extern uint64_t bsgs_m;
 extern uint64_t bsgs_m2;

@@ -119,9 +119,9 @@ void rseed(unsigned long seed) {
 unsigned long rndl() {
 #ifdef USE_GETRANDOM
 	/* On Linux, try to use getrandom() for better entropy */
-	unsigned long r;
-	int bytes_read = getrandom(&r, sizeof(unsigned long), GRND_NONBLOCK);
-	if (bytes_read > 0) {
+	unsigned long r = 0;
+	ssize_t bytes_read = getrandom(&r, sizeof(unsigned long), GRND_NONBLOCK);
+	if (bytes_read == (ssize_t)sizeof(unsigned long)) {
 		return r;
 	}
 	/* Fallback to Mersenne Twister if getrandom() fails */

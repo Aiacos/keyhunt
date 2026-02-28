@@ -93,7 +93,9 @@ static int detect_physical_cores(void) {
     DIR *dir = opendir("/sys/devices/system/cpu");
     if (dir) {
         struct dirent *entry;
-        int max_core_id = -1;
+        /* Use a bitset to track unique core_ids (supports up to 1024 cores) */
+        unsigned char core_seen[128] = {0};  /* 1024 bits */
+        int unique_cores = 0;
 
         while ((entry = readdir(dir)) != NULL) {
             if (strncmp(entry->d_name, "cpu", 3) == 0 && isdigit(entry->d_name[3])) {
@@ -103,15 +105,20 @@ static int detect_physical_cores(void) {
                          entry->d_name);
 
                 long core_id = read_long_from_file(path);
-                if (core_id > max_core_id) {
-                    max_core_id = core_id;
+                if (core_id >= 0 && core_id < 1024) {
+                    int byte_idx = core_id / 8;
+                    int bit_idx = core_id % 8;
+                    if (!(core_seen[byte_idx] & (1 << bit_idx))) {
+                        core_seen[byte_idx] |= (1 << bit_idx);
+                        unique_cores++;
+                    }
                 }
             }
         }
         closedir(dir);
 
-        if (max_core_id >= 0) {
-            physical_cores = max_core_id + 1;
+        if (unique_cores > 0) {
+            physical_cores = unique_cores;
         }
     }
 

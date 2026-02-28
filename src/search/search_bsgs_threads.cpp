@@ -38,7 +38,7 @@
 
 extern uint64_t bsgs_aux;
 extern uint32_t bsgs_point_number;
-extern int *bsgs_found;
+extern volatile int *bsgs_found;
 extern bool *OriginalPointsBSGScompressed;
 
 extern std::vector<Point> GSn;
@@ -67,15 +67,9 @@ extern struct thread_counter *steps;
 extern struct thread_flag *ends;
 
 /* Platform mutex arrays for bloom filter loading */
-#if defined(_WIN64) && !defined(__CYGWIN__)
-extern std::vector<HANDLE> bloom_bP_mutex;
-extern std::vector<HANDLE> bloom_bPx2nd_mutex;
-extern std::vector<HANDLE> bloom_bPx3rd_mutex;
-#else
-extern pthread_mutex_t *bloom_bP_mutex;
-extern pthread_mutex_t *bloom_bPx2nd_mutex;
-extern pthread_mutex_t *bloom_bPx3rd_mutex;
-#endif
+extern platform_mutex_t *bloom_bP_mutex;
+extern platform_mutex_t *bloom_bPx2nd_mutex;
+extern platform_mutex_t *bloom_bPx3rd_mutex;
 
 extern platform_mutex_t *bPload_mutex;
 
@@ -843,9 +837,6 @@ bloom_ext_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
 	platform_mutex_lock(&bPload_mutex[threadid]);
 	tt->finished = 1;
 	platform_mutex_unlock(&bPload_mutex[threadid]);
-#ifndef _WIN64
-	pthread_exit(NULL);
-#endif
 	return (platform_thread_return_t)0;
 }
 
@@ -985,9 +976,6 @@ bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
 	platform_mutex_lock(&bPload_mutex[threadid]);
 	tt->finished = 1;
 	platform_mutex_unlock(&bPload_mutex[threadid]);
-#ifndef _WIN64
-	pthread_exit(NULL);
-#endif
 	return (platform_thread_return_t)0;
 }
 
