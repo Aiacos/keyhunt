@@ -303,6 +303,12 @@ int dist_multipool_request_work(dist_multipool_client_t *multipool,
     return -1;
 }
 
+int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
+                                   uint64_t keys_since_last) {
+    (void)multipool; (void)keys_since_last;
+    return -1;
+}
+
 void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     (void)multipool;
 }
@@ -3831,6 +3837,73 @@ int dist_multipool_request_work(dist_multipool_client_t *multipool,
                 pools_tried, pools_tried, no_work_count, error_count);
         return -1;
     }
+}
+
+/**
+ * Send heartbeat to all connected pools
+ * Detects disconnections and updates connection status
+ * @param multipool Multi-pool client state
+ * @param keys_since_last Keys processed since last heartbeat
+ * @return Number of successful heartbeats sent, or -1 on error
+ */
+int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
+                                   uint64_t keys_since_last) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        if (getenv("KEYHUNT_DEBUG")) {
+            fprintf(stderr, "[multipool] No pools configured for heartbeat\n");
+        }
+        return 0;
+    }
+
+    /* Thread-safe heartbeat to all pools */
+    platform_mutex_lock(&multipool->mutex);
+
+    int successful_heartbeats = 0;
+
+    /* Send heartbeat to all connected pools */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+
+        /* Skip disconnected pools */
+        if (!client->connected) {
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d (%s:%d) not connected, skipping heartbeat\n",
+                       i, client->coordinator_host, client->coordinator_port);
+            }
+            continue;
+        }
+
+        /* Send heartbeat to this pool */
+        int result = dist_worker_heartbeat(client, keys_since_last);
+
+        if (result == 0) {
+            /* Heartbeat successful */
+            successful_heartbeats++;
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Heartbeat sent to pool %d (%s:%d)\n",
+                       i, client->coordinator_host, client->coordinator_port);
+            }
+        } else {
+            /* Heartbeat failed - mark pool as disconnected */
+            fprintf(stderr, "[multipool] Heartbeat failed for pool %d (%s:%d), marking disconnected\n",
+                    i, client->coordinator_host, client->coordinator_port);
+            client->connected = false;
+        }
+    }
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Sent heartbeats to %d/%d pools\n",
+               successful_heartbeats, multipool->pool_count);
+    }
+
+    return successful_heartbeats;
 }
 
 /**

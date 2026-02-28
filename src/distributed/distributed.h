@@ -752,6 +752,16 @@ int dist_multipool_request_work(dist_multipool_client_t *multipool,
                                  char *range_start, char *range_end);
 
 /**
+ * Send heartbeat to all connected pools
+ * Detects disconnections and updates connection status
+ * @param multipool Multi-pool client state
+ * @param keys_since_last Keys processed since last heartbeat
+ * @return Number of successful heartbeats sent, or -1 on error
+ */
+int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
+                                   uint64_t keys_since_last);
+
+/**
  * Shutdown multi-pool client and disconnect all pools
  * @param multipool Multi-pool client state
  */
