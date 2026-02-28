@@ -317,6 +317,13 @@ int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
     return -1;
 }
 
+int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
+                                    const char *range_start,
+                                    const char *range_end) {
+    (void)multipool; (void)range_start; (void)range_end;
+    return -1;
+}
+
 void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     (void)multipool;
 }
@@ -4045,6 +4052,72 @@ int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
     }
 
     return 0;
+}
+
+/**
+ * Mark a range as completed and remove from active tracking
+ * Call this after successfully processing a work unit to allow future requests in that range
+ * @param multipool Multi-pool client state
+ * @param range_start Hex string of range start
+ * @param range_end Hex string of range end
+ * @return 0 on success (range removed), 1 if range not found, -1 on error
+ */
+int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
+                                    const char *range_start,
+                                    const char *range_end) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!range_start || !range_end) {
+        fprintf(stderr, "[multipool] NULL range pointers\n");
+        return -1;
+    }
+
+    /* Thread-safe range removal */
+    platform_mutex_lock(&multipool->range_mutex);
+
+    /* Find the matching range in active_ranges */
+    int found_index = -1;
+    for (int i = 0; i < multipool->active_range_count; i++) {
+        const active_range_t *active = &multipool->active_ranges[i];
+
+        /* Check if this is the matching range */
+        if (strcmp(active->range_start, range_start) == 0 &&
+            strcmp(active->range_end, range_end) == 0) {
+            found_index = i;
+            break;
+        }
+    }
+
+    /* Range not found in active tracking */
+    if (found_index == -1) {
+        platform_mutex_unlock(&multipool->range_mutex);
+
+        if (getenv("KEYHUNT_DEBUG")) {
+            printf("[multipool] Range not found in active tracking: %s -> %s\n",
+                   range_start, range_end);
+        }
+
+        return 1;  /* Not found (not necessarily an error) */
+    }
+
+    /* Remove range by shifting remaining elements down */
+    for (int i = found_index; i < multipool->active_range_count - 1; i++) {
+        multipool->active_ranges[i] = multipool->active_ranges[i + 1];
+    }
+
+    multipool->active_range_count--;
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Removed completed range: %s -> %s (active ranges: %d)\n",
+               range_start, range_end, multipool->active_range_count);
+    }
+
+    platform_mutex_unlock(&multipool->range_mutex);
+
+    return 0;  /* Success */
 }
 
 /**

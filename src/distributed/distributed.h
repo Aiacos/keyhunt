@@ -788,6 +788,18 @@ int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
                                          int pool_index);
 
 /**
+ * Mark a range as completed and remove from active tracking
+ * Call this after successfully processing a work unit to allow future requests in that range
+ * @param multipool Multi-pool client state
+ * @param range_start Hex string of range start
+ * @param range_end Hex string of range end
+ * @return 0 on success (range removed), 1 if range not found, -1 on error
+ */
+int dist_multipool_mark_range_done(dist_multipool_client_t *multipool,
+                                    const char *range_start,
+                                    const char *range_end);
+
+/**
  * Shutdown multi-pool client and disconnect all pools
  * @param multipool Multi-pool client state
  */
