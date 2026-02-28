@@ -3882,10 +3882,31 @@ int dist_multipool_request_work(dist_multipool_client_t *multipool,
                 printf("[multipool] Pool %d has no work available\n", pool_index);
             }
         } else {
-            /* Error requesting work from this pool */
+            /* Error requesting work from this pool - mark as disconnected for failover */
             error_count++;
-            fprintf(stderr, "[multipool] Error requesting work from pool %d (%s:%d)\n",
-                    pool_index, client->coordinator_host, client->coordinator_port);
+
+            pool_connection_state_t *state = &multipool->pool_states[pool_index];
+            state->connected = false;
+            client->connected = false;
+            state->failure_count++;
+
+            /* Initialize or update exponential backoff delay: 1s, 2s, 4s, 8s, 16s, 32s, max 60s */
+            if (state->reconnect_delay_sec == 0) {
+                state->reconnect_delay_sec = 1;  /* Initial delay */
+            } else {
+                state->reconnect_delay_sec *= 2;  /* Double the delay */
+                if (state->reconnect_delay_sec > 60) {
+                    state->reconnect_delay_sec = 60;  /* Cap at 60 seconds */
+                }
+            }
+
+            state->last_connect_attempt = (uint64_t)time(NULL);
+            state->is_healthy = false;
+
+            fprintf(stderr, "[multipool] Connection failure on pool %d (%s:%d), marked as disconnected "
+                    "(failures=%d, reconnect_delay=%ds)\n",
+                    pool_index, client->coordinator_host, client->coordinator_port,
+                    state->failure_count, state->reconnect_delay_sec);
         }
     }
 
