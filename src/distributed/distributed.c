@@ -297,6 +297,12 @@ int dist_multipool_connect_all(dist_multipool_client_t *multipool) {
     return -1;
 }
 
+int dist_multipool_request_work(dist_multipool_client_t *multipool,
+                                 char *range_start, char *range_end) {
+    (void)multipool; (void)range_start; (void)range_end;
+    return -1;
+}
+
 void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     (void)multipool;
 }
@@ -3721,6 +3727,110 @@ int dist_multipool_connect_all(dist_multipool_client_t *multipool) {
     }
 
     return successful_connections;
+}
+
+/**
+ * Request work from pools using weighted round-robin
+ * Tries pools in round-robin order, skipping disconnected pools
+ * @param multipool Multi-pool client state
+ * @param range_start Output: start of assigned range (hex, 65 bytes min)
+ * @param range_end Output: end of assigned range (hex, 65 bytes min)
+ * @return 0 if work assigned, 1 if no more work, -1 on error
+ */
+int dist_multipool_request_work(dist_multipool_client_t *multipool,
+                                 char *range_start, char *range_end) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (!range_start || !range_end) {
+        fprintf(stderr, "[multipool] NULL output buffers\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        fprintf(stderr, "[multipool] No pools configured\n");
+        return -1;
+    }
+
+    /* Thread-safe work request */
+    platform_mutex_lock(&multipool->mutex);
+
+    int pools_tried = 0;
+    int no_work_count = 0;
+    int error_count = 0;
+    int start_index = multipool->current_pool_index;
+
+    /* Try each pool in round-robin order */
+    for (int attempt = 0; attempt < multipool->pool_count; attempt++) {
+        int pool_index = (start_index + attempt) % multipool->pool_count;
+        dist_worker_client_t *client = &multipool->clients[pool_index];
+
+        /* Skip disconnected pools */
+        if (!client->connected) {
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d (%s:%d) not connected, skipping\n",
+                       pool_index, client->coordinator_host, client->coordinator_port);
+            }
+            continue;
+        }
+
+        pools_tried++;
+
+        /* Request work from this pool */
+        if (getenv("KEYHUNT_DEBUG")) {
+            printf("[multipool] Requesting work from pool %d (%s:%d)\n",
+                   pool_index, client->coordinator_host, client->coordinator_port);
+        }
+
+        int result = dist_worker_request_work(client, range_start, range_end);
+
+        if (result == 0) {
+            /* Work assigned successfully */
+            /* Update current pool index for next request (round-robin) */
+            multipool->current_pool_index = (pool_index + 1) % multipool->pool_count;
+
+            platform_mutex_unlock(&multipool->mutex);
+
+            printf("[multipool] Work assigned from pool %d (%s:%d): %s -> %s\n",
+                   pool_index, client->coordinator_host, client->coordinator_port,
+                   range_start, range_end);
+
+            return 0;
+        } else if (result == 1) {
+            /* No more work available from this pool */
+            no_work_count++;
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d has no work available\n", pool_index);
+            }
+        } else {
+            /* Error requesting work from this pool */
+            error_count++;
+            fprintf(stderr, "[multipool] Error requesting work from pool %d (%s:%d)\n",
+                    pool_index, client->coordinator_host, client->coordinator_port);
+        }
+    }
+
+    /* Update current pool index even if no work (for next attempt) */
+    multipool->current_pool_index = (multipool->current_pool_index + 1) % multipool->pool_count;
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    /* Determine return value based on what happened */
+    if (pools_tried == 0) {
+        fprintf(stderr, "[multipool] No pools available (all disconnected)\n");
+        return -1;
+    } else if (no_work_count == pools_tried) {
+        /* All pools reported no work */
+        printf("[multipool] No work available from any pool (%d pools checked)\n", pools_tried);
+        return 1;
+    } else {
+        /* Some pools had errors, some may have had no work */
+        fprintf(stderr, "[multipool] Failed to get work from %d pool(s) (tried=%d, no_work=%d, errors=%d)\n",
+                pools_tried, pools_tried, no_work_count, error_count);
+        return -1;
+    }
 }
 
 /**

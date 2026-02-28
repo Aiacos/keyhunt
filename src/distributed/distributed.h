@@ -741,6 +741,17 @@ int dist_multipool_add_pool(dist_multipool_client_t *multipool,
 int dist_multipool_connect_all(dist_multipool_client_t *multipool);
 
 /**
+ * Request work from pools using weighted round-robin
+ * Tries pools in round-robin order, skipping disconnected pools
+ * @param multipool Multi-pool client state
+ * @param range_start Output: start of assigned range (hex, 65 bytes min)
+ * @param range_end Output: end of assigned range (hex, 65 bytes min)
+ * @return 0 if work assigned, 1 if no more work, -1 on error
+ */
+int dist_multipool_request_work(dist_multipool_client_t *multipool,
+                                 char *range_start, char *range_end);
+
+/**
  * Shutdown multi-pool client and disconnect all pools
  * @param multipool Multi-pool client state
  */
