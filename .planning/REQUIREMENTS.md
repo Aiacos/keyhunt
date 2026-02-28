@@ -15,9 +15,9 @@ Requirements for production-ready release. Each maps to roadmap phases.
 - [x] **TEST-04**: NIST/IETF test vectors for RIPEMD160
 - [x] **TEST-05**: Test vectors for secp256k1 point operations (addition, doubling, scalar multiplication)
 - [x] **TEST-06**: Test vectors for secp256k1 batch modular inversion (IntGroup)
-- [ ] **TEST-07**: End-to-end correctness test for ADDRESS mode (known privkey → known address)
-- [ ] **TEST-08**: End-to-end correctness test for BSGS mode (known pubkey in known range)
-- [ ] **TEST-09**: End-to-end correctness test for XPOINT mode (known X-coordinate)
+- [x] **TEST-07**: End-to-end correctness test for ADDRESS mode (known privkey → known address)
+- [x] **TEST-08**: End-to-end correctness test for BSGS mode (known pubkey in known range)
+- [x] **TEST-09**: End-to-end correctness test for XPOINT mode (known X-coordinate)
 - [ ] **TEST-10**: End-to-end correctness test for RMD160 mode (known RIPEMD160 hash)
 - [ ] **TEST-11**: End-to-end correctness test for VANITY mode (known prefix match)
 - [ ] **TEST-12**: End-to-end correctness test for MINIKEYS mode
@@ -113,9 +113,9 @@ Deferred to future release. Tracked but not in current roadmap.
 | TEST-04 | Phase 1 | Complete |
 | TEST-05 | Phase 1 | Complete |
 | TEST-06 | Phase 1 | Complete |
-| TEST-07 | Phase 1 | Pending |
-| TEST-08 | Phase 1 | Pending |
-| TEST-09 | Phase 1 | Pending |
+| TEST-07 | Phase 1 | Complete |
+| TEST-08 | Phase 1 | Complete |
+| TEST-09 | Phase 1 | Complete |
 | TEST-10 | Phase 1 | Pending |
 | TEST-11 | Phase 1 | Pending |
 | TEST-12 | Phase 1 | Pending |

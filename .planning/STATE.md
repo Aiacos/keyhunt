@@ -61,10 +61,11 @@ None yet.
 ### Blockers/Concerns
 
 - ~~[Phase 1]: Root cause of 8 test_point and 11 test_intgroup failures is not yet analyzed~~ **RESOLVED** in 01-01: AVX2 ModMulK1 carry propagation bug
+- [Phase 1]: `make test` fails on clean build -- linker errors from test_search_rmd160.cpp referencing unlinked functions (from Plan 01-02). See deferred-items.md.
 - [Phase 6]: GPU correctness verification in CI requires either a hardware GPU runner or software emulation — infrastructure decision unresolved
 
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 01-02-PLAN.md
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
