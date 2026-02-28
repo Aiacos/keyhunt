@@ -1,0 +1,165 @@
+================================================================================
+AUTOMATIC FAILOVER TEST - IMPLEMENTATION SUMMARY
+Subtask 7-2: Test automatic failover when one coordinator goes offline
+================================================================================
+
+QUICK START
+-----------
+cd tests/multipool
+./run_failover_test.sh
+
+Expected duration: ~55 seconds
+Expected result: "✓ FAILOVER TEST PASSED"
+
+WHAT WAS CREATED
+----------------
+1. run_failover_test.sh (17KB, 580 lines)
+   - Automated 3-phase failover test
+   - Comprehensive log analysis
+   - 8 verification checks
+
+2. FAILOVER_TEST.md (11KB)
+   - Complete test documentation
+   - Architecture diagrams
+   - Troubleshooting guide
+
+3. FAILOVER_QUICKSTART.md (6.4KB)
+   - Quick start instructions
+   - Expected output examples
+   - Debug mode guide
+
+4. README.md (updated)
+   - Test reference section
+   - Failover test integration
+
+TEST PHASES
+-----------
+Phase 1 (15s): Both Coordinators Active
+  - Start coordinator 1 (port 7771)
+  - Start coordinator 2 (port 7772)
+  - Start worker (multi-pool mode)
+  - Verify: Worker connects to both pools
+
+Phase 2 (20s): Coordinator 1 Failure
+  - Kill coordinator 1 (SIGTERM)
+  - Verify: Worker detects failure
+  - Verify: Worker continues with coordinator 2
+  - Verify: Worker does NOT crash
+  - Verify: Reconnection attempts visible
+
+Phase 3 (20s): Automatic Reconnection
+  - Restart coordinator 1 (port 7771)
+  - Verify: Worker reconnects automatically
+  - Verify: Work distribution resumes
+  - Verify: Both pools active again
+
+VERIFICATION CHECKS (8 total, need 6/8 to pass)
+------------------------------------------------
+1. ✓ Connected to Coordinator 1 initially
+2. ✓ Connected to Coordinator 2 initially
+3. ✓ Detected coordinator 1 failure
+4. ✓ Worker survived (no crash)
+5. ✓ Worker continued processing work
+6. ✓ Reconnection attempts detected
+7. ✓ Successfully reconnected
+8. ✓ Exponential backoff visible (bonus)
+
+EXPONENTIAL BACKOFF SEQUENCE
+-----------------------------
+1s → 2s → 4s → 8s → 16s → 32s → 60s (max)
+
+Background thread retries every failed pool at increasing intervals
+until success or max delay reached.
+
+LOG FILES
+---------
+After test completes, check:
+  tests/multipool/logs/coordinator1.log - Coordinator 1 activity
+  tests/multipool/logs/coordinator2.log - Coordinator 2 activity
+  tests/multipool/logs/worker.log       - Worker behavior
+
+MANUAL VERIFICATION COMMANDS
+-----------------------------
+# Check initial connections
+grep "Connected to" tests/multipool/logs/worker.log
+
+# Check disconnection detection
+grep -i "disconnect\|fail" tests/multipool/logs/worker.log
+
+# Check reconnection
+tail -50 tests/multipool/logs/worker.log | grep "7771"
+
+# Check exponential backoff
+grep -i "backoff\|retry.*delay" tests/multipool/logs/worker.log
+
+SUCCESS CRITERIA
+----------------
+Test PASSES if:
+  - Worker connects to both pools initially (Phase 1)
+  - Worker survives coordinator 1 death (Phase 2)
+  - Worker continues processing with coordinator 2 only (Phase 2)
+  - Worker automatically reconnects to coordinator 1 (Phase 3)
+  - At least 6 out of 8 verification checks pass
+
+Test FAILS if:
+  - Worker crashes when coordinator dies
+  - Worker hangs and stops processing
+  - Worker doesn't reconnect within 20 seconds
+  - Less than 6 verification checks pass
+
+DEBUG MODE
+----------
+For detailed troubleshooting:
+  export KEYHUNT_DEBUG=1
+  ./run_failover_test.sh
+
+Then analyze logs for:
+  - Connection state transitions
+  - Heartbeat failures
+  - Reconnection attempts
+  - Work request routing decisions
+
+IMPLEMENTATION VALIDATED
+-------------------------
+✓ dist_multipool_heartbeat_all() - Detects disconnections
+✓ dist_multipool_reconnect() - Exponential backoff logic
+✓ dist_multipool_request_work() - Skips disconnected pools
+✓ reconnect_thread_func() - Background reconnection
+✓ pool_connection_state_t - Per-pool state tracking
+
+RELATED TESTS
+-------------
+- run_test.sh - Basic multi-pool connection (subtask-7-1) ✓ Completed
+- [Pending] - Range deconfliction test (subtask-7-3)
+- [Pending] - Weighted priority test (subtask-7-4)
+- [Pending] - Backwards compatibility test (subtask-7-5)
+
+TROUBLESHOOTING
+---------------
+Issue: Test fails with "keyhunt binary not found"
+Fix: Run 'make' in project root first
+
+Issue: Test fails with "port already in use"
+Fix: pkill keyhunt && sleep 2 && ./run_failover_test.sh
+
+Issue: Worker crashes during Phase 2
+Fix: Check dist_multipool_request_work() error handling
+
+Issue: No reconnection in Phase 3
+Fix: Verify pool_failover_enabled=true in worker config
+
+DOCUMENTATION
+-------------
+For more details, see:
+  - FAILOVER_TEST.md - Complete test documentation
+  - FAILOVER_QUICKSTART.md - Quick start guide
+  - README.md - Integration test overview
+
+COMMIT
+------
+Commit: df01510
+Message: auto-claude: subtask-7-2 - Test automatic failover when one
+         coordinator goes offline
+
+STATUS: ✓ COMPLETED
+================================================================================
