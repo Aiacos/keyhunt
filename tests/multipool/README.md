@@ -34,6 +34,7 @@ This directory contains multiple test scripts:
 1. **run_test.sh** - Basic multi-pool connection and work distribution test (subtask-7-1)
 2. **run_failover_test.sh** - Automatic failover and reconnection test (subtask-7-2)
 3. **run_deconfliction_test.sh** - Range deconfliction with overlapping work units (subtask-7-3)
+4. **run_priority_test.sh** - Weighted priority distribution verification (subtask-7-4)
 
 See individual test documentation for details.
 
@@ -121,6 +122,20 @@ Expected behavior:
 ✓ Worker detects range conflicts via dist_multipool_check_range_conflict()
 ✓ Worker rejects conflicting work and requests from different pool
 ✓ Worker continues processing non-conflicting ranges
+
+### Priority Distribution Testing
+For testing weighted priority-based work distribution:
+```bash
+./run_priority_test.sh
+```
+
+See [PRIORITY_TEST.md](PRIORITY_TEST.md) for complete documentation.
+
+Expected behavior:
+✓ Pool 1 (priority 75) receives ~75% of work requests
+✓ Pool 2 (priority 25) receives ~25% of work requests
+✓ Distribution ratio matches configured priorities (3:1 ± 0.5)
+✓ Sufficient sample size collected for statistical validity
 
 ## Verification Checklist
 
