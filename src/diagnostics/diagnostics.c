@@ -61,7 +61,6 @@ void diag_add_check(
 void diag_check_cpu_features(diagnostic_report_t *report) {
     const system_info_t *info = &report->sysinfo;
     char msg[256];
-    char rec[256];
 
     // Check physical cores
     if (info->cpu_physical_cores > 0) {
@@ -120,16 +119,16 @@ void diag_check_memory(diagnostic_report_t *report) {
     }
 
     // Check available memory
-    if (info->ram_available < 1024) {
-        snprintf(msg, sizeof(msg), "Low available memory: %llu MB",
-                 (unsigned long long)info->ram_available);
-        snprintf(rec, sizeof(rec), "Close other applications or use smaller -n values for BSGS mode");
-        diag_add_check(report, DIAG_WARNING, "Memory Availability", msg, rec);
-    } else if (info->ram_available < 512) {
+    if (info->ram_available < 512) {
         snprintf(msg, sizeof(msg), "Very low available memory: %llu MB",
                  (unsigned long long)info->ram_available);
         snprintf(rec, sizeof(rec), "Insufficient memory for BSGS mode with large N values");
         diag_add_check(report, DIAG_ERROR, "Memory Availability", msg, rec);
+    } else if (info->ram_available < 1024) {
+        snprintf(msg, sizeof(msg), "Low available memory: %llu MB",
+                 (unsigned long long)info->ram_available);
+        snprintf(rec, sizeof(rec), "Close other applications or use smaller -n values for BSGS mode");
+        diag_add_check(report, DIAG_WARNING, "Memory Availability", msg, rec);
     } else {
         snprintf(msg, sizeof(msg), "Available memory: %llu MB",
                  (unsigned long long)info->ram_available);
@@ -191,7 +190,6 @@ void diag_check_cache(diagnostic_report_t *report) {
 
 // Check GPU configuration
 void diag_check_gpu(diagnostic_report_t *report) {
-    const system_info_t *info = &report->sysinfo;
     char msg[256];
     char rec[256];
 

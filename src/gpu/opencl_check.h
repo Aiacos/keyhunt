@@ -16,7 +16,7 @@
 #include <CL/cl.h>
 #endif
 
-#include <cstdio>
+#include <stdio.h>
 
 // Convert OpenCL error code to string
 static inline const char* clGetErrorString(cl_int error) {

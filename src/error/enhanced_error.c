@@ -16,48 +16,10 @@
 #define CLR_RED     "\033[31m"
 #define CLR_MAGENTA "\033[35m"
 
-// Box drawing characters
-#define BOX_TL      "╔"
-#define BOX_TR      "╗"
-#define BOX_BL      "╚"
-#define BOX_BR      "╝"
-#define BOX_H       "═"
-#define BOX_V       "║"
-
-// Error symbols
-#define SYM_ERROR   "✗"
-#define SYM_WARNING "⚠"
-#define SYM_INFO    "ℹ"
-#define SYM_FATAL   "⛔"
-
 static bool g_colors_enabled = true;
 
 void error_init(bool enable_colors) {
     g_colors_enabled = enable_colors;
-}
-
-// Helper: Get color code for severity
-static const char* get_severity_color(error_severity_t severity) {
-    if (!g_colors_enabled) return "";
-
-    switch (severity) {
-        case ERROR_SEV_INFO:    return CLR_BLUE;
-        case ERROR_SEV_WARNING: return CLR_YELLOW;
-        case ERROR_SEV_ERROR:   return CLR_RED;
-        case ERROR_SEV_FATAL:   return CLR_RED CLR_BOLD;
-        default:                return CLR_RESET;
-    }
-}
-
-// Helper: Get symbol for severity
-static const char* get_severity_symbol(error_severity_t severity) {
-    switch (severity) {
-        case ERROR_SEV_INFO:    return SYM_INFO;
-        case ERROR_SEV_WARNING: return SYM_WARNING;
-        case ERROR_SEV_ERROR:   return SYM_ERROR;
-        case ERROR_SEV_FATAL:   return SYM_FATAL;
-        default:                return "?";
-    }
 }
 
 // Helper: Get category name
@@ -229,13 +191,16 @@ void error_memory_allocation(uint64_t required_mb, uint64_t available_mb,
              "Memory allocation failed for %s: required %s, available %s",
              context, req_str, avail_str);
 
+    uint64_t deficit = (required_mb > available_mb) ? (required_mb - available_mb) : 0;
     snprintf(report->technical, sizeof(report->technical),
              "Required: %llu MB | Available: %llu MB | Deficit: %llu MB",
              (unsigned long long)required_mb,
              (unsigned long long)available_mb,
-             (unsigned long long)(required_mb - available_mb));
+             (unsigned long long)deficit);
 
-    double percent_deficit = ((double)(required_mb - available_mb) / required_mb) * 100.0;
+    double percent_deficit = (required_mb > 0 && deficit > 0)
+        ? ((double)deficit / required_mb) * 100.0
+        : 0.0;
 
     if (percent_deficit > 50.0) {
         snprintf(report->resolution, sizeof(report->resolution),
@@ -373,14 +338,14 @@ void error_file_io(const char *filename, const char *operation,
     snprintf(report->resolution, sizeof(report->resolution),
              "File I/O error:\n"
              "  • Verify file path is correct\n"
-             "  • Check file permissions: ls -l %s\n"
+             "  • Check file permissions: ls -l '%s'\n"
              "  • Ensure directory exists\n"
              "  • Check disk space: df -h\n"
              "  • Verify file is not locked by another process",
              filename);
 
     snprintf(report->command, sizeof(report->command),
-             "ls -l %s", filename);
+             "ls -l '%s'", filename);
 }
 
 void error_invalid_parameter(const char *param_name, const char *value,

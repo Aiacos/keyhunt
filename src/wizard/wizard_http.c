@@ -89,6 +89,7 @@ int wizard_http_get(const char *url, char **response, size_t *response_len) {
                 char *newbuf = realloc(*response, capacity);
                 if (!newbuf) {
                     free(*response);
+                    *response = NULL;
                     pclose(fp);
                     error_report_t report;
                     error_context_t ctx = ERROR_CONTEXT_VALUES(
@@ -222,6 +223,7 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
                 char *newbuf = realloc(*response, capacity);
                 if (!newbuf) {
                     free(*response);
+                    *response = NULL;
                     pclose(fp);
                     if (tmp_file[0]) unlink(tmp_file);
                     error_report_t report;

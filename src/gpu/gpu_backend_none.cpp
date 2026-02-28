@@ -61,3 +61,37 @@ double gpu_benchmark(size_t duration_ms) {
     (void)duration_ms;
     return 0.0;
 }
+
+int gpu_autotune(size_t duration_ms, gpu_tune_result_t *result) {
+    (void)duration_ms;
+    if (result) memset(result, 0, sizeof(*result));
+    return 1;
+}
+
+void gpu_apply_tune(const gpu_tune_result_t *tune) {
+    (void)tune;
+}
+
+const char* gpu_backend_type_name(gpu_backend_type_t type) {
+    (void)type;
+    return "None";
+}
+
+int gpu_enumerate_backends(void) {
+    return 0;
+}
+
+int gpu_backend_init_typed(gpu_backend_type_t backend_type, gpu_backend_info_t *info) {
+    (void)backend_type;
+    if (info) memset(info, 0, sizeof(*info));
+    return 1;
+}
+
+gpu_backend_type_t gpu_backend_get_type(void) {
+    return GPU_BACKEND_TYPE_NONE;
+}
+
+int gpu_backend_type_available(gpu_backend_type_t backend_type) {
+    (void)backend_type;
+    return 0;
+}

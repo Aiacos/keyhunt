@@ -76,10 +76,13 @@ static void bech32_create_checksum(const char *hrp, const uint8_t *data,
                                    size_t data_len, uint8_t *checksum,
                                    uint32_t spec) {
     size_t hrp_len = strlen(hrp);
+    if (hrp_len > 83 || data_len > 84) return;  /* BIP173 limits */
     size_t values_len = hrp_len * 2 + 1 + data_len + 6;
-    uint8_t values[values_len];
+    uint8_t values[256];  /* Fixed buffer: max 83*2+1+84+6 = 257, but BIP173 caps at ~200 */
     uint32_t polymod;
     size_t i;
+
+    if (values_len > sizeof(values)) return;
 
     bech32_hrp_expand(hrp, values);
     memcpy(values + hrp_len * 2 + 1, data, data_len);
@@ -99,8 +102,11 @@ static void bech32_create_checksum(const char *hrp, const uint8_t *data,
 static uint32_t bech32_verify_checksum(const char *hrp, const uint8_t *data,
                                        size_t data_len) {
     size_t hrp_len = strlen(hrp);
+    if (hrp_len > 83 || data_len > 90) return 0;  /* BIP173 limits */
     size_t values_len = hrp_len * 2 + 1 + data_len;
-    uint8_t values[values_len];
+    uint8_t values[256];
+
+    if (values_len > sizeof(values)) return 0;
 
     bech32_hrp_expand(hrp, values);
     memcpy(values + hrp_len * 2 + 1, data, data_len);

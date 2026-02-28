@@ -98,20 +98,17 @@ endif
 # OpenCL backend (if available)
 ifeq ($(HAVE_OPENCL),1)
   GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_opencl.o
-  GPU_CXXFLAGS += -DHAVE_OPENCL=1
-  CFLAGS += -DHAVE_OPENCL=1
+  GPU_CXXFLAGS += -DHAVE_OPENCL_BACKEND=1
+  CFLAGS += -DHAVE_OPENCL_BACKEND=1
   LDLIBS += -lOpenCL
 endif
 
 # Unified backend (always included - provides multi-vendor utility functions)
 # These functions (gpu_enumerate_backends, gpu_backend_get_type, gpu_backend_type_name)
-# are called by keyhunt.cpp regardless of which backends are available
+# are called by keyhunt.cpp regardless of which backends are available.
+# The unified backend handles the no-GPU case internally, so gpu_backend_none.o
+# is NOT needed for the main build (only for sanitizer/tsan/coverage targets).
 GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_unified.o
-
-# Fallback to none backend if no GPU backend is available
-ifeq ($(GPU_BACKEND_OBJS),)
-  GPU_BACKEND_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o
-endif
 
 # Combine backend objects with common GPU objects
 GPU_OBJS := $(GPU_BACKEND_OBJS) $(GPU_COMMON_OBJS)

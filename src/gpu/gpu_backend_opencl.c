@@ -143,6 +143,16 @@ static size_t g_target_count = 0;
 static size_t g_bloom_size = 0;
 static int g_bloom_hashes = 0;
 
+// Device memory for hash-only mode (per-device)
+typedef struct {
+    cl_mem d_x32;
+    cl_mem d_out02;
+    cl_mem d_out03;
+    size_t capacity;
+} hash_mode_buffers_t;
+
+static hash_mode_buffers_t g_hash_buffers[MAX_OPENCL_DEVICES];
+
 // ============================================================================
 // 256-bit arithmetic (host helpers)
 // ============================================================================
@@ -567,7 +577,7 @@ static int enumerate_opencl_devices(void) {
 // Backend interface implementation
 // ============================================================================
 
-int gpu_backend_init(gpu_backend_info_t *info) {
+int opencl_backend_init(gpu_backend_info_t *info) {
     if (g_available) {
         if (info) {
             memcpy(info, &g_info, sizeof(*info));
@@ -622,7 +632,7 @@ int gpu_backend_init(gpu_backend_info_t *info) {
     return 0;
 }
 
-int gpu_backend_available(void) {
+int opencl_backend_available(void) {
     return g_available;
 }
 
@@ -672,7 +682,7 @@ void gpu_backend_get_stats(uint64_t *total_keys, double *total_mkeys_per_sec) {
     }
 }
 
-void gpu_backend_shutdown(void) {
+void opencl_backend_shutdown(void) {
     // Release device resources
     for (int i = 0; i < g_device_count; i++) {
         opencl_device_t *dev = &g_devices[i];
@@ -777,17 +787,7 @@ void gpu_backend_shutdown(void) {
 // Mode 1: Hash-only mode implementation (subtask 2-3)
 // ============================================================================
 
-// Device memory for hash-only mode (per-device)
-typedef struct {
-    cl_mem d_x32;
-    cl_mem d_out02;
-    cl_mem d_out03;
-    size_t capacity;
-} hash_mode_buffers_t;
-
-static hash_mode_buffers_t g_hash_buffers[MAX_OPENCL_DEVICES];
-
-int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
+int opencl_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
                             uint8_t *out02, uint8_t *out03) {
     if (!g_available || count == 0) {
         return -1;
@@ -928,7 +928,7 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
 // Mode 2: Full GPU search (stubs - to be implemented in subtasks 2-4, 2-5)
 // ============================================================================
 
-int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
+int opencl_upload_gtable(const uint8_t *gtable, size_t point_count) {
     if (!g_available) {
         fprintf(stderr, "[OpenCL] Backend not initialized\n");
         return -1;
@@ -978,7 +978,7 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
     return 0;
 }
 
-int gpu_upload_targets(const uint8_t *targets, size_t count) {
+int opencl_upload_targets(const uint8_t *targets, size_t count) {
     if (!g_available) {
         fprintf(stderr, "[OpenCL] Backend not initialized\n");
         return -1;
@@ -1027,7 +1027,7 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
     return 0;
 }
 
-int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashes) {
+int opencl_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashes) {
     if (!g_available) {
         fprintf(stderr, "[OpenCL] Backend not initialized\n");
         return -1;
@@ -1075,7 +1075,7 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
     return 0;
 }
 
-int gpu_full_search(const gpu_search_config_t *config) {
+int opencl_full_search(const gpu_search_config_t *config) {
     if (!g_available || !config || g_device_count == 0) {
         return -1;
     }
@@ -1232,7 +1232,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
             uint64_t keys_this_launch = (remaining64 < keys_per_launch) ? remaining64 : keys_per_launch;
 
             // Adjust keys_per_thread for last batch
-            cl_ulong actual_keys_per_thread = keys_per_thread;
+            cl_ulong actual_keys_per_thread = keys_per_work_item;
             if (keys_this_launch < keys_per_launch) {
                 actual_keys_per_thread = (keys_this_launch + global_work_size - 1) / global_work_size;
                 if (actual_keys_per_thread < 1) actual_keys_per_thread = 1;
@@ -1420,7 +1420,7 @@ int gpu_full_search(const gpu_search_config_t *config) {
     return total_found;
 }
 
-size_t gpu_get_optimal_batch_size(void) {
+size_t opencl_get_optimal_batch_size(void) {
     if (!g_available || g_device_count == 0) {
         return 0;
     }
@@ -1430,9 +1430,9 @@ size_t gpu_get_optimal_batch_size(void) {
     return 1024;
 }
 
-double gpu_benchmark(size_t duration_ms) {
+double opencl_benchmark(size_t duration_ms) {
     (void)duration_ms;
-    fprintf(stderr, "[OpenCL] gpu_benchmark not yet implemented\n");
+    fprintf(stderr, "[OpenCL] opencl_benchmark not yet implemented\n");
     return 0.0;
 }
 
@@ -1488,7 +1488,7 @@ static double benchmark_config(opencl_device_t *dev, const tune_config_t *cfg, s
 }
 
 // Auto-tune: Test multiple configurations and find the best one
-int gpu_autotune(size_t duration_ms, gpu_tune_result_t *result) {
+int opencl_autotune(size_t duration_ms, gpu_tune_result_t *result) {
     if (!result) {
         return -1;
     }
@@ -1606,7 +1606,7 @@ int gpu_autotune(size_t duration_ms, gpu_tune_result_t *result) {
     return 0;
 }
 
-void gpu_apply_tune(const gpu_tune_result_t *tune) {
+void opencl_apply_tune(const gpu_tune_result_t *tune) {
     if (!tune || !g_available || g_device_count == 0) {
         return;
     }
