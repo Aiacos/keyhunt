@@ -1073,14 +1073,57 @@ int wizard_client_run(wizard_config_t *cfg) {
         cfg->gpu_percent = 0;
     }
 
-    /* Step 3: Connect to server */
-    printf("\n[+] Connecting to server %s:%d...\n", cfg->server_host, cfg->server_port);
+    /* Step 3: Detect multi-pool vs single-pool mode */
+    int use_multipool = (cfg->pool_count > 1);
+
+    if (use_multipool) {
+        /* Multi-pool mode: worker will connect to multiple coordinators */
+        printf("\n[+] Multi-pool mode detected (%d pools configured)\n", cfg->pool_count);
+
+        /* List configured pools */
+        for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+            if (cfg->pools[i].enabled) {
+                printf("    Pool %d: %s:%d (priority: %d)\n",
+                       i + 1,
+                       cfg->pools[i].host,
+                       cfg->pools[i].port,
+                       cfg->pools[i].priority);
+            }
+        }
+
+        /* Multi-pool implementation will be added in subsequent subtasks */
+        printf("\n[-] Multi-pool mode not yet implemented\n");
+        printf("    This feature will be available in a future update.\n");
+        printf("    For now, please use single-pool mode (1 pool in configuration).\n");
+        return -1;
+    }
+
+    /* Single-pool mode: backwards compatible with existing implementation */
+    printf("\n[+] Single-pool mode\n");
+
+    /* Determine server host/port:
+     * - If pool_count == 1, use pools[0]
+     * - If pool_count == 0, use legacy server_host/server_port fields
+     */
+    const char *server_host;
+    int server_port;
+
+    if (cfg->pool_count == 1) {
+        server_host = cfg->pools[0].host;
+        server_port = cfg->pools[0].port;
+        printf("    Connecting to pool: %s:%d\n", server_host, server_port);
+    } else {
+        /* pool_count == 0: use legacy fields for backwards compatibility */
+        server_host = cfg->server_host;
+        server_port = cfg->server_port;
+        printf("    Connecting to server: %s:%d\n", server_host, server_port);
+    }
 
     dist_worker_client_t client;
     memset(&client, 0, sizeof(client));
 
     /* Initialize client with connection info */
-    if (dist_worker_init(&client, cfg->server_host, cfg->server_port, sysinfo.cpu_score) != 0) {
+    if (dist_worker_init(&client, server_host, server_port, sysinfo.cpu_score) != 0) {
         printf("[-] Failed to initialize worker client\n");
         return -1;
     }
@@ -1094,8 +1137,16 @@ int wizard_client_run(wizard_config_t *cfg) {
                                   (int)sysinfo.gpu_vram_mb);
 
     /* Set authentication token if configured */
-    if (cfg->auth_token[0] != '\0') {
-        dist_worker_set_auth_token(&client, cfg->auth_token);
+    const char *auth_token = NULL;
+
+    if (cfg->pool_count == 1 && cfg->pools[0].auth_token[0] != '\0') {
+        auth_token = cfg->pools[0].auth_token;
+    } else if (cfg->pool_count == 0 && cfg->auth_token[0] != '\0') {
+        auth_token = cfg->auth_token;
+    }
+
+    if (auth_token != NULL) {
+        dist_worker_set_auth_token(&client, auth_token);
         printf("    Using authentication token\n");
     }
 
