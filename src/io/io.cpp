@@ -10,6 +10,7 @@
 #include "../core/util.h"
 #include "../hash/sha256.h"
 #include "../base58/libbase58.h"
+#include "../bech32/bech32.h"
 #include "../secure_file.h"
 
 #include <stdio.h>
@@ -376,8 +377,8 @@ bool forceReadFileAddress(char *fileName) {
 		if(fgets(aux, 100, fileDescriptor) == NULL) break;
 		trim(aux, " \t\n\r");
 		r = strlen(aux);
-		if(r > 0 && r <= 40) {
-			if(r < 40 && isValidBase58String(aux)) {	//Address
+		if(r > 0 && r <= 90) {	// Extended to support Bech32 addresses (up to ~62 chars)
+			if(r < 40 && isValidBase58String(aux)) {	//Base58 Address
 				raw_value_length = 25;
 				b58tobin(rawvalue, &raw_value_length, aux, r);
 				if(raw_value_length == 25) {
@@ -387,12 +388,40 @@ bool forceReadFileAddress(char *fileName) {
 					validAddress = true;
 				}
 			}
-			if(r == 40 && isValidHex(aux)) {	//RMD
+			else if(r == 40 && isValidHex(aux)) {	//Raw RMD160 hex
 				hexs2bin(aux, rawvalue);
 				bloom_ext_add(&bloom, rawvalue, sizeof(struct address_value));
 				memcpy(addressTable[i].value, rawvalue, sizeof(struct address_value));
 				i++;
 				validAddress = true;
+			}
+			else if(r >= 42 && r <= 90 && isValidBech32String(aux)) {	//Bech32 Address (bc1q...)
+				int witver;
+				uint8_t witprog[40];
+				size_t witprog_len;
+				// Decode Bech32 address to get witness program
+				if(segwit_addr_decode(&witver, witprog, &witprog_len, "bc", aux)) {
+					// For P2WPKH (witness v0, 20-byte program), use witness program as hash
+					if(witver == 0 && witprog_len == 20) {
+						bloom_ext_add(&bloom, witprog, sizeof(struct address_value));
+						memcpy(addressTable[i].value, witprog, sizeof(struct address_value));
+						i++;
+						validAddress = true;
+					}
+					// For P2WSH (witness v0, 32-byte program), skip for now (not RMD160)
+					else if(witver == 0 && witprog_len == 32) {
+						output_info("Skipping P2WSH address (32-byte witness program): %s\n", aux);
+						numberItems--;
+					}
+					else {
+						output_info("Unsupported witness version %d or program length %zu: %s\n", witver, witprog_len, aux);
+						numberItems--;
+					}
+				}
+				else {
+					output_info("Failed to decode Bech32 address: %s\n", aux);
+					numberItems--;
+				}
 			}
 		}
 		if(!validAddress) {
