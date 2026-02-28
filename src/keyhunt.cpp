@@ -44,6 +44,7 @@
 #include "core/workqueue.h"
 #include "core/sysinfo.h"
 #include "core/parameter_validator.h"
+#include "error/enhanced_error.h"
 #include "gpu/gpu_backend.h"
 #include "gpu/gpu_multi_worker.h"
 #include "core/config.h"
@@ -51,6 +52,7 @@
 #include "hybrid/adaptive_scheduler.h"
 #include "wizard/wizard.h"
 #include "benchmark.h"
+#include "diagnostics/diagnostics.h"
 #include "output.h"
 #include "progress.h"
 #include "cli.h"
@@ -242,7 +244,19 @@ static inline void profile_init_threads(int nthreads) {
 	if (!g_profile_enabled || nthreads <= 0 || g_profile_counters) return;
 	g_profile_counters = (profile_counters_t *)calloc((size_t)nthreads, sizeof(profile_counters_t));
 	if (!g_profile_counters) {
-		output_warning("Profiling requested but allocation failed\n");
+		error_report_t report;
+		size_t required_bytes = (size_t)nthreads * sizeof(profile_counters_t);
+		error_context_t ctx = ERROR_CONTEXT_VALUES(
+			ERROR_CAT_MEMORY,
+			ERROR_SEV_WARNING,
+			"profiling allocation",
+			"Failed to allocate memory for profiling counters",
+			required_bytes / (1024 * 1024),  // Convert to MB
+			0  // We don't have available memory here
+		);
+		error_report(&ctx, &report);
+		error_print(&report);
+		output_warning("Profiling disabled due to memory allocation failure\n");
 		g_profile_enabled = false;
 		return;
 	}
@@ -1513,17 +1527,36 @@ static bool gpu_selftest_hash160_fromX() {
 	alignas(32) uint8_t gpu02[kCount][20];
 	alignas(32) uint8_t gpu03[kCount][20];
 	if (gpu_hash160_fromX_batch(x32_be, kCount, gpu02[0], gpu03[0]) != 0) {
-		output_error("GPU self-test failed: CUDA hash160 call failed\n");
+		error_report_t report;
+		error_gpu_init_failed("GPU",
+		                      "CUDA hash160 computation failed during self-test. "
+		                      "This indicates GPU kernel execution or memory transfer issues.",
+		                      &report);
+		error_print(&report);
 		return false;
 	}
 
 	for (size_t i = 0; i < kCount; ++i) {
 		if (memcmp(cpu02[i], gpu02[i], 20) != 0) {
-			output_error("GPU self-test failed: mismatch prefix 02 at index %zu\n", i);
+			error_report_t report;
+			char details[256];
+			snprintf(details, sizeof(details),
+			         "GPU hash160 output mismatch at index %zu (prefix 02). "
+			         "GPU computation produced incorrect results. "
+			         "This may indicate GPU hardware issues or driver bugs.", i);
+			error_gpu_init_failed("GPU", details, &report);
+			error_print(&report);
 			return false;
 		}
 		if (memcmp(cpu03[i], gpu03[i], 20) != 0) {
-			output_error("GPU self-test failed: mismatch prefix 03 at index %zu\n", i);
+			error_report_t report;
+			char details[256];
+			snprintf(details, sizeof(details),
+			         "GPU hash160 output mismatch at index %zu (prefix 03). "
+			         "GPU computation produced incorrect results. "
+			         "This may indicate GPU hardware issues or driver bugs.", i);
+			error_gpu_init_failed("GPU", details, &report);
+			error_print(&report);
 			return false;
 		}
 	}
@@ -1711,6 +1744,13 @@ int main(int argc, char **argv)	{
 			benchmark_show_community_stats();
 			exit(EXIT_SUCCESS);
 		}
+		// Diagnostic mode
+		if (strcmp(argv[ai], "--diagnose") == 0) {
+			diagnostic_report_t report;
+			diagnostics_run(&report);
+			diagnostics_print_report(&report);
+			exit(EXIT_SUCCESS);
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -1752,8 +1792,10 @@ int main(int argc, char **argv)	{
 			output_success("Loaded configuration from '%s'\n", config_file_arg);
 			g_config_loaded = true;
 		} else {
-			output_error("Failed to load config file: %s\n", config_file_arg);
-			exit(EXIT_FAILURE);
+			error_report_t report;
+			error_file_io(config_file_arg, "load configuration",
+			              "File not found, invalid format, or permission denied", &report);
+			error_fatal(&report);
 		}
 	} else {
 		// Try default config file (silently)
@@ -2593,7 +2635,12 @@ int main(int argc, char **argv)	{
 				if (gpu_upload_gtable_from_secp() == 0) {
 					output_success("G table uploaded to GPU (8192 points)\n");
 				} else {
-					output_error("Failed to upload G table to GPU\n");
+					error_report_t report;
+					error_gpu_init_failed("GPU",
+					                      "Failed to upload precomputed G table (8192 points). "
+					                      "This may indicate GPU out of memory or initialization failure.",
+					                      &report);
+					error_print(&report);
 					FLAGGPU_FULL = 0;
 					FLAGGPU = 0;
 				}
@@ -2612,7 +2659,14 @@ int main(int argc, char **argv)	{
 						}
 					}
 				} else if (FLAGGPU_FULL) {
-					output_error("Failed to upload targets to GPU\n");
+					error_report_t report;
+					char details[256];
+					snprintf(details, sizeof(details),
+					         "Failed to upload %" PRIu64 " target hashes to GPU. "
+					         "This may indicate GPU out of memory (requires ~%llu MB).",
+					         N, (unsigned long long)(N * 20 / (1024 * 1024)));
+					error_gpu_init_failed("GPU", details, &report);
+					error_print(&report);
 					FLAGGPU_FULL = 0;
 					FLAGGPU = 0;
 				}

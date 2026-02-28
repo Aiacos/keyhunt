@@ -14,7 +14,8 @@ typedef enum {
     OUTPUT_SILENT = 0,   // No output except errors and results
     OUTPUT_MINIMAL = 1,  // Clean single-line progress
     OUTPUT_NORMAL = 2,   // Standard output (default)
-    OUTPUT_VERBOSE = 3   // Debug-level output
+    OUTPUT_VERBOSE = 3,  // Detailed output with statistics
+    OUTPUT_DEBUG = 4     // Debug-level output with diagnostics
 } output_level_t;
 
 // Initialize output system
@@ -44,6 +45,7 @@ void output_info(const char *fmt, ...);      // [I] prefix
 void output_success(const char *fmt, ...);   // [+] prefix
 void output_warning(const char *fmt, ...);   // [W] prefix
 void output_error(const char *fmt, ...);     // [E] prefix
+void output_debug(const char *fmt, ...);     // [D] prefix
 
 // Key found celebration
 void output_key_found(const char *private_key, const char *address,

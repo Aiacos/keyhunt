@@ -206,6 +206,10 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
             benchmark_show_community_stats();
             return 0;
         }
+        if (strcmp(argv[i], "--diagnose") == 0) {
+            args->run_diagnose = true;
+            return 0;
+        }
         if (strcmp(argv[i], "--wizard-client") == 0 && i + 1 < argc) {
             strncpy(args->wizard_client, argv[i + 1], sizeof(args->wizard_client) - 1);
             args->wizard_client[sizeof(args->wizard_client) - 1] = '\0';
@@ -481,7 +485,7 @@ int cli_validate(cli_args_t *args) {
     if (args == NULL) return -1;
 
     // Target file required for most modes
-    if (!args->run_wizard && !args->run_benchmark &&
+    if (!args->run_wizard && !args->run_benchmark && !args->run_diagnose &&
         args->wizard_client[0] == '\0' && args->target_file[0] == '\0') {
         fprintf(stderr, "[E] Target file required (-f)\n");
         return -1;
@@ -558,6 +562,7 @@ void cli_print(const cli_args_t *args) {
     printf("  Progress bar: %s\n", args->show_progress_bar ? "yes" : "no");
     printf("  Run wizard: %s\n", args->run_wizard ? "yes" : "no");
     printf("  Run benchmark: %s\n", args->run_benchmark ? "yes" : "no");
+    printf("  Run diagnose: %s\n", args->run_diagnose ? "yes" : "no");
 }
 
 // ============================================================================

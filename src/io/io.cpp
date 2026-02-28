@@ -8,6 +8,8 @@
 #include "../output.h"
 #include "../platform/platform.h"
 #include "../core/util.h"
+#include "../core/sysinfo.h"
+#include "../error/enhanced_error.h"
 #include "../hash/sha256.h"
 #include "../base58/libbase58.h"
 #include "../bech32/bech32.h"
@@ -29,8 +31,25 @@ int addvanity(char *target);
 
 void checkpointer(void *ptr, const char *file, const char *function, const char *name, int line) {
 	if(ptr == NULL) {
-		output_error("error in file %s, %s pointer %s on line %i\n", file, function, name, line);
-		exit(EXIT_FAILURE);
+		// Get system info for available memory diagnostic
+		system_info_t sysinfo;
+		sysinfo_init(&sysinfo);
+
+		// Create enhanced error report
+		error_report_t report;
+		error_context_t ctx = ERROR_CONTEXT_VALUES(
+			ERROR_CAT_MEMORY,
+			ERROR_SEV_FATAL,
+			function,
+			name,
+			0,  // We don't know required memory here
+			sysinfo.ram_available
+		);
+		ctx.file = file;
+		ctx.line = line;
+
+		error_report(&ctx, &report);
+		error_fatal(&report);
 	}
 }
 

@@ -114,6 +114,8 @@ DIST_OBJS := $(OBJDIR)/distributed/distributed.o
 OUTPUT_OBJS := $(OBJDIR)/output.o
 PROGRESS_OBJS := $(OBJDIR)/progress.o
 BENCHMARK_OBJS := $(OBJDIR)/benchmark.o
+DIAGNOSTICS_OBJS := $(OBJDIR)/diagnostics/diagnostics.o $(OBJDIR)/diagnostics/gpu_diagnostics.o
+ERROR_OBJS := $(OBJDIR)/error/enhanced_error.o
 CLI_OBJS := $(OBJDIR)/cli.o
 WIZARD_OBJS := $(OBJDIR)/wizard/wizard.o $(OBJDIR)/wizard/wizard_config.o $(OBJDIR)/wizard/wizard_ui.o $(OBJDIR)/wizard/wizard_community.o $(OBJDIR)/wizard/wizard_http.o $(OBJDIR)/wizard/wizard_server.o $(OBJDIR)/wizard/wizard_client.o $(OBJDIR)/wizard/wizard_webhooks.o
 DATABASE_OBJS := $(OBJDIR)/database/sqlite3.o $(OBJDIR)/database/perfdb.o $(OBJDIR)/database/statistics.o
@@ -124,11 +126,11 @@ SORT_OBJS := $(OBJDIR)/sort/sort.o
 CRYPTO_OBJS := $(OBJDIR)/crypto/address_util.o $(OBJDIR)/crypto/bloom_init.o
 IO_OBJS := $(OBJDIR)/io/io.o
 
-COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/bech32/bech32.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(DATABASE_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS) $(SORT_OBJS) $(CRYPTO_OBJS) $(IO_OBJS)
+COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/bech32/bech32.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(DATABASE_OBJS) $(DIAGNOSTICS_OBJS) $(ERROR_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS) $(SORT_OBJS) $(CRYPTO_OBJS) $(IO_OBJS)
 
 # Legacy common excludes SEARCH_OBJS, SORT_OBJS, CRYPTO_OBJS, IO_OBJS
 # (keyhunt_legacy.cpp contains its own implementations of these functions)
-LEGACY_COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS)
+LEGACY_COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(DIAGNOSTICS_OBJS) $(ERROR_OBJS) $(CLI_OBJS)
 
 KEYHUNT_OBJS := $(OBJDIR)/keyhunt.o $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OBJS)
 BSGSD_OBJS := $(OBJDIR)/bsgsd.o $(COMMON_OBJS) $(SECP256K1_OBJS)
@@ -141,7 +143,7 @@ LEGACY_EXE := keyhunt_legacy$(EXE_EXT)
 TEST_EXE := run_tests$(EXE_EXT)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/bech32 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/bech32 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/diagnostics $(OBJDIR)/error $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
 .PHONY: all clean legacy bsgsd directories test run_tests sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 

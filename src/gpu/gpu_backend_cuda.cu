@@ -27,6 +27,9 @@
 // Parameter validation
 #include "../core/parameter_validator.h"
 
+// Enhanced error reporting
+#include "../error/enhanced_error.h"
+
 // Use optimized hash functions
 #define USE_OPTIMIZED_HASH 1
 
@@ -2109,9 +2112,19 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
 
         cudaError_t err = cudaMalloc(&ctx->d_GTable, size);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc G table: %s (%d)\n",
-                    ctx->device_id, cudaGetErrorString(err), (int)err);
-            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            error_report_t report;
+            char gpu_name[64];
+            snprintf(gpu_name, sizeof(gpu_name), "GPU %d (%s)",
+                     ctx->device_id, ctx->props.name);
+
+            uint64_t required_mb = size / (1024 * 1024);
+            size_t free_mem, total_mem;
+            cudaMemGetInfo(&free_mem, &total_mem);
+            uint64_t available_mb = free_mem / (1024 * 1024);
+
+            error_gpu_oom(required_mb, available_mb, gpu_name, &report);
+            error_print(&report);
+
             ctx->active = 0;
             failed++;
             continue;
@@ -2119,11 +2132,18 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
 
         err = cudaMemcpy(ctx->d_GTable, gtable, size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMemcpy G table: %s (%d)\n",
-                    ctx->device_id, cudaGetErrorString(err), (int)err);
+            error_report_t report;
+            char details[256];
+            snprintf(details, sizeof(details),
+                     "GPU %d (%s): Failed to copy G table to device memory",
+                     ctx->device_id, ctx->props.name);
+
+            error_cuda_error((int)err, "cudaMemcpy G table",
+                            "Unknown", "Unknown", &report);
+            error_print(&report);
+
             CUDA_CHECK_WARN(cudaFree(ctx->d_GTable));
             ctx->d_GTable = NULL;
-            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
             ctx->active = 0;
             failed++;
             continue;
@@ -2166,9 +2186,19 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
 
         cudaError_t err = cudaMalloc(&ctx->d_targets, size);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc targets: %s (%d)\n",
-                    ctx->device_id, cudaGetErrorString(err), (int)err);
-            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            error_report_t report;
+            char gpu_name[64];
+            snprintf(gpu_name, sizeof(gpu_name), "GPU %d (%s)",
+                     ctx->device_id, ctx->props.name);
+
+            uint64_t required_mb = size / (1024 * 1024);
+            size_t free_mem, total_mem;
+            cudaMemGetInfo(&free_mem, &total_mem);
+            uint64_t available_mb = free_mem / (1024 * 1024);
+
+            error_gpu_oom(required_mb, available_mb, gpu_name, &report);
+            error_print(&report);
+
             ctx->active = 0;
             failed++;
             continue;
@@ -2176,11 +2206,18 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
 
         err = cudaMemcpy(ctx->d_targets, targets, size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMemcpy targets: %s (%d)\n",
-                    ctx->device_id, cudaGetErrorString(err), (int)err);
+            error_report_t report;
+            char details[256];
+            snprintf(details, sizeof(details),
+                     "GPU %d (%s): Failed to copy target hashes to device memory",
+                     ctx->device_id, ctx->props.name);
+
+            error_cuda_error((int)err, "cudaMemcpy targets",
+                            "Unknown", "Unknown", &report);
+            error_print(&report);
+
             CUDA_CHECK_WARN(cudaFree(ctx->d_targets));
             ctx->d_targets = NULL;
-            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
             ctx->active = 0;
             failed++;
             continue;
@@ -2231,9 +2268,19 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
 
         cudaError_t err = cudaMalloc(&ctx->d_bloom, bloom_size);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMalloc bloom: %s (%d)\n",
-                    ctx->device_id, cudaGetErrorString(err), (int)err);
-            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
+            error_report_t report;
+            char gpu_name[64];
+            snprintf(gpu_name, sizeof(gpu_name), "GPU %d (%s)",
+                     ctx->device_id, ctx->props.name);
+
+            uint64_t required_mb = bloom_size / (1024 * 1024);
+            size_t free_mem, total_mem;
+            cudaMemGetInfo(&free_mem, &total_mem);
+            uint64_t available_mb = free_mem / (1024 * 1024);
+
+            error_gpu_oom(required_mb, available_mb, gpu_name, &report);
+            error_print(&report);
+
             ctx->active = 0;
             failed++;
             continue;
@@ -2241,11 +2288,18 @@ int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashe
 
         err = cudaMemcpy(ctx->d_bloom, bloom_data, bloom_size, cudaMemcpyHostToDevice);
         if (err != cudaSuccess) {
-            fprintf(stderr, "[CUDA ERROR] GPU %d: cudaMemcpy bloom: %s (%d)\n",
-                    ctx->device_id, cudaGetErrorString(err), (int)err);
+            error_report_t report;
+            char details[256];
+            snprintf(details, sizeof(details),
+                     "GPU %d (%s): Failed to copy bloom filter to device memory",
+                     ctx->device_id, ctx->props.name);
+
+            error_cuda_error((int)err, "cudaMemcpy bloom",
+                            "Unknown", "Unknown", &report);
+            error_print(&report);
+
             CUDA_CHECK_WARN(cudaFree(ctx->d_bloom));
             ctx->d_bloom = NULL;
-            fprintf(stderr, "[GPU] Device %d init failed - marking inactive\n", ctx->device_id);
             ctx->active = 0;
             failed++;
             continue;
@@ -2300,11 +2354,29 @@ int gpu_full_search(const gpu_search_config_t *config) {
     for (int g = 0; g < g_gpu_count; g++) {
         if (!g_gpus[g].active) continue;
         if (!g_gpus[g].d_GTable || g_GTable_count == 0) {
-            fprintf(stderr, "[!] GPU %d: G table not uploaded\n", g_gpus[g].device_id);
+            error_report_t report;
+            char details[256];
+            snprintf(details, sizeof(details),
+                     "GPU %d (%s) is missing precomputed G table. "
+                     "Call gpu_upload_gtable_from_secp() before starting search.",
+                     g_gpus[g].device_id, g_gpus[g].props.name);
+            error_context_t ctx = ERROR_CONTEXT(ERROR_CAT_GPU, ERROR_SEV_ERROR,
+                                                 "GPU search initialization", details);
+            error_report(&ctx, &report);
+            error_print(&report);
             return -1;
         }
         if (!g_gpus[g].d_targets || g_target_count == 0) {
-            fprintf(stderr, "[!] GPU %d: targets not uploaded\n", g_gpus[g].device_id);
+            error_report_t report;
+            char details[256];
+            snprintf(details, sizeof(details),
+                     "GPU %d (%s) is missing target hashes. "
+                     "Call gpu_upload_targets() before starting search.",
+                     g_gpus[g].device_id, g_gpus[g].props.name);
+            error_context_t ctx = ERROR_CONTEXT(ERROR_CAT_GPU, ERROR_SEV_ERROR,
+                                                 "GPU search initialization", details);
+            error_report(&ctx, &report);
+            error_print(&report);
             return -1;
         }
     }
@@ -2320,7 +2392,14 @@ int gpu_full_search(const gpu_search_config_t *config) {
     }
 
     if (active_gpus == 0) {
-        fprintf(stderr, "[!] No active GPUs\n");
+        error_report_t report;
+        error_context_t ctx = ERROR_CONTEXT(ERROR_CAT_GPU, ERROR_SEV_ERROR,
+                                             "GPU search initialization",
+                                             "No active GPUs available. "
+                                             "All GPUs failed initialization or were disabled. "
+                                             "Check previous error messages for details.");
+        error_report(&ctx, &report);
+        error_print(&report);
         return -1;
     }
 
@@ -2526,8 +2605,16 @@ int gpu_full_search(const gpu_search_config_t *config) {
             // Check kernel launch succeeded before counting work as done
             cudaError_t launch_err = cudaGetLastError();
             if (launch_err != cudaSuccess) {
-                fprintf(stderr, "[GPU %d] Kernel launch failed: %s\n",
-                        worker->gpu_idx, cudaGetErrorString(launch_err));
+                error_report_t report;
+                char details[256];
+                gpu_context_t *ctx = worker->ctx;
+                snprintf(details, sizeof(details),
+                         "GPU %d (%s): Kernel launch failed. "
+                         "This may indicate invalid launch parameters or GPU driver issues.",
+                         ctx->device_id, ctx->props.name);
+                error_cuda_error((int)launch_err, "kernel launch",
+                                "Unknown", "Unknown", &report);
+                error_print(&report);
                 worker->active = 0;
                 break;
             }
@@ -2553,8 +2640,15 @@ int gpu_full_search(const gpu_search_config_t *config) {
             int prev_stream = (worker->stream_idx + NUM_STREAMS_PER_GPU - 1) % NUM_STREAMS_PER_GPU;
             cudaError_t err = cudaStreamSynchronize(ctx->streams[prev_stream]);
             if (err != cudaSuccess) {
-                fprintf(stderr, "\n[CUDA ERROR] GPU %d kernel error: %s (%d)\n",
-                        ctx->device_id, cudaGetErrorString(err), (int)err);
+                error_report_t report;
+                char details[256];
+                snprintf(details, sizeof(details),
+                         "GPU %d (%s): Kernel execution error. "
+                         "This may indicate GPU hardware issues, driver bugs, or out-of-bounds memory access.",
+                         ctx->device_id, ctx->props.name);
+                error_cuda_error((int)err, "kernel execution",
+                                "Unknown", "Unknown", &report);
+                error_print(&report);
                 worker->active = 0;
                 continue;
             }

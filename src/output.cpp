@@ -352,6 +352,17 @@ void output_error(const char *fmt, ...) {
     va_end(args);
 }
 
+void output_debug(const char *fmt, ...) {
+    // Only output debug messages when explicitly in DEBUG mode
+    if (g_output_level < OUTPUT_DEBUG || !fmt) return;
+
+    va_list args;
+    va_start(args, fmt);
+    printf(CLR_MAGENTA "[D]" CLR_RESET " ");
+    vprintf(fmt, args);
+    va_end(args);
+}
+
 void output_key_found(const char *private_key, const char *address,
                       const char *public_key) {
     if (!private_key || !address) return;
