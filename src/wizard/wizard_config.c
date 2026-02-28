@@ -199,10 +199,24 @@ int wizard_config_save(const wizard_config_t *cfg, const char *filepath) {
     for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
         const pool_config_t *pool = &cfg->pools[i];
         fprintf(f, "      {\n");
-        fprintf(f, "        \"host\": \"%s\",\n", pool->host);
+        fprintf(f, "        \"host\": \"");
+        for (const char *p = pool->host; *p; p++) {
+            if (*p == '"') fprintf(f, "\\\"");
+            else if (*p == '\\') fprintf(f, "\\\\");
+            else fputc(*p, f);
+        }
+        fprintf(f, "\",\n");
         fprintf(f, "        \"port\": %d,\n", pool->port);
         fprintf(f, "        \"priority\": %d,\n", pool->priority);
-        fprintf(f, "        \"auth_token\": \"%s\",\n", pool->auth_token);
+        fprintf(f, "        \"auth_token\": \"");
+        for (const char *p = pool->auth_token; *p; p++) {
+            unsigned char c = (unsigned char)*p;
+            if (c == '"') fprintf(f, "\\\"");
+            else if (c == '\\') fprintf(f, "\\\\");
+            else if (c < 32) fprintf(f, "\\u%04x", c);
+            else fputc(c, f);
+        }
+        fprintf(f, "\",\n");
         fprintf(f, "        \"enabled\": %s\n", pool->enabled ? "true" : "false");
         fprintf(f, "      }%s\n", (i < cfg->pool_count - 1) ? "," : "");
     }
@@ -341,6 +355,7 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     /* Acquire shared lock for reading */
     int fd = fileno(f);
     if (flock(fd, LOCK_SH) != 0) {
+        fprintf(stderr, "[-] Cannot lock config file for reading: %s\n", strerror(errno));
         fclose(f);
         return -1;
     }
@@ -350,6 +365,7 @@ int wizard_config_load(wizard_config_t *cfg, const char *filepath) {
     fseek(f, 0, SEEK_SET);
 
     if (size <= 0 || size > 1048576) {  /* Max 1MB */
+        fprintf(stderr, "[-] Config file has invalid size (%ld bytes)\n", size);
         fclose(f);
         return -1;
     }

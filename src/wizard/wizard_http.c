@@ -80,7 +80,7 @@ int wizard_http_get(const char *url, char **response, size_t *response_len) {
     }
 
     char buf[8192];
-    while (!feof(fp) && len < WIZARD_HTTP_MAX_RESPONSE_SIZE) {
+    while (!feof(fp) && !ferror(fp) && len < WIZARD_HTTP_MAX_RESPONSE_SIZE) {
         size_t n = fread(buf, 1, sizeof(buf), fp);
         if (n > 0) {
             /* Expand buffer if needed, +1 for null terminator */
@@ -214,7 +214,7 @@ int wizard_http_post(const char *url, const char *body, size_t body_len,
     }
 
     char buf[8192];
-    while (!feof(fp) && len < WIZARD_HTTP_MAX_RESPONSE_SIZE) {
+    while (!feof(fp) && !ferror(fp) && len < WIZARD_HTTP_MAX_RESPONSE_SIZE) {
         size_t n = fread(buf, 1, sizeof(buf), fp);
         if (n > 0) {
             /* Expand buffer if needed, +1 for null terminator */

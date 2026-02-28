@@ -152,7 +152,7 @@ static int convert_bits(uint8_t *out, size_t *outlen, int outbits,
  */
 int bech32_encode(char *output, const char *hrp, const uint8_t *data,
                   size_t data_len) {
-    uint8_t checksum[6];
+    uint8_t checksum[6] = {0};
     size_t i, hrp_len;
 
     if (!output || !hrp || !data) {
@@ -326,7 +326,7 @@ int segwit_addr_encode(char *output, const char *hrp, int witver,
 
     /* Create checksum */
     {
-        uint8_t checksum[6];
+        uint8_t checksum[6] = {0};
         size_t i, hrp_len = strlen(hrp);
 
         bech32_create_checksum(hrp, data, datalen, checksum, checksum_const);

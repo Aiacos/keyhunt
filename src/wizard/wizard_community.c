@@ -75,7 +75,7 @@ static int fetch_url(const char *url, char **response, size_t *response_len) {
     }
 
     char buf[8192];
-    while (!feof(fp) && len < MAX_RESPONSE_SIZE) {
+    while (!feof(fp) && !ferror(fp) && len < MAX_RESPONSE_SIZE) {
         size_t n = fread(buf, 1, sizeof(buf), fp);
         if (n > 0) {
             if (len + n + 1 >= capacity) {
@@ -83,6 +83,7 @@ static int fetch_url(const char *url, char **response, size_t *response_len) {
                 char *newbuf = realloc(*response, capacity);
                 if (!newbuf) {
                     free(*response);
+                    *response = NULL;
                     pclose(fp);
                     return -1;
                 }
@@ -668,6 +669,7 @@ int wizard_privatekeys_fetch_progress(int puzzle_number, privatekeys_progress_t 
 
     if (fetch_url(PRIVATEKEYS_CLOUD_URL, &html, &html_len) != 0) {
         printf("[-] Failed to fetch privatekeys.pw\n");
+        free(html);
         return -1;
     }
 
@@ -983,6 +985,7 @@ int wizard_keyslol_fetch_progress(int puzzle_number, keyslol_progress_t *progres
 
     if (fetch_url(url, &response, &response_len) != 0) {
         printf("[-] Failed to fetch Keys.lol API\n");
+        free(response);
         return -1;
     }
 

@@ -390,9 +390,14 @@ static int append_progress_history(int puzzle_number, uint64_t keys_checked,
 
     /* Write data row with ISO 8601 timestamp */
     time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
+    struct tm tm_buf;
+    struct tm *tm_info = localtime_r(&now, &tm_buf);
     char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", tm_info);
+    if (tm_info) {
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", tm_info);
+    } else {
+        snprintf(timestamp, sizeof(timestamp), "%ld", (long)now);
+    }
 
     fprintf(f, "%s,%llu,%.2f,%d\n",
             timestamp,
@@ -852,9 +857,9 @@ int wizard_server_run(wizard_config_t *cfg) {
     printf("\n\n");
     wizard_print_separator();
     printf("\n[+] Final Statistics:\n");
+    double pct = (num_units > 0) ? ((double)coord.work_units_completed / num_units * 100.0) : 0.0;
     printf("    Work units completed: %d / %d (%.2f%%)\n",
-           coord.work_units_completed, num_units,
-           (double)coord.work_units_completed / num_units * 100.0);
+           coord.work_units_completed, num_units, pct);
     printf("    Total keys processed: %.2e\n", (double)coord.keys_processed);
     printf("    Run time: %ld seconds\n", time(NULL) - start_time);
 

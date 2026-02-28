@@ -537,8 +537,8 @@ static int tls_send_all(SSL *ssl, const void *data, size_t len) {
         int sent = SSL_write(ssl, ptr, (int)remaining);
         if (sent <= 0) {
             int err = SSL_get_error(ssl, sent);
-            if (err == SSL_ERROR_WANT_WRITE) {
-                continue;  /* Retry */
+            if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ) {
+                continue;  /* Retry - also handles TLS renegotiation */
             }
             tls_print_error("SSL_write");
             return -1;
@@ -558,8 +558,8 @@ static int tls_recv_all(SSL *ssl, void *buf, size_t len) {
         int received = SSL_read(ssl, ptr, (int)remaining);
         if (received <= 0) {
             int err = SSL_get_error(ssl, received);
-            if (err == SSL_ERROR_WANT_READ) {
-                continue;  /* Retry */
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+                continue;  /* Retry - also handles TLS renegotiation */
             }
             if (err == SSL_ERROR_ZERO_RETURN) {
                 return -1;  /* Connection closed */

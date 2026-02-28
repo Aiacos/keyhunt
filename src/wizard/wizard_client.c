@@ -63,8 +63,8 @@ int wizard_client_run_auto(const char *host_port) {
  * Global State
  * ============================================================================ */
 
-static volatile int g_client_running = 1;
-static volatile int g_shutdown_requested = 0;
+static volatile sig_atomic_t g_client_running = 1;
+static volatile sig_atomic_t g_shutdown_requested = 0;
 static char g_executable_path[PATH_MAX] = "";  /* Absolute path to keyhunt binary */
 
 /* State for graceful shutdown progress saving */
@@ -74,7 +74,7 @@ static char g_client_last_range_end[65] = "";
 
 /* Heartbeat thread state */
 static pthread_t g_heartbeat_thread;
-static volatile int g_heartbeat_running = 0;
+static volatile sig_atomic_t g_heartbeat_running = 0;
 static dist_worker_client_t *g_heartbeat_client = NULL;
 static dist_multipool_client_t *g_heartbeat_multipool = NULL;  /* For multi-pool mode */
 static pthread_mutex_t g_heartbeat_mutex = PTHREAD_MUTEX_INITIALIZER;
