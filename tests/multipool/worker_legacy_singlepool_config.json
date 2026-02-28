@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "is_server": false,
+  "puzzle_number": 66,
+  "target_address": "13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so",
+  "range_start": "20000000000000000",
+  "range_end": "3ffffffffffffffff",
+  "bits": 66,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 7771,
+    "work_unit_size": "100000000",
+    "checkpoint_interval": 300,
+    "also_worker": false,
+    "auth_token": ""
+  },
+  "search": {
+    "mode": "address",
+    "key_type": "compress",
+    "random_mode": false,
+    "threads": 2,
+    "gpu_percent": 0,
+    "bsgs_n": "0",
+    "bsgs_k": 0
+  },
+  "community": {
+    "enabled": false,
+    "source": "",
+    "sync_interval": 3600,
+    "last_sync": 0
+  },
+  "progress": {
+    "total_ranges": 0,
+    "local_completed": 0,
+    "community_excluded": 0,
+    "progress_file": "tests/multipool/worker_legacy_progress.txt",
+    "exclusion_file": ""
+  },
+  "webhooks": {
+    "discord_url": "",
+    "telegram_url": ""
+  },
+  "progress_reporting": {
+    "report_progress_enabled": false,
+    "report_progress_url": ""
+  }
+}
