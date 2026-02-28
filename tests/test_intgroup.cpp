@@ -735,6 +735,185 @@ TEST(modular_arithmetic_properties_additive_inverse) {
 }
 
 /* ============================================================================
+ * Batch vs Single ModInv Cross-Validation Tests
+ *
+ * These tests verify that IntGroup batch modular inversion produces the same
+ * result as individual Int::ModInv() for each element independently.
+ * This cross-validates the Montgomery's trick implementation against the
+ * single-element modular inverse.
+ * ============================================================================ */
+
+TEST(intgroup_batch_vs_single_size_1) {
+    setup_secp256k1();
+
+    Int batch_val, single_val;
+    batch_val.SetInt32(42);
+    single_val.Set(&batch_val);
+
+    /* Batch inversion */
+    IntGroup group(1);
+    group.Set(&batch_val);
+    group.ModInv();
+
+    /* Single-element inversion */
+    single_val.ModInv();
+
+    ASSERT_TRUE(batch_val.IsEqual(&single_val));
+}
+
+TEST(intgroup_batch_vs_single_size_2) {
+    setup_secp256k1();
+
+    const int N = 2;
+    Int batch[N], single[N];
+
+    for (int i = 0; i < N; i++) {
+        batch[i].SetInt32(100 + i * 37);
+        single[i].Set(&batch[i]);
+    }
+
+    IntGroup group(N);
+    group.Set(batch);
+    group.ModInv();
+
+    for (int i = 0; i < N; i++) {
+        single[i].ModInv();
+    }
+
+    for (int i = 0; i < N; i++) {
+        ASSERT_TRUE(batch[i].IsEqual(&single[i]));
+    }
+}
+
+TEST(intgroup_batch_vs_single_size_4) {
+    setup_secp256k1();
+
+    const int N = 4;
+    Int batch[N], single[N];
+
+    for (int i = 0; i < N; i++) {
+        batch[i].SetInt32(200 + i * 53);
+        single[i].Set(&batch[i]);
+    }
+
+    IntGroup group(N);
+    group.Set(batch);
+    group.ModInv();
+
+    for (int i = 0; i < N; i++) {
+        single[i].ModInv();
+    }
+
+    for (int i = 0; i < N; i++) {
+        ASSERT_TRUE(batch[i].IsEqual(&single[i]));
+    }
+}
+
+TEST(intgroup_batch_vs_single_size_8) {
+    setup_secp256k1();
+
+    const int N = 8;
+    Int batch[N], single[N];
+
+    for (int i = 0; i < N; i++) {
+        batch[i].SetInt32(100 + i * 37);
+        single[i].Set(&batch[i]);
+    }
+
+    IntGroup group(N);
+    group.Set(batch);
+    group.ModInv();
+
+    for (int i = 0; i < N; i++) {
+        single[i].ModInv();
+    }
+
+    for (int i = 0; i < N; i++) {
+        ASSERT_TRUE(batch[i].IsEqual(&single[i]));
+    }
+}
+
+TEST(intgroup_batch_vs_single_size_16) {
+    setup_secp256k1();
+
+    const int N = 16;
+    Int batch[N], single[N];
+
+    for (int i = 0; i < N; i++) {
+        batch[i].SetInt32(300 + i * 19);
+        single[i].Set(&batch[i]);
+    }
+
+    IntGroup group(N);
+    group.Set(batch);
+    group.ModInv();
+
+    for (int i = 0; i < N; i++) {
+        single[i].ModInv();
+    }
+
+    for (int i = 0; i < N; i++) {
+        ASSERT_TRUE(batch[i].IsEqual(&single[i]));
+    }
+}
+
+TEST(intgroup_batch_vs_single_size_32) {
+    setup_secp256k1();
+
+    const int N = 32;
+    Int batch[N], single[N];
+
+    for (int i = 0; i < N; i++) {
+        batch[i].SetInt32(500 + i * 41);
+        single[i].Set(&batch[i]);
+    }
+
+    IntGroup group(N);
+    group.Set(batch);
+    group.ModInv();
+
+    for (int i = 0; i < N; i++) {
+        single[i].ModInv();
+    }
+
+    for (int i = 0; i < N; i++) {
+        ASSERT_TRUE(batch[i].IsEqual(&single[i]));
+    }
+}
+
+TEST(intgroup_batch_vs_single_large_field_elements) {
+    setup_secp256k1();
+
+    /* Test with 256-bit values: large non-trivial field elements.
+     * Avoids values at exact field boundaries (P-1, 1) where different
+     * code paths may produce equivalent but non-identical representations. */
+    const int N = 5;
+    Int batch[N], single[N];
+
+    batch[0].SetBase16("DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF");
+    batch[1].SetBase16("123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF");
+    batch[2].SetBase16("7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7FFFFE17");
+    batch[3].SetBase16("FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA987654321");
+    batch[4].SetBase16("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+    for (int i = 0; i < N; i++) {
+        single[i].Set(&batch[i]);
+    }
+
+    IntGroup group(N);
+    group.Set(batch);
+    group.ModInv();
+
+    for (int i = 0; i < N; i++) {
+        single[i].ModInv();
+    }
+
+    for (int i = 0; i < N; i++) {
+        ASSERT_TRUE(batch[i].IsEqual(&single[i]));
+    }
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -793,6 +972,15 @@ int run_intgroup_tests(void) {
     RUN_TEST(modular_arithmetic_properties_associativity);
     RUN_TEST(modular_arithmetic_properties_identity);
     RUN_TEST(modular_arithmetic_properties_additive_inverse);
+
+    TEST_SECTION("Batch vs Single ModInv Cross-Validation");
+    RUN_TEST(intgroup_batch_vs_single_size_1);
+    RUN_TEST(intgroup_batch_vs_single_size_2);
+    RUN_TEST(intgroup_batch_vs_single_size_4);
+    RUN_TEST(intgroup_batch_vs_single_size_8);
+    RUN_TEST(intgroup_batch_vs_single_size_16);
+    RUN_TEST(intgroup_batch_vs_single_size_32);
+    RUN_TEST(intgroup_batch_vs_single_large_field_elements);
 
     cleanup_secp256k1();
 

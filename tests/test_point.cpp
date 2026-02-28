@@ -609,6 +609,113 @@ TEST(point_edge_cases) {
 }
 
 /* ============================================================================
+ * Bitcoin-core/secp256k1 Reference Vector Tests
+ *
+ * Reference coordinates from bitcoin-core/secp256k1 library and Bitcoin wiki.
+ * These test known key-point pairs to verify the correctness of our ECC
+ * implementation against published standards.
+ * ============================================================================ */
+
+TEST(secp256k1_reference_generator) {
+    /* G (generator point) - fundamental secp256k1 constant */
+    Secp256K1 secp;
+    secp.Init();
+    Point G = secp.G;
+    G.Reduce();
+    Int expected_x, expected_y;
+    expected_x.SetBase16("79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798");
+    expected_y.SetBase16("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8");
+    ASSERT_TRUE(G.x.IsEqual(&expected_x));
+    ASSERT_TRUE(G.y.IsEqual(&expected_y));
+}
+
+TEST(secp256k1_reference_2G) {
+    /* 2G = Double(G)
+     * Verified independently via Python: lambda = 3*Gx^2 / (2*Gy) mod p */
+    Secp256K1 secp;
+    secp.Init();
+    Point p2G = secp.Double(secp.G);
+    p2G.Reduce();
+    Int expected_x, expected_y;
+    expected_x.SetBase16("C6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5");
+    expected_y.SetBase16("1AE168FEA63DC339A3C58419466CEAEEF7F632653266D0E1236431A950CFE52A");
+    ASSERT_TRUE(p2G.x.IsEqual(&expected_x));
+    ASSERT_TRUE(p2G.y.IsEqual(&expected_y));
+}
+
+TEST(secp256k1_reference_3G) {
+    /* 3G = Add(G, 2G) -- uses two DIFFERENT points */
+    Secp256K1 secp;
+    secp.Init();
+    Point p2G = secp.Double(secp.G);
+    Point p3G = secp.Add(secp.G, p2G);
+    p3G.Reduce();
+    Int expected_x, expected_y;
+    expected_x.SetBase16("F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9");
+    expected_y.SetBase16("388F7B0F632DE8140FE337E62A37F3566500A99934C2231B6CB9FD7584B8E672");
+    ASSERT_TRUE(p3G.x.IsEqual(&expected_x));
+    ASSERT_TRUE(p3G.y.IsEqual(&expected_y));
+}
+
+TEST(secp256k1_reference_7G) {
+    /* 7G via ComputePublicKey with privkey=7 */
+    Secp256K1 secp;
+    secp.Init();
+    Int privkey;
+    privkey.SetInt32(7);
+    Point p7G = secp.ComputePublicKey(&privkey);
+    p7G.Reduce();
+    Int expected_x, expected_y;
+    expected_x.SetBase16("5CBDF0646E5DB4EAA398F365F2EA7A0E3D419B7E0330E39CE92BDDEDCAC4F9BC");
+    expected_y.SetBase16("6AEBCA40BA255960A3178D6D861A54DBA813D0B813FDE7B5A5082628087264DA");
+    ASSERT_TRUE(p7G.x.IsEqual(&expected_x));
+    ASSERT_TRUE(p7G.y.IsEqual(&expected_y));
+}
+
+TEST(secp256k1_reference_20G) {
+    /* 20G via ComputePublicKey with privkey=20 */
+    Secp256K1 secp;
+    secp.Init();
+    Int privkey;
+    privkey.SetInt32(20);
+    Point p20G = secp.ComputePublicKey(&privkey);
+    p20G.Reduce();
+    Int expected_x, expected_y;
+    expected_x.SetBase16("4CE119C96E2FA357200B559B2F7DD5A5F02D5290AFF74B03F3E471B273211C97");
+    expected_y.SetBase16("12BA26DCB10EC1625DA61FA10A844C676162948271D96967450288EE9233DC3A");
+    ASSERT_TRUE(p20G.x.IsEqual(&expected_x));
+    ASSERT_TRUE(p20G.y.IsEqual(&expected_y));
+}
+
+TEST(secp256k1_scalar_mult_identity) {
+    /* ScalarMultiplication with privkey=1 should return G */
+    Secp256K1 secp;
+    secp.Init();
+    Int one;
+    one.SetInt32(1);
+    Point result = secp.ScalarMultiplication(secp.G, &one);
+    result.Reduce();
+    Point G = secp.G;
+    G.Reduce();
+    ASSERT_TRUE(result.x.IsEqual(&G.x));
+    ASSERT_TRUE(result.y.IsEqual(&G.y));
+}
+
+TEST(secp256k1_compute_vs_scalar_mult) {
+    /* ComputePublicKey and ScalarMultiplication should agree for key=7 */
+    Secp256K1 secp;
+    secp.Init();
+    Int privkey;
+    privkey.SetInt32(7);
+    Point via_compute = secp.ComputePublicKey(&privkey);
+    via_compute.Reduce();
+    Point via_scalar = secp.ScalarMultiplication(secp.G, &privkey);
+    via_scalar.Reduce();
+    ASSERT_TRUE(via_compute.x.IsEqual(&via_scalar.x));
+    ASSERT_TRUE(via_compute.y.IsEqual(&via_scalar.y));
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -668,6 +775,15 @@ int run_point_tests(void) {
 
     TEST_SECTION("Edge Cases: Identity, Infinity, Special Points");
     RUN_TEST(point_edge_cases);
+
+    TEST_SECTION("bitcoin-core/secp256k1 Reference Vectors");
+    RUN_TEST(secp256k1_reference_generator);
+    RUN_TEST(secp256k1_reference_2G);
+    RUN_TEST(secp256k1_reference_3G);
+    RUN_TEST(secp256k1_reference_7G);
+    RUN_TEST(secp256k1_reference_20G);
+    RUN_TEST(secp256k1_scalar_mult_identity);
+    RUN_TEST(secp256k1_compute_vs_scalar_mult);
 
     return TEST_RESULTS();
 }
