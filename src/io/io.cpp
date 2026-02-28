@@ -44,8 +44,9 @@ void writekey(bool compressed, Int *key) {
 
 	Point publickey;
 	FILE *keys;
-	char *hextemp, *hexrmd, public_key_hex[132], address[50], rmdhash[20];
+	char *hextemp, *hexrmd, public_key_hex[132], address[50], bech32_address[100], rmdhash[20];
 	memset(address, 0, 50);
+	memset(bech32_address, 0, 100);
 	memset(public_key_hex, 0, 132);
 	hextemp = key->GetBase16();
 	publickey = secp->ComputePublicKey(key);
@@ -54,20 +55,31 @@ void writekey(bool compressed, Int *key) {
 	hexrmd = tohex(rmdhash, 20);
 	rmd160toaddress_dst(rmdhash, address);
 
+	// Generate Bech32 address (P2WPKH) - only for compressed keys
+	if (compressed) {
+		if (!segwit_addr_encode(bech32_address, "bc", 0, (const uint8_t*)rmdhash, 20)) {
+			// If encoding fails, use empty string
+			strcpy(bech32_address, "[bech32 encoding failed]");
+		}
+	} else {
+		// Bech32 addresses require compressed keys
+		strcpy(bech32_address, "[bech32 requires compressed]");
+	}
+
 	platform_mutex_lock(&write_keys);
 	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys == NULL) {
 		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
 		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
 	} else {
-		int written = fprintf(keys, "Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n", hextemp, public_key_hex, address, hexrmd);
+		int written = fprintf(keys, "Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n", hextemp, public_key_hex, address, bech32_address, hexrmd);
 		int closed = fclose(keys);
 		if (written < 0 || closed != 0) {
 			output_error("CRITICAL: Failed to write key to file! Key: %s\n", hextemp);
 			output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
 		}
 	}
-	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n", hextemp, public_key_hex, address, hexrmd);
+	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n", hextemp, public_key_hex, address, bech32_address, hexrmd);
 
 	// Show celebratory key found display
 	output_key_found(hextemp, address, public_key_hex);
