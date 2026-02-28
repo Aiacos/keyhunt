@@ -76,6 +76,7 @@ static char g_client_last_range_end[65] = "";
 static pthread_t g_heartbeat_thread;
 static volatile int g_heartbeat_running = 0;
 static dist_worker_client_t *g_heartbeat_client = NULL;
+static dist_multipool_client_t *g_heartbeat_multipool = NULL;  /* For multi-pool mode */
 static pthread_mutex_t g_heartbeat_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile uint64_t g_keys_since_heartbeat = 0;
 static volatile time_t g_last_heartbeat_time = 0;
@@ -348,6 +349,10 @@ static void client_signal_handler(int sig) {
  * Background thread that sends periodic heartbeats to the server.
  * This ensures the server knows we're still alive during long searches.
  * Tracks failures and sets reconnection flag when threshold is exceeded.
+ *
+ * Supports both single-pool and multi-pool modes:
+ * - Single-pool: Uses g_heartbeat_client with dist_worker_heartbeat
+ * - Multi-pool: Uses g_heartbeat_multipool with dist_multipool_heartbeat_all
  */
 static void *heartbeat_thread_func(void *arg) {
     int interval_sec = *(int *)arg;
@@ -368,10 +373,27 @@ static void *heartbeat_thread_func(void *arg) {
 
         /* Send heartbeat */
         pthread_mutex_lock(&g_heartbeat_mutex);
-        if (g_heartbeat_client && g_heartbeat_client->connected) {
-            uint64_t keys = g_keys_since_heartbeat;
-            g_keys_since_heartbeat = 0;
 
+        uint64_t keys = g_keys_since_heartbeat;
+        g_keys_since_heartbeat = 0;
+
+        /* Multi-pool mode: send heartbeat to all connected pools */
+        if (g_heartbeat_multipool) {
+            int successful = dist_multipool_heartbeat_all(g_heartbeat_multipool, keys);
+            if (successful > 0) {
+                g_last_heartbeat_time = time(NULL);
+                g_heartbeat_failures = 0;  /* Reset failure count on any success */
+            } else if (successful < 0) {
+                g_heartbeat_failures++;
+                if (g_heartbeat_failures >= HEARTBEAT_FAILURE_THRESHOLD) {
+                    /* All pools failed - trigger reconnection */
+                    g_reconnecting = 1;
+                }
+            }
+            /* successful == 0 means no pools connected - don't increment failures */
+        }
+        /* Single-pool mode: send heartbeat to single server */
+        else if (g_heartbeat_client && g_heartbeat_client->connected) {
             int result = dist_worker_heartbeat(g_heartbeat_client, keys);
             if (result == 0) {
                 g_last_heartbeat_time = time(NULL);
@@ -384,6 +406,7 @@ static void *heartbeat_thread_func(void *arg) {
                 }
             }
         }
+
         pthread_mutex_unlock(&g_heartbeat_mutex);
     }
 
@@ -391,13 +414,35 @@ static void *heartbeat_thread_func(void *arg) {
 }
 
 /**
- * Start the heartbeat thread.
+ * Start the heartbeat thread (single-pool mode).
  */
 static int start_heartbeat_thread(dist_worker_client_t *client, int interval_sec) {
     static int interval;  /* Static to keep value valid for thread */
     interval = interval_sec;
 
     g_heartbeat_client = client;
+    g_heartbeat_multipool = NULL;  /* Ensure multi-pool is disabled */
+    g_heartbeat_running = 1;
+    g_keys_since_heartbeat = 0;
+    g_last_heartbeat_time = time(NULL);
+
+    if (pthread_create(&g_heartbeat_thread, NULL, heartbeat_thread_func, &interval) != 0) {
+        g_heartbeat_running = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * Start the heartbeat thread (multi-pool mode).
+ */
+static int start_multipool_heartbeat_thread(dist_multipool_client_t *multipool, int interval_sec) {
+    static int interval;  /* Static to keep value valid for thread */
+    interval = interval_sec;
+
+    g_heartbeat_multipool = multipool;
+    g_heartbeat_client = NULL;  /* Ensure single-pool is disabled */
     g_heartbeat_running = 1;
     g_keys_since_heartbeat = 0;
     g_last_heartbeat_time = time(NULL);
@@ -419,6 +464,7 @@ static void stop_heartbeat_thread(void) {
     g_heartbeat_running = 0;
     pthread_join(g_heartbeat_thread, NULL);
     g_heartbeat_client = NULL;
+    g_heartbeat_multipool = NULL;
 }
 
 /**
@@ -1163,9 +1209,18 @@ int wizard_client_run(wizard_config_t *cfg) {
         wizard_print_separator();
         printf("\n");
 
+        /* Start heartbeat thread for multi-pool progress reporting */
+        int heartbeat_interval = 30;  /* Default 30 seconds */
+        if (start_multipool_heartbeat_thread(&multipool, heartbeat_interval) != 0) {
+            printf("[!] Warning: Could not start heartbeat thread\n");
+        } else {
+            printf("[+] Multi-pool heartbeat thread started (every %d seconds)\n", heartbeat_interval);
+        }
+
         /* Create persistent target file (reused across work units) */
         if (create_target_file(cfg->target_address) != 0) {
             printf("[-] Failed to create target file\n");
+            stop_heartbeat_thread();
             dist_multipool_stop_reconnect_thread();
             dist_multipool_shutdown(&multipool);
             return -1;
@@ -1332,6 +1387,7 @@ int wizard_client_run(wizard_config_t *cfg) {
 
         /* Clean shutdown */
         printf("\n[+] Shutting down multi-pool worker...\n");
+        stop_heartbeat_thread();
         dist_multipool_stop_reconnect_thread();
         dist_multipool_shutdown(&multipool);
 
