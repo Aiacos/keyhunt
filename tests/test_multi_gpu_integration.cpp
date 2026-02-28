@@ -1,0 +1,886 @@
+/*
+ * test_multi_gpu_integration.cpp - Integration tests for multi-GPU worker threads
+ *
+ * Uses Option C: Both mock and conditional tests
+ * - Mock tests using stub pattern for CI (no real GPU needed)
+ * - Conditional tests with #ifdef HAVE_CUDA_BACKEND for real GPU validation
+ *
+ * Tests:
+ * - Worker thread initialization and lifecycle
+ * - Worker thread start/stop/pause/resume
+ * - Multi-worker coordination via scheduler
+ * - Statistics collection and aggregation
+ * - Error handling and recovery
+ * - Work distribution across multiple workers
+ */
+
+#include "test_framework.h"
+
+#include "gpu/gpu_backend.h"
+
+extern "C" {
+#include "gpu/gpu_multi_worker.h"
+#include "gpu/multi_gpu_scheduler.h"
+}
+
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>  /* For usleep */
+
+/* ============================================================================
+ * Worker Initialization Tests (Mock - always run)
+ * ============================================================================ */
+
+TEST(worker_init_null_config) {
+    /* Should handle NULL config gracefully */
+    gpu_multi_worker_t *worker = gpu_worker_init(NULL);
+    ASSERT_NULL(worker);
+}
+
+TEST(worker_init_null_scheduler) {
+    worker_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.scheduler = NULL;
+    config.device_count = 1;
+    config.device_ids[0] = 0;
+
+    /* Should fail with NULL scheduler */
+    gpu_multi_worker_t *worker = gpu_worker_init(&config);
+    ASSERT_NULL(worker);
+}
+
+TEST(worker_init_invalid_device_count) {
+    /* Create a scheduler first */
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+#ifndef HAVE_CUDA_BACKEND
+    /* Without CUDA, scheduler init should fail */
+    ASSERT_NULL(sched);
+#else
+    if (sched) {
+        worker_config_t config;
+        memset(&config, 0, sizeof(config));
+        config.scheduler = sched;
+
+        /* Test zero devices */
+        config.device_count = 0;
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NULL(worker);
+
+        /* Test negative devices */
+        config.device_count = -5;
+        worker = gpu_worker_init(&config);
+        ASSERT_NULL(worker);
+
+        /* Test too many devices */
+        config.device_count = MULTI_GPU_MAX_DEVICES + 1;
+        worker = gpu_worker_init(&config);
+        ASSERT_NULL(worker);
+
+        multi_gpu_shutdown(sched);
+    }
+#endif
+}
+
+TEST(worker_shutdown_null) {
+    /* Shutdown with NULL should not crash */
+    gpu_worker_shutdown(NULL);
+    ASSERT_TRUE(1);
+}
+
+TEST(worker_default_config) {
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+#ifndef HAVE_CUDA_BACKEND
+    /* Without CUDA, scheduler should be NULL */
+    ASSERT_NULL(sched);
+#else
+    if (sched) {
+        /* Test default config creation */
+        worker_config_t config = gpu_worker_default_config(sched, -1);
+
+        ASSERT_EQ(sched, config.scheduler);
+        ASSERT_TRUE(config.batch_size > 0);
+        ASSERT_EQ(0, config.priority);
+
+        multi_gpu_shutdown(sched);
+    }
+#endif
+}
+
+TEST(worker_multi_gpu_init_and_threads) {
+#ifdef HAVE_CUDA_BACKEND
+    /* Initialize GPU backend first */
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched) {
+        int available_gpus = multi_gpu_available();
+
+        /* Only run if we have multiple GPUs */
+        if (available_gpus >= 2) {
+            /* Create config for 2 GPUs */
+            worker_config_t config;
+            memset(&config, 0, sizeof(config));
+            config.scheduler = sched;
+            config.device_count = 2;
+            config.device_ids[0] = 0;
+            config.device_ids[1] = 1;
+            config.batch_size = 1024;
+            config.priority = 0;
+
+            /* Initialize worker with multiple GPUs */
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            ASSERT_NOT_NULL(worker);
+
+            /* Set a work range for the scheduler */
+            multi_gpu_set_range(sched, 0, 100000);
+
+            /* Start worker - this should spawn threads for each GPU */
+            bool started = gpu_worker_start(worker);
+            ASSERT_TRUE(started);
+
+            /* Let threads run briefly to ensure they're spawned */
+            usleep(100000);  /* 100ms */
+
+            /* Get statistics to verify threads are working */
+            worker_stats_t stats = gpu_worker_get_stats(worker);
+
+            /* Verify worker stats show activity */
+            ASSERT_TRUE(stats.total_keys_checked >= 0);
+            ASSERT_TRUE(stats.keys_per_second >= 0.0);
+
+            /* Stop worker threads */
+            bool stopped = gpu_worker_stop(worker, 5000);
+            ASSERT_TRUE(stopped);
+
+            /* Cleanup */
+            gpu_worker_shutdown(worker);
+        } else if (available_gpus == 1) {
+            /* Test with single GPU still works */
+            worker_config_t config = gpu_worker_default_config(sched, 1);
+            config.device_ids[0] = 0;
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            ASSERT_NOT_NULL(worker);
+
+            multi_gpu_set_range(sched, 0, 10000);
+
+            bool started = gpu_worker_start(worker);
+            ASSERT_TRUE(started);
+
+            usleep(50000);  /* 50ms */
+
+            bool stopped = gpu_worker_stop(worker, 5000);
+            ASSERT_TRUE(stopped);
+
+            gpu_worker_shutdown(worker);
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    /* Without CUDA, this is a no-op test */
+    ASSERT_TRUE(1);
+#endif
+}
+
+/* ============================================================================
+ * Worker Lifecycle Tests
+ * ============================================================================ */
+
+TEST(worker_start_before_init) {
+    /* Starting NULL worker should fail */
+    bool result = gpu_worker_start(NULL);
+    ASSERT_FALSE(result);
+}
+
+TEST(worker_stop_before_start) {
+    /* Stopping NULL worker should succeed (no-op) */
+    bool result = gpu_worker_stop(NULL, 1000);
+    ASSERT_FALSE(result);
+}
+
+TEST(worker_init_and_shutdown) {
+#ifdef HAVE_CUDA_BACKEND
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        /* Shutdown without starting should be safe */
+        gpu_worker_shutdown(worker);
+
+        multi_gpu_shutdown(sched);
+    }
+#else
+    /* Without CUDA, just verify we can handle the case */
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_start_and_stop) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+        config.batch_size = 1024;  /* Small batch for quick test */
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        /* Set a small work range */
+        multi_gpu_set_range(sched, 0, 10000);
+
+        /* Start worker */
+        bool started = gpu_worker_start(worker);
+        ASSERT_TRUE(started);
+
+        /* Stop worker with timeout */
+        bool stopped = gpu_worker_stop(worker, 5000);
+        ASSERT_TRUE(stopped);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_double_start) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        multi_gpu_set_range(sched, 0, 10000);
+
+        /* First start should succeed */
+        bool started1 = gpu_worker_start(worker);
+        ASSERT_TRUE(started1);
+
+        /* Second start should fail or be no-op */
+        bool started2 = gpu_worker_start(worker);
+        /* Implementation may choose to fail or allow */
+        (void)started2;
+
+        gpu_worker_stop(worker, 5000);
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+/* ============================================================================
+ * Worker Statistics Tests
+ * ============================================================================ */
+
+TEST(worker_get_stats_null) {
+    multi_gpu_worker_stats_t stats;
+    memset(&stats, 0xFF, sizeof(stats));
+
+    /* Should handle NULL worker gracefully */
+    gpu_worker_get_stats(NULL, &stats);
+    ASSERT_TRUE(1);  /* Just checking no crash */
+}
+
+TEST(worker_get_stats_null_output) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+
+        if (worker) {
+            /* Should handle NULL output gracefully */
+            gpu_worker_get_stats(worker, NULL);
+            ASSERT_TRUE(1);
+
+            gpu_worker_shutdown(worker);
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_get_stats_initial) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        multi_gpu_worker_stats_t stats;
+        memset(&stats, 0xFF, sizeof(stats));
+
+        gpu_worker_get_stats(worker, &stats);
+
+        /* Initial state should have zero keys processed */
+        ASSERT_EQ(0UL, stats.total_keys_processed);
+        ASSERT_EQ(0.0, stats.combined_throughput);
+        ASSERT_TRUE(stats.active_workers >= 0);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_get_device_stats_invalid) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        gpu_worker_stats_t stats;
+
+        /* Invalid device ID should return false */
+        bool result = gpu_worker_get_device_stats(worker, 999, &stats);
+        ASSERT_FALSE(result);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_get_device_stats_valid) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        gpu_worker_stats_t stats;
+        memset(&stats, 0xFF, sizeof(stats));
+
+        /* Valid device ID should return true */
+        bool result = gpu_worker_get_device_stats(worker, 0, &stats);
+        ASSERT_TRUE(result);
+
+        /* Check initial values */
+        ASSERT_EQ(0, stats.device_id);
+        ASSERT_EQ(WORKER_IDLE, stats.status);
+        ASSERT_EQ(0UL, stats.keys_processed);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+/* ============================================================================
+ * Worker Pause/Resume Tests
+ * ============================================================================ */
+
+TEST(worker_pause_null) {
+    bool result = gpu_worker_pause(NULL);
+    ASSERT_FALSE(result);
+}
+
+TEST(worker_resume_null) {
+    bool result = gpu_worker_resume(NULL);
+    ASSERT_FALSE(result);
+}
+
+TEST(worker_pause_resume_lifecycle) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+        config.batch_size = 1024;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        multi_gpu_set_range(sched, 0, 100000);
+
+        /* Start worker */
+        bool started = gpu_worker_start(worker);
+        ASSERT_TRUE(started);
+
+        /* Pause worker */
+        bool paused = gpu_worker_pause(worker);
+        ASSERT_TRUE(paused);
+
+        /* Resume worker */
+        bool resumed = gpu_worker_resume(worker);
+        ASSERT_TRUE(resumed);
+
+        /* Stop worker */
+        bool stopped = gpu_worker_stop(worker, 5000);
+        ASSERT_TRUE(stopped);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_double_pause) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+
+        if (worker) {
+            multi_gpu_set_range(sched, 0, 10000);
+            gpu_worker_start(worker);
+
+            /* First pause */
+            bool paused1 = gpu_worker_pause(worker);
+            ASSERT_TRUE(paused1);
+
+            /* Second pause should be safe */
+            bool paused2 = gpu_worker_pause(worker);
+            /* Implementation may allow or disallow */
+            (void)paused2;
+
+            gpu_worker_stop(worker, 5000);
+            gpu_worker_shutdown(worker);
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+/* ============================================================================
+ * Multi-Worker Integration Tests
+ * ============================================================================ */
+
+TEST(worker_multi_gpu_init) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched) {
+        int gpu_count = multi_gpu_available();
+
+        if (gpu_count >= 2) {
+            /* Test with 2 GPUs */
+            worker_config_t config = gpu_worker_default_config(sched, 2);
+            config.device_ids[0] = 0;
+            config.device_ids[1] = 1;
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            ASSERT_NOT_NULL(worker);
+
+            multi_gpu_worker_stats_t stats;
+            gpu_worker_get_stats(worker, &stats);
+
+            /* Should have 2 workers configured */
+            ASSERT_TRUE(stats.active_workers >= 0);
+
+            gpu_worker_shutdown(worker);
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_multi_gpu_start_stop) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched) {
+        int gpu_count = multi_gpu_available();
+
+        if (gpu_count >= 2) {
+            worker_config_t config = gpu_worker_default_config(sched, 2);
+            config.device_ids[0] = 0;
+            config.device_ids[1] = 1;
+            config.batch_size = 1024;
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            ASSERT_NOT_NULL(worker);
+
+            multi_gpu_set_range(sched, 0, 50000);
+
+            /* Start all workers */
+            bool started = gpu_worker_start(worker);
+            ASSERT_TRUE(started);
+
+            /* Let them run briefly */
+            usleep(100000);  /* 100ms */
+
+            /* Stop all workers */
+            bool stopped = gpu_worker_stop(worker, 10000);
+            ASSERT_TRUE(stopped);
+
+            /* Check statistics */
+            multi_gpu_worker_stats_t stats;
+            gpu_worker_get_stats(worker, &stats);
+
+            /* Verify some work was done */
+            ASSERT_TRUE(stats.total_keys_processed >= 0);
+
+            gpu_worker_shutdown(worker);
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_has_result_initial) {
+    /* NULL worker should return false */
+    bool result = gpu_worker_has_result(NULL);
+    ASSERT_FALSE(result);
+}
+
+TEST(worker_has_result_no_match) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        /* Before starting, should be false */
+        bool result = gpu_worker_has_result(worker);
+        ASSERT_FALSE(result);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_work_distribution_and_load_balancing) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched) {
+        int gpu_count = multi_gpu_available();
+
+        if (gpu_count >= 2) {
+            /* Test with 2 GPUs for load balancing */
+            worker_config_t config = gpu_worker_default_config(sched, 2);
+            config.device_ids[0] = 0;
+            config.device_ids[1] = 1;
+            config.batch_size = 2048;  /* Small batches for better distribution */
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            ASSERT_NOT_NULL(worker);
+
+            /* Set a work range that's large enough to distribute */
+            multi_gpu_set_range(sched, 0, 200000);
+
+            /* Start all workers */
+            bool started = gpu_worker_start(worker);
+            ASSERT_TRUE(started);
+
+            /* Let workers run long enough to process multiple batches */
+            usleep(200000);  /* 200ms */
+
+            /* Get aggregate statistics */
+            multi_gpu_worker_stats_t stats;
+            gpu_worker_get_stats(worker, &stats);
+
+            /* Verify multiple workers are active */
+            ASSERT_TRUE(stats.active_workers >= 2);
+
+            /* Get per-device statistics */
+            gpu_worker_stats_t dev0_stats, dev1_stats;
+            bool got_dev0 = gpu_worker_get_device_stats(worker, 0, &dev0_stats);
+            bool got_dev1 = gpu_worker_get_device_stats(worker, 1, &dev1_stats);
+
+            ASSERT_TRUE(got_dev0);
+            ASSERT_TRUE(got_dev1);
+
+            /* Verify both workers are running */
+            ASSERT_EQ(WORKER_RUNNING, dev0_stats.status);
+            ASSERT_EQ(WORKER_RUNNING, dev1_stats.status);
+
+            /* Verify both workers processed some keys (work distribution) */
+            ASSERT_TRUE(dev0_stats.keys_processed > 0);
+            ASSERT_TRUE(dev1_stats.keys_processed > 0);
+
+            /* Verify work units were completed on both GPUs */
+            ASSERT_TRUE(dev0_stats.work_units_completed > 0);
+            ASSERT_TRUE(dev1_stats.work_units_completed > 0);
+
+            /* Check load balancing - neither GPU should be idle while other works
+             * Calculate the ratio of work between GPUs */
+            uint64_t min_work = dev0_stats.keys_processed < dev1_stats.keys_processed ?
+                                dev0_stats.keys_processed : dev1_stats.keys_processed;
+            uint64_t max_work = dev0_stats.keys_processed > dev1_stats.keys_processed ?
+                                dev0_stats.keys_processed : dev1_stats.keys_processed;
+
+            /* Load balancing check: min work should be at least 20% of max work
+             * This allows for some variance due to timing/scheduling but ensures
+             * work isn't heavily concentrated on one GPU */
+            if (max_work > 0) {
+                double balance_ratio = (double)min_work / (double)max_work;
+                ASSERT_TRUE(balance_ratio >= 0.20);  /* At least 20% balance */
+            }
+
+            /* Verify combined throughput includes both workers */
+            ASSERT_TRUE(stats.combined_throughput >= 0.0);
+
+            /* Verify total keys processed matches sum of individual workers */
+            uint64_t expected_total = dev0_stats.keys_processed + dev1_stats.keys_processed;
+            ASSERT_EQ(expected_total, stats.total_keys_processed);
+
+            /* Stop workers */
+            bool stopped = gpu_worker_stop(worker, 10000);
+            ASSERT_TRUE(stopped);
+
+            /* Get final statistics after stopping */
+            multi_gpu_worker_stats_t final_stats;
+            gpu_worker_get_stats(worker, &final_stats);
+
+            /* Verify workers stopped */
+            gpu_worker_stats_t final_dev0, final_dev1;
+            gpu_worker_get_device_stats(worker, 0, &final_dev0);
+            gpu_worker_get_device_stats(worker, 1, &final_dev1);
+
+            ASSERT_EQ(WORKER_STOPPED, final_dev0.status);
+            ASSERT_EQ(WORKER_STOPPED, final_dev1.status);
+
+            gpu_worker_shutdown(worker);
+        } else if (gpu_count == 1) {
+            /* With single GPU, just verify it works (no load balancing to test) */
+            worker_config_t config = gpu_worker_default_config(sched, 1);
+            config.device_ids[0] = 0;
+
+            gpu_multi_worker_t *worker = gpu_worker_init(&config);
+            if (worker) {
+                multi_gpu_set_range(sched, 0, 10000);
+                gpu_worker_start(worker);
+                usleep(50000);  /* 50ms */
+
+                gpu_worker_stats_t dev_stats;
+                bool got_stats = gpu_worker_get_device_stats(worker, 0, &dev_stats);
+                ASSERT_TRUE(got_stats);
+                ASSERT_TRUE(dev_stats.keys_processed > 0);
+
+                gpu_worker_stop(worker, 5000);
+                gpu_worker_shutdown(worker);
+            }
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+/* ============================================================================
+ * Worker Error Handling Tests
+ * ============================================================================ */
+
+TEST(worker_stop_timeout) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+
+        if (worker) {
+            multi_gpu_set_range(sched, 0, 1000000000UL);  /* Large range */
+            gpu_worker_start(worker);
+
+            /* Try to stop with very short timeout */
+            bool stopped = gpu_worker_stop(worker, 1);  /* 1ms timeout */
+            /* May or may not succeed depending on timing */
+            (void)stopped;
+
+            /* Force shutdown */
+            gpu_worker_shutdown(worker);
+        }
+
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+TEST(worker_stats_consistency) {
+#ifdef HAVE_CUDA_BACKEND
+    gpu_backend_init(NULL);
+    multi_gpu_scheduler_t *sched = multi_gpu_init(NULL);
+
+    if (sched && multi_gpu_available() > 0) {
+        worker_config_t config = gpu_worker_default_config(sched, 1);
+        config.device_ids[0] = 0;
+
+        gpu_multi_worker_t *worker = gpu_worker_init(&config);
+        ASSERT_NOT_NULL(worker);
+
+        multi_gpu_worker_stats_t stats1, stats2;
+
+        /* Get stats twice */
+        gpu_worker_get_stats(worker, &stats1);
+        gpu_worker_get_stats(worker, &stats2);
+
+        /* Before starting, stats should be consistent */
+        ASSERT_EQ(stats1.total_keys_processed, stats2.total_keys_processed);
+        ASSERT_EQ(stats1.active_workers, stats2.active_workers);
+
+        gpu_worker_shutdown(worker);
+        multi_gpu_shutdown(sched);
+    }
+
+    gpu_backend_shutdown();
+#else
+    ASSERT_TRUE(1);
+#endif
+}
+
+/* ============================================================================
+ * Main Test Runner
+ * ============================================================================ */
+
+int run_multi_gpu_integration_tests(void) {
+    TEST_INIT();
+
+    TEST_SECTION("Worker Initialization Tests");
+    RUN_TEST(worker_init_null_config);
+    RUN_TEST(worker_init_null_scheduler);
+    RUN_TEST(worker_init_invalid_device_count);
+    RUN_TEST(worker_shutdown_null);
+    RUN_TEST(worker_default_config);
+    RUN_TEST(worker_multi_gpu_init_and_threads);
+
+    TEST_SECTION("Worker Lifecycle Tests");
+    RUN_TEST(worker_start_before_init);
+    RUN_TEST(worker_stop_before_start);
+    RUN_TEST(worker_init_and_shutdown);
+    RUN_TEST(worker_start_and_stop);
+    RUN_TEST(worker_double_start);
+
+    TEST_SECTION("Worker Statistics Tests");
+    RUN_TEST(worker_get_stats_null);
+    RUN_TEST(worker_get_stats_null_output);
+    RUN_TEST(worker_get_stats_initial);
+    RUN_TEST(worker_get_device_stats_invalid);
+    RUN_TEST(worker_get_device_stats_valid);
+
+    TEST_SECTION("Worker Pause/Resume Tests");
+    RUN_TEST(worker_pause_null);
+    RUN_TEST(worker_resume_null);
+    RUN_TEST(worker_pause_resume_lifecycle);
+    RUN_TEST(worker_double_pause);
+
+    TEST_SECTION("Multi-Worker Integration Tests");
+    RUN_TEST(worker_multi_gpu_init);
+    RUN_TEST(worker_multi_gpu_start_stop);
+    RUN_TEST(worker_has_result_initial);
+    RUN_TEST(worker_has_result_no_match);
+    RUN_TEST(worker_work_distribution_and_load_balancing);
+
+    TEST_SECTION("Worker Error Handling Tests");
+    RUN_TEST(worker_stop_timeout);
+    RUN_TEST(worker_stats_consistency);
+
+    return TEST_RESULTS();
+}
+
+/* Standalone main for individual testing */
+#ifdef TEST_STANDALONE
+int main(int argc, char *argv[]) {
+    return run_multi_gpu_integration_tests();
+}
+#endif

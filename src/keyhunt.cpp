@@ -45,6 +45,7 @@
 #include "core/sysinfo.h"
 #include "core/parameter_validator.h"
 #include "gpu/gpu_backend.h"
+#include "gpu/gpu_multi_worker.h"
 #include "core/config.h"
 #include "config/config.h"
 #include "hybrid/adaptive_scheduler.h"
@@ -73,6 +74,7 @@
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
 #else
+#include <signal.h>
 #ifdef __linux__
 #include <sys/mman.h>
 #include <sys/random.h>
@@ -674,6 +676,27 @@ std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
 std::atomic<int> g_gpu_should_stop{0};
 static int g_gpu_bloom_uploaded = 0;
 int g_gpu_range_percent = 0;
+
+// Multi-GPU worker instance (for signal handler access)
+static gpu_multi_worker_t *g_multi_gpu_workers = NULL;
+
+/*
+ * Signal handler for SIGINT (Ctrl+C) - gracefully stop multi-GPU workers
+ */
+#ifndef _WIN64
+static void sigint_handler(int sig) {
+	(void)sig; /* Unused parameter */
+
+	/* Set stop flag for GPU workers */
+	g_gpu_should_stop.store(1, std::memory_order_release);
+
+	/* If multi-GPU workers are active, stop them gracefully */
+	if (g_multi_gpu_workers != NULL) {
+		output_info("\nReceived Ctrl+C, stopping multi-GPU workers...\n");
+		gpu_worker_stop(g_multi_gpu_workers, 10000); /* 10 second timeout */
+	}
+}
+#endif
 
 // Range and stride variables
 int bitrange = 0;
@@ -3950,8 +3973,107 @@ int main(int argc, char **argv)	{
 				}
 #endif
 
-				// Run GPU search
-				int gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
+				// Run GPU search - use multi-GPU if enabled, otherwise single GPU
+				int gpu_result = -1;
+				if (config.gpu.multi_gpu_enabled && config.gpu.device_count > 1) {
+					// Multi-GPU mode: use worker thread system with scheduler
+					output_success("Running multi-GPU search with %d devices...\n", config.gpu.device_count);
+
+					// Initialize scheduler
+					multi_gpu_config_t sched_config;
+					sched_config.device_count = config.gpu.device_count;
+					for (int i = 0; i < config.gpu.device_count; i++) {
+						sched_config.device_ids[i] = config.gpu.device_ids[i];
+					}
+					sched_config.adaptive_balancing = true;
+					sched_config.rebalance_interval_keys = 100000000; // Rebalance every 100M keys
+
+					multi_gpu_scheduler_t *scheduler = multi_gpu_init(&sched_config);
+					if (!scheduler) {
+						output_error("Failed to initialize multi-GPU scheduler\n");
+						gpu_result = -1;
+					} else {
+						// Set the work range
+						uint64_t range_start = n_range_start.GetInt64();
+						uint64_t range_end = n_range_end.GetInt64();
+						multi_gpu_set_range(scheduler, range_start, range_end);
+
+						output_info("Multi-GPU scheduler initialized (range: %016" PRIx64 " - %016" PRIx64 ")\n",
+						            range_start, range_end);
+
+						// Initialize workers
+						worker_config_t worker_cfg = gpu_worker_default_config(scheduler, config.gpu.device_count);
+						for (int i = 0; i < config.gpu.device_count; i++) {
+							worker_cfg.device_ids[i] = config.gpu.device_ids[i];
+						}
+						worker_cfg.batch_size = THREADBPWORKLOAD;
+
+						gpu_multi_worker_t *workers = gpu_worker_init(&worker_cfg);
+						if (!workers) {
+							output_error("Failed to initialize multi-GPU workers\n");
+							multi_gpu_shutdown(scheduler);
+							gpu_result = -1;
+						} else {
+							// Set global pointer for signal handler access
+							g_multi_gpu_workers = workers;
+
+#ifndef _WIN64
+							// Register signal handler for graceful shutdown on Ctrl+C
+							struct sigaction sa;
+							memset(&sa, 0, sizeof(sa));
+							sa.sa_handler = sigint_handler;
+							sigemptyset(&sa.sa_mask);
+							sa.sa_flags = 0;
+							sigaction(SIGINT, &sa, NULL);
+#endif
+
+							// Start worker threads
+							if (!gpu_worker_start(workers)) {
+								output_error("Failed to start multi-GPU workers\n");
+								g_multi_gpu_workers = NULL; // Clear global pointer
+								gpu_worker_shutdown(workers);
+								multi_gpu_shutdown(scheduler);
+								gpu_result = -1;
+							} else {
+								output_success("Multi-GPU workers started successfully\n");
+
+								// Wait for workers to complete (workers will run until no more work or key found)
+								// Check periodically if workers have found a result or completed
+								while (!gpu_worker_has_result(workers)) {
+									sleep_ms(1000);
+
+									// Check if we should stop (Ctrl+C, etc)
+									if (g_gpu_should_stop.load(std::memory_order_acquire)) {
+										break;
+									}
+								}
+
+								// Stop workers gracefully
+								gpu_worker_stop(workers, 10000); // 10 second timeout
+
+								// Get result (0 = key found, -1 = no key found)
+								gpu_result = gpu_worker_has_result(workers) ? 0 : -1;
+
+								// Cleanup
+								gpu_worker_shutdown(workers);
+								g_multi_gpu_workers = NULL; // Clear global pointer
+								multi_gpu_shutdown(scheduler);
+
+								if (gpu_result == 0) {
+									output_success("Multi-GPU search completed: key found!\n");
+								} else {
+									output_info("Multi-GPU search completed: no key found\n");
+								}
+							}
+						}
+					}
+				} else {
+					// Single GPU mode: use existing path
+					if (config.gpu.multi_gpu_enabled && config.gpu.device_count == 1) {
+						output_info("Multi-GPU enabled but only 1 device specified, using single GPU mode\n");
+					}
+					gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
+				}
 
 #ifndef _WIN64
 				gpu_stats_stop.store(1, std::memory_order_release);
@@ -4314,6 +4436,30 @@ int main(int argc, char **argv)	{
 						fflush(stdout);
 						THREADOUTPUT = 0;
 
+						// Display per-GPU statistics if multi-GPU mode is active
+						if (g_multi_gpu_workers != NULL) {
+							multi_gpu_worker_stats_t gpu_stats;
+							gpu_worker_get_stats(g_multi_gpu_workers, &gpu_stats);
+
+							if (gpu_stats.active_workers > 0) {
+								int device_ids[MULTI_GPU_MAX_DEVICES];
+								uint64_t keys_processed[MULTI_GPU_MAX_DEVICES];
+								double throughput_mkeys[MULTI_GPU_MAX_DEVICES];
+								const char *device_names[MULTI_GPU_MAX_DEVICES];
+
+								// Extract per-device data from worker stats
+								for (int i = 0; i < gpu_stats.active_workers; i++) {
+									device_ids[i] = gpu_stats.workers[i].device_id;
+									keys_processed[i] = gpu_stats.workers[i].keys_processed;
+									throughput_mkeys[i] = gpu_stats.workers[i].current_throughput;
+									device_names[i] = NULL;  // Device names not available from worker stats
+								}
+
+								output_gpu_stats(gpu_stats.active_workers, device_ids,
+								                 keys_processed, throughput_mkeys, device_names);
+							}
+						}
+
 						// Show visual progress bar if range progress is enabled
 						// Skip when line_mode — append_progress_info already shows bar + ETA inline
 						if (g_rangeProgressEnabled && !line_mode) {
@@ -4465,6 +4611,30 @@ int main(int argc, char **argv)	{
 						printf("%s",buffer);
 						fflush(stdout);
 						THREADOUTPUT = 0;
+
+						// Display per-GPU statistics if multi-GPU mode is active
+						if (g_multi_gpu_workers != NULL) {
+							multi_gpu_worker_stats_t gpu_stats;
+							gpu_worker_get_stats(g_multi_gpu_workers, &gpu_stats);
+
+							if (gpu_stats.active_workers > 0) {
+								int device_ids[MULTI_GPU_MAX_DEVICES];
+								uint64_t keys_processed[MULTI_GPU_MAX_DEVICES];
+								double throughput_mkeys[MULTI_GPU_MAX_DEVICES];
+								const char *device_names[MULTI_GPU_MAX_DEVICES];
+
+								// Extract per-device data from worker stats
+								for (int i = 0; i < gpu_stats.active_workers; i++) {
+									device_ids[i] = gpu_stats.workers[i].device_id;
+									keys_processed[i] = gpu_stats.workers[i].keys_processed;
+									throughput_mkeys[i] = gpu_stats.workers[i].current_throughput;
+									device_names[i] = NULL;  // Device names not available from worker stats
+								}
+
+								output_gpu_stats(gpu_stats.active_workers, device_ids,
+								                 keys_processed, throughput_mkeys, device_names);
+							}
+						}
 
 						// Show visual progress bar if range progress is enabled
 						// Skip when line_mode — append_progress_info already shows bar + ETA inline

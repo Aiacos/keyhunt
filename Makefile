@@ -65,10 +65,10 @@ ifneq ($(CUDA_CC_BINDIR),)
 endif
 HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
 ifeq ($(HAVE_NVCC),)
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
+  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o
   GPU_CXXFLAGS :=
 else
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
+  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o
   GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
   override NVCCFLAGS += -DHAVE_CUDA_BACKEND=1
 endif
@@ -187,6 +187,7 @@ TEST_BLOOM_OBJ := $(TEST_OBJDIR)/test_bloom.o
 TEST_BSGS_OBJ := $(TEST_OBJDIR)/test_bsgs_integration.o
 TEST_BSGS_SORT_OBJ := $(TEST_OBJDIR)/test_bsgs_sort.o
 TEST_GPU_OBJ := $(TEST_OBJDIR)/test_gpu_backend.o
+TEST_MULTI_GPU_OBJ := $(TEST_OBJDIR)/test_multi_gpu_integration.o
 TEST_DISTRIBUTED_OBJ := $(TEST_OBJDIR)/test_distributed.o
 TEST_WIZARD_OBJ := $(TEST_OBJDIR)/test_wizard.o
 TEST_HASH_OBJ := $(TEST_OBJDIR)/test_hash.o
@@ -225,6 +226,9 @@ $(TEST_BSGS_SORT_OBJ): tests/test_bsgs_sort.cpp tests/test_framework.h | directo
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_GPU_OBJ): tests/test_gpu_backend.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_MULTI_GPU_OBJ): tests/test_multi_gpu_integration.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_DISTRIBUTED_OBJ): tests/test_distributed.cpp tests/test_framework.h | directories
@@ -271,7 +275,7 @@ $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 
 # All test objects
 TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
-             $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
+             $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_MULTI_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
              $(TEST_SHA512_SIMD_OBJ) $(TEST_SHA256_SIMD_OBJ) \
              $(TEST_SEARCH_XPOINT_OBJ) $(TEST_SEARCH_RMD160_OBJ) \
@@ -446,7 +450,7 @@ sanitize: clean-sanitize
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(ASAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(ASAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(ASAN_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(SANITIZE_OBJDIR)/gpu/gpu_backend_none.o $(SANITIZE_OBJDIR)/gpu/gpu_autotune.o $(SANITIZE_OBJDIR)/gpu/multi_gpu_scheduler.o $(SANITIZE_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(SANITIZE_OBJDIR)/gpu/gpu_backend_none.o $(SANITIZE_OBJDIR)/gpu/gpu_autotune.o $(SANITIZE_OBJDIR)/gpu/multi_gpu_scheduler.o $(SANITIZE_OBJDIR)/gpu/gpu_multi_worker.o $(SANITIZE_OBJDIR)/gpu/async_pipeline.o"
 	@echo ""
 	@echo "Running tests with AddressSanitizer..."
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:print_stats=1 ./run_tests_asan$(EXE_EXT)
@@ -465,7 +469,7 @@ tsan: clean-tsan
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(TSAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(TSAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(TSAN_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(TSAN_OBJDIR)/gpu/gpu_backend_none.o $(TSAN_OBJDIR)/gpu/gpu_autotune.o $(TSAN_OBJDIR)/gpu/multi_gpu_scheduler.o $(TSAN_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(TSAN_OBJDIR)/gpu/gpu_backend_none.o $(TSAN_OBJDIR)/gpu/gpu_autotune.o $(TSAN_OBJDIR)/gpu/multi_gpu_scheduler.o $(TSAN_OBJDIR)/gpu/gpu_multi_worker.o $(TSAN_OBJDIR)/gpu/async_pipeline.o"
 	@echo ""
 	@echo "Running tests with ThreadSanitizer..."
 	TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ./run_tests_tsan$(EXE_EXT)
@@ -498,7 +502,7 @@ coverage: clean-coverage
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(COVERAGE_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(COVERAGE_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(COVERAGE_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/gpu_autotune.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/gpu_autotune.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/gpu_multi_worker.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o"
 	@echo ""
 	@echo "Running tests for coverage data..."
 	./run_tests_cov$(EXE_EXT)

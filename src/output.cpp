@@ -429,3 +429,70 @@ void output_final_stats(uint64_t total_keys, double total_time_sec,
     for (int i = 0; i < width; i++) printf(BOX_H);
     printf(CLR_RESET "\n\n");
 }
+
+void output_gpu_stats(int device_count, const int *device_ids,
+                      const uint64_t *keys_processed,
+                      const double *throughput_mkeys,
+                      const char **device_names) {
+    if (g_output_level == OUTPUT_SILENT) return;
+    if (!device_ids || !keys_processed || !throughput_mkeys) return;
+    if (device_count <= 0) return;
+
+    // Clear current line if in progress display mode
+    printf("\n");
+
+    if (g_output_level == OUTPUT_MINIMAL) {
+        // Compact single-line format for minimal mode
+        printf("[" CLR_CYAN "GPU" CLR_RESET "] ");
+        for (int i = 0; i < device_count; i++) {
+            if (i > 0) printf(" | ");
+            printf("GPU%d: %.1f MK/s", device_ids[i], throughput_mkeys[i]);
+        }
+        printf("\n");
+    } else {
+        // Detailed multi-line format for normal/verbose modes
+        printf(CLR_CYAN);
+        printf("┌─ GPU Statistics ─────────────────────────────────────────────┐\n");
+        printf(CLR_RESET);
+
+        for (int i = 0; i < device_count; i++) {
+            // Format keys processed in human-readable units (K, M, B)
+            char keys_str[32];
+            double keys = (double)keys_processed[i];
+            if (keys >= 1e9) {
+                snprintf(keys_str, sizeof(keys_str), "%.2fB", keys / 1e9);
+            } else if (keys >= 1e6) {
+                snprintf(keys_str, sizeof(keys_str), "%.2fM", keys / 1e6);
+            } else if (keys >= 1e3) {
+                snprintf(keys_str, sizeof(keys_str), "%.2fK", keys / 1e3);
+            } else {
+                snprintf(keys_str, sizeof(keys_str), "%.0f", keys);
+            }
+
+            // Format device line
+            printf(CLR_CYAN "│" CLR_RESET " ");
+            printf(CLR_BOLD "GPU %d" CLR_RESET, device_ids[i]);
+
+            // Add device name if available
+            if (device_names && device_names[i] && device_names[i][0]) {
+                printf(": " CLR_GREEN "%-20s" CLR_RESET, device_names[i]);
+            } else {
+                printf(":                       ");
+            }
+
+            // Throughput
+            printf(" │ " CLR_YELLOW "%.2f" CLR_RESET " MK/s", throughput_mkeys[i]);
+
+            // Keys processed
+            printf(" │ " CLR_BLUE "%9s" CLR_RESET " keys", keys_str);
+
+            printf("\n");
+        }
+
+        printf(CLR_CYAN);
+        printf("└──────────────────────────────────────────────────────────────┘\n");
+        printf(CLR_RESET);
+    }
+
+    fflush(stdout);
+}

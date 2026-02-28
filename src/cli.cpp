@@ -66,6 +66,8 @@ static void cli_set_defaults(cli_args_t *args) {
     args->threads_specified = false;
     args->key_type = KEYTYPE_COMPRESSED;
     args->gpu_mode = GPU_OFF;
+    args->gpu_device_count = 0;  // 0 means auto-detect
+    memset(args->gpu_device_ids, 0, sizeof(args->gpu_device_ids));
     args->bsgs_mode = BSGS_RANDOM;
     args->k_factor = 1;
     args->random_mode = true;
@@ -115,6 +117,56 @@ static int parse_gpu_mode(const char *str) {
     if (strcasecmp(str, "auto") == 0) return GPU_AUTO;
     if (strcasecmp(str, "hybrid") == 0) return GPU_HYBRID;
     return -1;
+}
+
+static int parse_gpu_device_list(const char *str, int *device_ids, int max_devices) {
+    if (str == NULL || device_ids == NULL || max_devices <= 0) return -1;
+
+    // Make a copy since strtok modifies the string
+    char buffer[256];
+    strncpy(buffer, str, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    int count = 0;
+    char *token = strtok(buffer, ",");
+
+    while (token != NULL && count < max_devices) {
+        // Trim leading/trailing whitespace
+        while (*token == ' ' || *token == '\t') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && (*end == ' ' || *end == '\t')) {
+            *end = '\0';
+            end--;
+        }
+
+        // Parse the device ID
+        char *endptr;
+        long val = strtol(token, &endptr, 10);
+
+        // Validate: must be a valid number, in range 0-15
+        if (endptr == token || *endptr != '\0' || val < 0 || val > 15) {
+            fprintf(stderr, "[E] Invalid GPU device ID: %s (must be 0-15)\n", token);
+            return -1;
+        }
+
+        // Check for duplicate IDs
+        for (int i = 0; i < count; i++) {
+            if (device_ids[i] == (int)val) {
+                fprintf(stderr, "[E] Duplicate GPU device ID: %d\n", (int)val);
+                return -1;
+            }
+        }
+
+        device_ids[count++] = (int)val;
+        token = strtok(NULL, ",");
+    }
+
+    if (count == 0) {
+        fprintf(stderr, "[E] No valid GPU device IDs found\n");
+        return -1;
+    }
+
+    return count;
 }
 
 int cli_parse(int argc, char **argv, cli_args_t *args) {
@@ -168,7 +220,7 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
     optind = 1;
 
     int c;
-    while ((c = getopt(argc, argv, "deh6MqRSB:b:c:C:E:f:I:k:l:m:N:n:p:r:s:t:v:G:8:z:PW")) != -1) {
+    while ((c = getopt(argc, argv, "deh6MqRSB:b:c:C:E:f:g:I:k:l:m:N:n:p:r:s:t:v:G:8:z:PW")) != -1) {
         switch (c) {
             case 'h':
                 return 1;  // Show help
@@ -241,6 +293,19 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
                     return -1;
                 }
                 args->gpu_mode = (gpu_mode_t)gm;
+                break;
+            }
+
+            case 'g': {
+                // Parse comma-separated GPU device IDs (e.g., "0,1,2,3")
+                if (optarg != NULL) {
+                    int count = parse_gpu_device_list(optarg, args->gpu_device_ids, 16);
+                    if (count < 0) {
+                        fprintf(stderr, "[E] Failed to parse GPU device list: %s\n", optarg);
+                        return -1;
+                    }
+                    args->gpu_device_count = count;
+                }
                 break;
             }
 
@@ -466,6 +531,16 @@ void cli_print(const cli_args_t *args) {
            args->threads_specified ? "" : " (auto)");
     printf("  Key type: %s\n", cli_keytype_name(args->key_type));
     printf("  GPU mode: %s\n", cli_gpu_mode_name(args->gpu_mode));
+    if (args->gpu_device_count > 0) {
+        printf("  GPU devices: ");
+        for (int i = 0; i < args->gpu_device_count; i++) {
+            printf("%d", args->gpu_device_ids[i]);
+            if (i < args->gpu_device_count - 1) printf(",");
+        }
+        printf("\n");
+    } else {
+        printf("  GPU devices: auto-detect\n");
+    }
     printf("  BSGS mode: %s\n", cli_bsgs_mode_name(args->bsgs_mode));
     printf("  N value: %s\n", args->n_value[0] ? args->n_value : "(default)");
     printf("  K factor: %d\n", args->k_factor);
@@ -650,7 +725,17 @@ int cli_populate_config(const cli_args_t *args, void *cfg_ptr) {
 
     // GPU defaults are already set by kh_config_init()
     cfg->gpu.full_mode = false;  // Can be set by additional flags
-    cfg->gpu.device_count = 0;   // Will be auto-detected if GPU enabled
+
+    // Copy GPU device IDs from CLI args
+    if (args->gpu_device_count > 0) {
+        cfg->gpu.device_count = args->gpu_device_count;
+        for (int i = 0; i < args->gpu_device_count; i++) {
+            cfg->gpu.device_ids[i] = args->gpu_device_ids[i];
+        }
+        cfg->explicitly_set.gpu = true;
+    } else {
+        cfg->gpu.device_count = 0;   // Will be auto-detected if GPU enabled
+    }
 
     // ========================================================================
     // Populate runtime_state_t

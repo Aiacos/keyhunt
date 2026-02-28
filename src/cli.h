@@ -76,6 +76,8 @@ typedef struct {
 
     // GPU
     gpu_mode_t gpu_mode;
+    int gpu_device_ids[16];  // Array of GPU device IDs (0-15)
+    int gpu_device_count;     // Number of GPUs specified (0 = auto-detect)
 
     // BSGS specific
     bsgs_mode_t bsgs_mode;

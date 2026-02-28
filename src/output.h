@@ -62,6 +62,14 @@ void output_memory_bar(uint64_t used_mb, uint64_t total_mb, int width);
 // ASCII speed graph (uses block characters ▁▂▃▄▅▆▇█)
 void output_speed_graph(double *values, int count, int height);
 
+// Multi-GPU statistics display
+// Displays per-GPU statistics (device ID, name, throughput, keys processed)
+// device_names: optional array of device names (can be NULL for device IDs only)
+void output_gpu_stats(int device_count, const int *device_ids,
+                      const uint64_t *keys_processed,
+                      const double *throughput_mkeys,
+                      const char **device_names);
+
 #ifdef __cplusplus
 }
 #endif
