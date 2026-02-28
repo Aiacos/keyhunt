@@ -33,6 +33,7 @@ This directory contains multiple test scripts:
 
 1. **run_test.sh** - Basic multi-pool connection and work distribution test (subtask-7-1)
 2. **run_failover_test.sh** - Automatic failover and reconnection test (subtask-7-2)
+3. **run_deconfliction_test.sh** - Range deconfliction with overlapping work units (subtask-7-3)
 
 See individual test documentation for details.
 
@@ -106,6 +107,20 @@ Expected behavior:
 ✓ Kill one coordinator → worker continues with remaining pool
 ✓ Restart coordinator → worker reconnects automatically
 ✓ Exponential backoff visible in logs (1s, 2s, 4s, 8s...)
+
+### Range Deconfliction Testing
+For testing range conflict detection with overlapping work units:
+```bash
+./run_deconfliction_test.sh
+```
+
+See [DECONFLICTION_TEST.md](DECONFLICTION_TEST.md) for complete documentation.
+
+Expected behavior:
+✓ Coordinators configured with overlapping ranges (50% overlap)
+✓ Worker detects range conflicts via dist_multipool_check_range_conflict()
+✓ Worker rejects conflicting work and requests from different pool
+✓ Worker continues processing non-conflicting ranges
 
 ## Verification Checklist
 
