@@ -47,7 +47,10 @@ INCLUDES := -I$(SRCDIR)
 LTO_FLAGS ?= -flto=auto
 
 # ============================================================================
-# GPU Backend Detection and Selection (Priority: CUDA > OpenCL > None)
+# GPU Backend Detection and Selection (Supports Both CUDA and OpenCL)
+# ============================================================================
+# Both HAVE_CUDA_BACKEND and HAVE_OPENCL can be enabled simultaneously.
+# The runtime will select the best backend for each GPU device.
 # ============================================================================
 
 # Detect CUDA availability
@@ -69,27 +72,36 @@ HAVE_OPENCL := $(shell echo '\#include <CL/cl.h>' | $(CXX) -E - >/dev/null 2>&1 
 # Common GPU objects (always included regardless of backend)
 GPU_COMMON_OBJS := $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
 
-# Backend priority: CUDA > OpenCL > None
+# Initialize backend objects
+GPU_BACKEND_OBJS :=
+GPU_CXXFLAGS :=
+
+# CUDA backend (if available)
 ifneq ($(HAVE_NVCC),)
-  # CUDA backend (highest priority)
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(GPU_COMMON_OBJS)
-  GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
+  GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_cuda.o
+  GPU_CXXFLAGS += -DHAVE_CUDA_BACKEND=1
   override NVCCFLAGS += -DHAVE_CUDA_BACKEND=1
   CUDA_HOME ?= /usr/local/cuda
   LDFLAGS += -L$(CUDA_HOME)/lib64
   LDFLAGS += -Wl,-rpath,$(CUDA_HOME)/lib64
   LDLIBS += -lcudart
-else ifeq ($(HAVE_OPENCL),1)
-  # OpenCL backend (second priority)
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_opencl.o $(GPU_COMMON_OBJS)
-  GPU_CXXFLAGS := -DHAVE_OPENCL=1
+endif
+
+# OpenCL backend (if available)
+ifeq ($(HAVE_OPENCL),1)
+  GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_opencl.o
+  GPU_CXXFLAGS += -DHAVE_OPENCL=1
   CFLAGS += -DHAVE_OPENCL=1
   LDLIBS += -lOpenCL
-else
-  # No GPU backend (fallback)
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o $(GPU_COMMON_OBJS)
-  GPU_CXXFLAGS :=
 endif
+
+# Fallback to none backend if no GPU backend is available
+ifeq ($(GPU_BACKEND_OBJS),)
+  GPU_BACKEND_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o
+endif
+
+# Combine backend objects with common GPU objects
+GPU_OBJS := $(GPU_BACKEND_OBJS) $(GPU_COMMON_OBJS)
 
 CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
 CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES)
