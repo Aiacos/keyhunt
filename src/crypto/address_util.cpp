@@ -208,3 +208,52 @@ bool isValidBase58String(char *str)	{
 	}
 	return continuar;
 }
+
+/* ============================================================================
+ * Bech32 Validation
+ * ============================================================================ */
+
+bool isBech32(char c) {
+    /* Define the bech32 character set (32 characters, lowercase) */
+    const char bech32Set[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    /* Check if the character is in the bech32 set */
+    return strchr(bech32Set, c) != NULL;
+}
+
+bool isValidBech32String(char *str)	{
+	int len = strlen(str);
+	if (len < 8) {
+		/* Bech32 addresses must be at least 8 characters (hrp + '1' + 6 data chars) */
+		return false;
+	}
+
+	/* Find the separator '1' */
+	int separator_pos = -1;
+	for (int i = len - 1; i >= 0; i--) {
+		if (str[i] == '1') {
+			separator_pos = i;
+			break;
+		}
+	}
+
+	/* No separator found or invalid position */
+	if (separator_pos < 1 || separator_pos > 83 || (len - separator_pos - 1) < 6) {
+		return false;
+	}
+
+	/* Validate HRP (human-readable part): must be lowercase alphanumeric */
+	for (int i = 0; i < separator_pos; i++) {
+		char c = str[i];
+		if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+			return false;
+		}
+	}
+
+	/* Validate data part: must be valid bech32 characters */
+	bool continuar = true;
+	for (int i = separator_pos + 1; i < len && continuar; i++) {
+		continuar = isBech32(str[i]);
+	}
+
+	return continuar;
+}

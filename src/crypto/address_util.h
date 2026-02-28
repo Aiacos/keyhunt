@@ -62,6 +62,13 @@ void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3,
 bool isBase58(char c);
 bool isValidBase58String(char *str);
 
+/* ============================================================================
+ * Bech32 Validation
+ * ============================================================================ */
+
+bool isBech32(char c);
+bool isValidBech32String(char *str);
+
 #ifdef __cplusplus
 }
 #endif
