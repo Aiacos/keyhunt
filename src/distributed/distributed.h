@@ -359,6 +359,16 @@ typedef struct {
     uint64_t assigned_time;     /* When this range was assigned (for timeout/cleanup) */
 } active_range_t;
 
+/* Connection state tracking per pool for automatic failover */
+typedef struct {
+    bool connected;             /* Current connection status */
+    uint64_t last_heartbeat;    /* Last successful heartbeat timestamp */
+    uint64_t last_connect_attempt; /* Last connection attempt timestamp */
+    int failure_count;          /* Consecutive failure count (reset on success) */
+    int reconnect_delay_sec;    /* Current reconnect delay (exponential backoff) */
+    bool is_healthy;            /* Overall health status based on recent activity */
+} pool_connection_state_t;
+
 /* Multi-pool client state */
 typedef struct {
     /* Pool connections */
@@ -372,6 +382,9 @@ typedef struct {
     active_range_t active_ranges[DIST_MAX_POOLS * 2];  /* Active ranges from all pools (2 per pool max) */
     int active_range_count;                             /* Number of currently active ranges */
     platform_mutex_t range_mutex;                       /* Protects active_ranges array for concurrent access */
+
+    /* Connection state tracking for automatic failover */
+    pool_connection_state_t pool_states[DIST_MAX_POOLS]; /* Connection state per pool */
 
     /* Thread safety */
     platform_mutex_t mutex;                          /* Protects multi-pool state for thread-safe access */
