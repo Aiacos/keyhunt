@@ -1,0 +1,276 @@
+===============================================================================
+KEYHUNT OPENCL vs CUDA BENCHMARK RESULTS
+===============================================================================
+
+Date: YYYY-MM-DD
+Tester: [Your Name]
+keyhunt Version: [commit hash or version]
+
+===============================================================================
+SYSTEM CONFIGURATION
+===============================================================================
+
+CPU:
+  Model: [e.g., AMD Ryzen 9 7950X]
+  Cores: [Physical cores] physical, [Logical cores] logical
+  Base Frequency: [e.g., 4.5 GHz]
+  Features: AVX2=[yes/no], AVX-512=[yes/no], SHA-NI=[yes/no]
+
+RAM:
+  Total: [e.g., 64 GB]
+  Speed: [e.g., DDR5-6000]
+
+AMD GPU (OpenCL):
+  Model: [e.g., AMD Radeon RX 7900 XTX]
+  Architecture: [e.g., RDNA 3 (gfx1100)]
+  Compute Units: [e.g., 96]
+  VRAM: [e.g., 24 GB]
+  Memory Bandwidth: [e.g., 960 GB/s theoretical]
+
+NVIDIA GPU (CUDA - for comparison):
+  Model: [e.g., NVIDIA GeForce RTX 4090]
+  Architecture: [e.g., Ada Lovelace (sm_89)]
+  SMs: [e.g., 128]
+  VRAM: [e.g., 24 GB]
+  Memory Bandwidth: [e.g., 1008 GB/s theoretical]
+
+Software:
+  OS: [e.g., Ubuntu 22.04 LTS]
+  Kernel: [e.g., 6.5.0]
+  ROCm Version: [e.g., 5.7.0]
+  CUDA Version: [e.g., 12.3]
+  OpenCL Version: [e.g., 3.0]
+  GCC Version: [e.g., 11.4.0]
+
+===============================================================================
+BUILD CONFIGURATION
+===============================================================================
+
+Build Command: [e.g., ./build_opencl.sh or make clean && make]
+
+Detected Backends:
+  - CUDA: [yes/no]
+  - OpenCL: [yes/no]
+  - Unified: [yes/no]
+
+Compilation Flags:
+  - Optimization Level: [e.g., -O2]
+  - SIMD Extensions: [e.g., -mavx2]
+  - OpenCL Kernel Flags: [e.g., -cl-fast-relaxed-math -cl-mad-enable]
+
+GPU Detection Output (./keyhunt -L):
+[Paste output here]
+
+===============================================================================
+TEST 1: HASH-ONLY MODE BENCHMARK
+===============================================================================
+
+Description: Pure hashing performance (SHA256 + RIPEMD160) without search
+
+Command: ./keyhunt -m address -f tests/1to32.txt -r 1:FFFFFFFF -G hash -s 30 -q
+
+--- AMD GPU (OpenCL) Results ---
+Throughput: [e.g., 250.5 Mkeys/s]
+GPU Utilization: [e.g., 95%]
+Power Consumption: [e.g., 285W]
+Temperature: [e.g., 72°C]
+Memory Bandwidth: [e.g., 850 GB/s actual]
+
+--- NVIDIA GPU (CUDA) Results ---
+Throughput: [e.g., 425.3 Mkeys/s]
+GPU Utilization: [e.g., 98%]
+Power Consumption: [e.g., 420W]
+Temperature: [e.g., 68°C]
+Memory Bandwidth: [e.g., 920 GB/s actual]
+
+--- Performance Comparison ---
+OpenCL Efficiency: [AMD Throughput / NVIDIA Throughput × 100] = [e.g., 58.9%]
+Status: [PASS ✓ / FAIL ✗] (Threshold: ≥50%)
+
+===============================================================================
+TEST 2: FULL GPU SEARCH MODE BENCHMARK
+===============================================================================
+
+Description: Complete search pipeline including target comparison
+
+Command: ./keyhunt -m address -f tests/66.txt -b 66 -G full -s 30 -R -q
+
+--- AMD GPU (OpenCL) Results ---
+Throughput: [e.g., 235.2 Mkeys/s]
+GPU Utilization: [e.g., 93%]
+Power Consumption: [e.g., 280W]
+Keys Checked: [e.g., 7,056,000,000]
+
+--- NVIDIA GPU (CUDA) Results ---
+Throughput: [e.g., 400.8 Mkeys/s]
+GPU Utilization: [e.g., 97%]
+Power Consumption: [e.g., 410W]
+Keys Checked: [e.g., 12,024,000,000]
+
+--- Performance Comparison ---
+OpenCL Efficiency: [e.g., 58.7%]
+Status: [PASS ✓ / FAIL ✗]
+
+===============================================================================
+TEST 3: HYBRID CPU+GPU MODE BENCHMARK
+===============================================================================
+
+Description: Coordinated CPU+GPU execution with work distribution
+
+Command: ./keyhunt -m address -f tests/66.txt -b 66 -G hybrid -t 16 -s 30 -R -q
+
+--- AMD GPU (OpenCL) Results ---
+Total Throughput: [e.g., 265.4 Mkeys/s]
+GPU Contribution: [e.g., 235.2 Mkeys/s (88.6%)]
+CPU Contribution: [e.g., 30.2 Mkeys/s (11.4%)]
+Hybrid Efficiency: [e.g., 94.2%]
+
+--- NVIDIA GPU (CUDA) Results ---
+Total Throughput: [e.g., 435.6 Mkeys/s]
+GPU Contribution: [e.g., 400.8 Mkeys/s (92.0%)]
+CPU Contribution: [e.g., 34.8 Mkeys/s (8.0%)]
+Hybrid Efficiency: [e.g., 96.1%]
+
+--- Performance Comparison ---
+OpenCL Efficiency: [e.g., 60.9%]
+Status: [PASS ✓ / FAIL ✗]
+
+===============================================================================
+TEST 4: MULTI-GPU MODE BENCHMARK (Mixed-Vendor)
+===============================================================================
+
+Description: Both AMD and NVIDIA GPUs running simultaneously
+
+Command: ./keyhunt -m address -f tests/66.txt -b 66 -G full -s 30 -R -q --all-gpus
+
+--- Unified Backend Results ---
+Total Throughput: [e.g., 636.0 Mkeys/s]
+
+Per-Device Breakdown:
+  GPU[0] NVIDIA RTX 4090: [e.g., 400.8 Mkeys/s (63.0%)]
+  GPU[1] AMD RX 7900 XTX:  [e.g., 235.2 Mkeys/s (37.0%)]
+
+Work Distribution:
+  CUDA Backend:   [e.g., 63.0%]
+  OpenCL Backend: [e.g., 37.0%]
+
+Multi-GPU Efficiency: [Total / (CUDA + OpenCL individual)] = [e.g., 100.0%]
+Status: [PASS ✓ / FAIL ✗] (Should be >95%)
+
+===============================================================================
+TEST 5: BSGS MODE BENCHMARK (Optional)
+===============================================================================
+
+Description: BSGS algorithm with GPU acceleration (memory-intensive)
+
+Command: ./keyhunt -m bsgs -f tests/125.txt -b 125 -G full -s 30 -q -R
+
+--- AMD GPU (OpenCL) Results ---
+Throughput: [e.g., 180.5 Mkeys/s]
+GPU Utilization: [e.g., 88%]
+Memory Usage: [e.g., 18.2 GB VRAM]
+
+--- NVIDIA GPU (CUDA) Results ---
+Throughput: [e.g., 320.4 Mkeys/s]
+GPU Utilization: [e.g., 92%]
+Memory Usage: [e.g., 18.2 GB VRAM]
+
+--- Performance Comparison ---
+OpenCL Efficiency: [e.g., 56.3%]
+Status: [PASS ✓ / FAIL ✗]
+
+===============================================================================
+AUTO-TUNING RESULTS
+===============================================================================
+
+AMD GPU Auto-Tuning Parameters:
+  Blocks per CU: [e.g., 32]
+  Keys per Work-Item: [e.g., 2048]
+  Work-Group Size: [e.g., 256]
+  Global Work Size: [e.g., 786432]
+
+NVIDIA GPU Auto-Tuning Parameters:
+  Blocks per SM: [e.g., 8]
+  Threads per Block: [e.g., 256]
+  Keys per Thread: [e.g., 1024]
+
+Vendor Detection:
+  AMD Vendor String: [e.g., "Advanced Micro Devices, Inc."]
+  NVIDIA Vendor String: [e.g., "NVIDIA Corporation"]
+
+Auto-Tuning Status: [Optimal / Suboptimal / Failed]
+Notes: [Any observations about auto-tuning behavior]
+
+===============================================================================
+GPU MONITORING DATA
+===============================================================================
+
+--- AMD GPU (rocm-smi) ---
+Average GPU Usage: [e.g., 94%]
+Average Memory Usage: [e.g., 15.2 GB / 24 GB (63%)]
+Average Temperature: [e.g., 72°C]
+Average Power Draw: [e.g., 285W / 355W TDP]
+Peak Memory Bandwidth: [e.g., 880 GB/s]
+
+--- NVIDIA GPU (nvidia-smi) ---
+Average GPU Usage: [e.g., 97%]
+Average Memory Usage: [e.g., 16.5 GB / 24 GB (69%)]
+Average Temperature: [e.g., 68°C]
+Average Power Draw: [e.g., 410W / 450W TDP]
+Peak Memory Bandwidth: [e.g., 940 GB/s]
+
+===============================================================================
+PERFORMANCE ANALYSIS
+===============================================================================
+
+Bottleneck Identification:
+  AMD GPU: [e.g., Memory bandwidth limited, ~91% of theoretical max]
+  NVIDIA GPU: [e.g., Compute limited, excellent memory utilization]
+
+OpenCL Kernel Optimization:
+  Hash Operations: [Fully optimized / Needs work]
+  ECC Operations: [Fully optimized / Needs work]
+  Memory Access Patterns: [Optimal / Suboptimal]
+
+Comparison to Expected Performance:
+  AMD RX 7900 XTX: [e.g., 235 Mkeys/s vs 200-300 expected = Within range ✓]
+  NVIDIA RTX 4090: [e.g., 400 Mkeys/s vs 400-600 expected = Within range ✓]
+
+===============================================================================
+ISSUES AND OBSERVATIONS
+===============================================================================
+
+Issues Encountered:
+[List any problems, errors, or unexpected behavior]
+
+Performance Anomalies:
+[Note any unusual performance patterns or bottlenecks]
+
+Driver/Compatibility Issues:
+[Document any driver conflicts or compatibility problems]
+
+Recommendations for Optimization:
+[Suggest areas for kernel or backend optimization]
+
+===============================================================================
+CONCLUSION
+===============================================================================
+
+Overall OpenCL Efficiency: [Average across all tests, e.g., 58.7%]
+Acceptance Criteria Met: [YES ✓ / NO ✗] (Threshold: ≥50%)
+
+Summary:
+[Brief summary of benchmark results and whether OpenCL backend meets
+ performance requirements for production use]
+
+Recommended Use Cases:
+  - AMD GPU users: [e.g., Recommended for RX 6000/7000 series]
+  - Mixed-vendor systems: [e.g., Works well in unified mode]
+  - Performance vs CUDA: [e.g., 58-61% efficiency, acceptable for AMD users]
+
+Next Steps:
+[What needs to be done based on these results - optimization, documentation, etc.]
+
+===============================================================================
+END OF BENCHMARK REPORT
+===============================================================================
