@@ -28,6 +28,184 @@ Expected: Finds 32 private keys quickly. All keys from 0x1 to 0x20 should be fou
 ./keyhunt -m xpoint -f tests/120.txt -t 4 -b 125 -R -q
 ```
 
+## Running Tests
+
+Keyhunt includes a comprehensive unit test suite to verify correctness of core components. Tests can be run with a single command or selectively by module.
+
+### Building and Running Tests
+
+#### Quick Start
+
+Build and run all tests with a single command:
+
+```bash
+make test
+```
+
+This command:
+1. Compiles the test executable (`run_tests`)
+2. Runs all test modules automatically
+3. Reports pass/fail status with colored output
+
+#### Manual Build and Run
+
+If you need to build tests separately:
+
+```bash
+# Build the test executable
+make run_tests
+
+# Run all tests
+./run_tests
+```
+
+**Output:** You'll see a colored banner followed by each test module running. Green ✓ indicates passed tests, red ✗ indicates failures.
+
+### Running Specific Test Modules
+
+To run only specific test modules, pass the module name as an argument:
+
+```bash
+# Run only Int (256-bit integer) tests
+./run_tests int
+
+# Run only hash/crypto tests
+./run_tests hash
+
+# Run only Bloom filter tests
+./run_tests bloom
+
+# Run only BSGS tests
+./run_tests bsgs
+
+# Run only GPU backend tests
+./run_tests gpu
+```
+
+**Available modules:**
+- `int` - 256-bit integer arithmetic tests
+- `hash` - Hash functions (RIPEMD160, SHA256, SHA512) and SIMD variants
+- `bloom` - Bloom filter operations
+- `bsgs` - BSGS integration tests
+- `bsgs_ops` - BSGS operations tests
+- `bsgs_sort` - BSGS sort and search tests
+- `gpu` - GPU backend tests
+- `multi_gpu` - Multi-GPU integration tests
+- `distributed` - Distributed mode tests
+- `wizard` - Interactive wizard tests
+- `point` - Elliptic curve point operations
+- `intgroup` - Batch modular inversion tests
+- `sha512` - SHA512 SIMD tests
+- `sha256` - SHA256 SIMD tests
+- `search_xpoint` - XPOINT search mode tests
+- `search_rmd160` - RMD160 search mode tests
+- `fused` - Fused hash pipeline tests
+- `extended` - Extended range (256-bit) tests
+
+**Help:** Run `./run_tests help` to see the full list of available modules.
+
+### Advanced Testing Options
+
+#### AddressSanitizer (Memory Safety)
+
+Detect memory errors (buffer overflows, use-after-free, memory leaks):
+
+```bash
+make sanitize
+./run_tests_asan
+```
+
+**Use when:** Debugging memory-related crashes or validating new memory management code.
+
+#### ThreadSanitizer (Race Conditions)
+
+Detect data races and thread safety issues:
+
+```bash
+make tsan
+./run_tests_tsan
+```
+
+**Use when:** Debugging multi-threaded code or validating thread safety.
+
+#### Coverage Analysis
+
+Generate code coverage reports:
+
+```bash
+# Build with coverage instrumentation
+make coverage
+
+# Run tests to collect coverage data
+./run_tests_cov
+
+# Generate coverage report (requires lcov)
+lcov --capture --directory . --output-file coverage.info
+genhtml coverage.info --output-directory coverage_report
+```
+
+**Use when:** Identifying untested code paths or measuring test completeness.
+
+### Test Output Format
+
+Tests produce colored, structured output:
+
+```
+╔═══════════════════════════════════════════════════════════════╗
+║           KEYHUNT UNIT TEST SUITE                            ║
+╚═══════════════════════════════════════════════════════════════╝
+
+>>> Running Int Tests
+
+  ✓ test_int_basic_operations
+  ✓ test_int_modular_arithmetic
+  ✗ test_int_edge_cases (expected 0, got 1)
+
+Int Tests: 2 passed, 1 failed out of 3 tests
+```
+
+- **Green ✓**: Test passed
+- **Red ✗**: Test failed (with details)
+- **Summary**: Pass/fail count per module
+
+### Troubleshooting
+
+#### Test Binary Not Found
+
+If `./run_tests` doesn't exist:
+
+```bash
+# Build it first
+make run_tests
+```
+
+#### Tests Fail After Code Changes
+
+1. **Rebuild from clean state:**
+   ```bash
+   make clean
+   make test
+   ```
+
+2. **Run specific failing module:**
+   ```bash
+   ./run_tests <module_name>
+   ```
+
+3. **Use sanitizers for debugging:**
+   ```bash
+   make sanitize
+   ./run_tests_asan <module_name>
+   ```
+
+#### Permission Denied
+
+Make sure the test executable has execute permissions:
+
+```bash
+chmod +x run_tests
+```
+
 ## Unit Test Framework
 
 Keyhunt includes a lightweight, zero-dependency unit test framework for automated testing of core components. The framework is designed for simplicity, portability, and fast compilation without requiring external libraries like Google Test or Catch2.
