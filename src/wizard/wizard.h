@@ -242,6 +242,7 @@ bool wizard_ask_yesno(const char *prompt, bool default_val);
 void wizard_print_config_summary(const wizard_config_t *cfg);
 void wizard_print_progress(int current, int total, double speed, const char *status);
 void wizard_print_privacy_warning(void);
+int wizard_configure_multipool(wizard_config_t *cfg);
 
 /* ============================================================================
  * Community Sync Functions

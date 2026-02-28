@@ -619,12 +619,9 @@ int wizard_run(void) {
         wizard_configure_community(&cfg);
 
     } else {
-        /* === STEP 3: Server Connection === */
-        wizard_print_step(3, 5, "Server Connection");
-
-        wizard_ask_string("Server IP or hostname", cfg.server_host,
-                          sizeof(cfg.server_host), "localhost");
-        cfg.server_port = wizard_ask_int("Server port", 1024, 65535, 7777);
+        /* === STEP 3: Multi-Pool Configuration === */
+        wizard_print_step(3, 5, "Coordinator Connection");
+        wizard_configure_multipool(&cfg);
 
         /* === STEP 4: Search Configuration === */
         wizard_print_step(4, 5, "Local Worker Configuration");
