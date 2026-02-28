@@ -107,59 +107,59 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| TEST-05 | — | Pending |
-| TEST-06 | — | Pending |
-| TEST-07 | — | Pending |
-| TEST-08 | — | Pending |
-| TEST-09 | — | Pending |
-| TEST-10 | — | Pending |
-| TEST-11 | — | Pending |
-| TEST-12 | — | Pending |
-| TEST-13 | — | Pending |
-| MEM-01 | — | Pending |
-| MEM-02 | — | Pending |
-| MEM-03 | — | Pending |
-| MEM-04 | — | Pending |
-| MEM-05 | — | Pending |
-| MEM-06 | — | Pending |
-| MEM-07 | — | Pending |
-| MEM-08 | — | Pending |
-| MEM-09 | — | Pending |
-| CFG-01 | — | Pending |
-| CFG-02 | — | Pending |
-| CFG-03 | — | Pending |
-| CFG-04 | — | Pending |
-| CFG-05 | — | Pending |
-| CFG-06 | — | Pending |
-| CFG-07 | — | Pending |
-| CFG-08 | — | Pending |
-| CFG-09 | — | Pending |
-| STR-01 | — | Pending |
-| STR-02 | — | Pending |
-| STR-03 | — | Pending |
-| STR-04 | — | Pending |
-| STR-05 | — | Pending |
-| STR-06 | — | Pending |
-| STR-07 | — | Pending |
-| STR-08 | — | Pending |
-| CI-01 | — | Pending |
-| CI-02 | — | Pending |
-| CI-03 | — | Pending |
-| CI-04 | — | Pending |
-| CI-05 | — | Pending |
-| CI-06 | — | Pending |
-| CI-07 | — | Pending |
-| CI-08 | — | Pending |
+| TEST-01 | Phase 1 | Pending |
+| TEST-02 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Pending |
+| TEST-04 | Phase 1 | Pending |
+| TEST-05 | Phase 1 | Pending |
+| TEST-06 | Phase 1 | Pending |
+| TEST-07 | Phase 1 | Pending |
+| TEST-08 | Phase 1 | Pending |
+| TEST-09 | Phase 1 | Pending |
+| TEST-10 | Phase 1 | Pending |
+| TEST-11 | Phase 1 | Pending |
+| TEST-12 | Phase 1 | Pending |
+| TEST-13 | Phase 1 | Pending |
+| MEM-01 | Phase 2 | Pending |
+| MEM-02 | Phase 2 | Pending |
+| MEM-03 | Phase 2 | Pending |
+| MEM-04 | Phase 2 | Pending |
+| MEM-05 | Phase 6 | Pending |
+| MEM-06 | Phase 6 | Pending |
+| MEM-07 | Phase 6 | Pending |
+| MEM-08 | Phase 6 | Pending |
+| MEM-09 | Phase 6 | Pending |
+| CFG-01 | Phase 3 | Pending |
+| CFG-02 | Phase 3 | Pending |
+| CFG-03 | Phase 3 | Pending |
+| CFG-04 | Phase 3 | Pending |
+| CFG-05 | Phase 3 | Pending |
+| CFG-06 | Phase 3 | Pending |
+| CFG-07 | Phase 3 | Pending |
+| CFG-08 | Phase 3 | Pending |
+| CFG-09 | Phase 3 | Pending |
+| STR-01 | Phase 4 | Pending |
+| STR-02 | Phase 4 | Pending |
+| STR-03 | Phase 4 | Pending |
+| STR-04 | Phase 4 | Pending |
+| STR-05 | Phase 4 | Pending |
+| STR-06 | Phase 4 | Pending |
+| STR-07 | Phase 4 | Pending |
+| STR-08 | Phase 4 | Pending |
+| CI-01 | Phase 5 | Pending |
+| CI-02 | Phase 5 | Pending |
+| CI-03 | Phase 5 | Pending |
+| CI-04 | Phase 5 | Pending |
+| CI-05 | Phase 5 | Pending |
+| CI-06 | Phase 5 | Pending |
+| CI-07 | Phase 5 | Pending |
+| CI-08 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 43 total
-- Mapped to phases: 0
-- Unmapped: 43 ⚠️
+- Mapped to phases: 43
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-28*
-*Last updated: 2026-02-28 after initial definition*
+*Last updated: 2026-02-28 after roadmap creation*
