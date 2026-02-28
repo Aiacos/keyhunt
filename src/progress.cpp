@@ -698,13 +698,15 @@ double speed_history_get_recent_average(const speed_history_t *history, int samp
 int speed_history_get_trend(const speed_history_t *history) {
     if (!history || history->count < 4) return 0;  // Need at least 4 samples for trend
 
-    // Compare first half average vs second half average
+    // Compare first half average vs second half average using circular buffer indices
     int half = history->count / 2;
+    int oldest = (history->write_index - history->count + SPEED_HISTORY_MAX_SAMPLES) % SPEED_HISTORY_MAX_SAMPLES;
 
-    // Calculate first half average
+    // Calculate first half average (oldest samples)
     double first_half_sum = 0.0;
     for (int i = 0; i < half; i++) {
-        first_half_sum += history->samples[i].keys_per_second;
+        int idx = (oldest + i) % SPEED_HISTORY_MAX_SAMPLES;
+        first_half_sum += history->samples[idx].keys_per_second;
     }
     double first_half_avg = first_half_sum / half;
 
@@ -712,7 +714,8 @@ int speed_history_get_trend(const speed_history_t *history) {
     double second_half_sum = 0.0;
     int second_half_start = history->count - half;
     for (int i = second_half_start; i < history->count; i++) {
-        second_half_sum += history->samples[i].keys_per_second;
+        int idx = (oldest + i) % SPEED_HISTORY_MAX_SAMPLES;
+        second_half_sum += history->samples[idx].keys_per_second;
     }
     double second_half_avg = second_half_sum / half;
 

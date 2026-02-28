@@ -182,6 +182,8 @@ void multi_gpu_rebalance(multi_gpu_scheduler_t *sched) {
     platform_mutex_unlock(&sched->lock);
 }
 
+/* NOTE: All worker threads must be stopped before calling this function.
+ * The caller must ensure no threads hold references to sched. */
 void multi_gpu_shutdown(multi_gpu_scheduler_t *sched) {
     if (!sched) return;
 

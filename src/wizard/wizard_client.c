@@ -1810,8 +1810,11 @@ int wizard_client_run(wizard_config_t *cfg) {
     printf("    Total keys checked: %.2e\n", (double)total_keys);
     printf("    Run time: %ld seconds\n", time(NULL) - start_time);
     if (work_count > 0) {
-        double avg_speed = (double)total_keys / (time(NULL) - start_time) / 1000000.0;
-        printf("    Average speed: %.2f Mkeys/s\n", avg_speed);
+        time_t elapsed = time(NULL) - start_time;
+        if (elapsed > 0) {
+            double avg_speed = (double)total_keys / elapsed / 1000000.0;
+            printf("    Average speed: %.2f Mkeys/s\n", avg_speed);
+        }
     }
 
     /* Clear global state */

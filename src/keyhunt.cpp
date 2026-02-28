@@ -94,6 +94,7 @@
  * Uses _aligned_malloc on Windows (MinGW/MSVC) or aligned_alloc on POSIX.
  */
 static inline void* aligned_calloc(size_t alignment, size_t count, size_t elem_size) {
+    if (count != 0 && elem_size > SIZE_MAX / count) return NULL;
     size_t total_size = count * elem_size;
     // Round up to multiple of alignment
     total_size = ((total_size + alignment - 1) / alignment) * alignment;

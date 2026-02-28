@@ -79,6 +79,7 @@ int bloom_simd_init(struct bloom_simd *bloom, uint64_t entries, double error) {
     // Round up to sector boundary (512 bits = 64 bytes per sector)
     bloom->sectors = (total_bits + 511) / 512;
     bloom->sectors = next_power_of_2(bloom->sectors);  // Must be power of 2
+    if (bloom->sectors == 0) bloom->sectors = 1;  // Guard against wraparound
     bloom->sector_mask = bloom->sectors - 1;
 
     bloom->bytes = bloom->sectors * 64;  // 64 bytes per sector

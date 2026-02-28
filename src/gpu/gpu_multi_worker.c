@@ -29,7 +29,7 @@ struct gpu_multi_worker_s {
 
     /* Synchronization */
     platform_mutex_t stats_lock;
-    volatile bool should_stop;
+    volatile int should_stop;
     volatile bool paused;
     volatile bool has_result;
 

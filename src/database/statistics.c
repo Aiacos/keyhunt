@@ -124,14 +124,20 @@ int statistics_get_trend(statistics_trend_t *trend, const char *mode,
         statistics_trend_point_t *point = &trend->points[count];
 
         point->timestamp = (time_t)sqlite3_column_int64(stmt, 0);
-        strncpy(point->mode, (const char *)sqlite3_column_text(stmt, 1), sizeof(point->mode) - 1);
+        const char *mode_str = (const char *)sqlite3_column_text(stmt, 1);
+        if (mode_str) {
+            strncpy(point->mode, mode_str, sizeof(point->mode) - 1);
+        }
         point->cpu_speed_mkeys = sqlite3_column_double(stmt, 2);
         point->gpu_speed_mkeys = sqlite3_column_double(stmt, 3);
         point->hybrid_speed_mkeys = sqlite3_column_double(stmt, 4);
 
-        // Format timestamp
-        struct tm *tm_info = localtime(&point->timestamp);
-        strftime(point->date_str, sizeof(point->date_str), "%Y-%m-%d %H:%M", tm_info);
+        // Format timestamp (thread-safe)
+        struct tm tm_buf;
+        struct tm *tm_info = localtime_r(&point->timestamp, &tm_buf);
+        if (tm_info) {
+            strftime(point->date_str, sizeof(point->date_str), "%Y-%m-%d %H:%M", tm_info);
+        }
 
         // Store for statistics
         cpu_speeds[count] = point->cpu_speed_mkeys;
@@ -531,6 +537,10 @@ bool statistics_is_outlier(double speed, const char *mode,
 
     if (summary.sample_count < 3) {
         return false;  // Need at least 3 samples for outlier detection
+    }
+
+    if (summary.std_dev < 1e-9) {
+        return (fabs(speed - summary.avg_speed) > 1e-9);
     }
 
     // Outlier if more than 3 standard deviations from mean

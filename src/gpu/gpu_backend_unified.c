@@ -226,6 +226,8 @@ static int enumerate_backend_devices(backend_vtable_t *backend, gpu_backend_type
  * ============================================================================
  */
 
+/* NOTE: Must be called exactly once from the main thread before any worker
+ * threads start. Not thread-safe for concurrent initialization. */
 int gpu_backend_init(gpu_backend_info_t *info) {
     if (g_unified.initialized) {
         if (info) *info = g_unified.devices[0].info;

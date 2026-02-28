@@ -1313,6 +1313,7 @@ int opencl_full_search(const gpu_search_config_t *config) {
                 continue;
             }
 
+            if (found_count > MAX_FOUND_KEYS) found_count = MAX_FOUND_KEYS;
             if (found_count > 0) {
                 // Read found keys
                 FoundKey h_found[MAX_FOUND_KEYS];
