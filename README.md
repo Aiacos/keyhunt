@@ -22,7 +22,8 @@ Work for Ethereum
 - **[Distributed Mode](#distributed-mode)**: Coordinate searches across multiple machines with server/client architecture
 - **[Community Progress Integration](#community-progress-integration)**: Leverage community scanning data to avoid redundant searches
 - **[Hardware Auto-Detection](#hardware-auto-detection)**: Automatic CPU/GPU detection with optimized parameters
-- **[GPU Acceleration](#gpu-modes)**: CUDA-based GPU support with multi-GPU scheduling and async pipelines
+- **[GPU Acceleration](#gpu-modes)**: Multi-backend GPU support (CUDA for NVIDIA, OpenCL for AMD) with multi-GPU scheduling and async pipelines
+- **[AMD GPU Support](#optional-opencl-amd-gpu-support)**: OpenCL backend for AMD Radeon RX 6000/7000 series with ROCm
 - **Structured Configuration System**: Migrated from 50+ global variables to organized config structures for better maintainability and thread-safety (see `MIGRATION_GUIDE.md` for developers)
 
 ## Documentation
@@ -188,24 +189,28 @@ keyhunt.exe -m address -f tests\66.txt -b 66 -l compress -R -q -s 10
 
 Note: Use backslashes (`\`) for file paths on Windows.
 
-## Optional CUDA (GPU) support
+## GPU Acceleration
 
-If you have an NVIDIA GPU and the CUDA toolkit installed, the build system can compile with GPU acceleration.
+Keyhunt supports GPU acceleration with two backends:
+- **CUDA** - For NVIDIA GPUs (RTX 2000/3000/4000 series)
+- **OpenCL** - For AMD GPUs (Radeon RX 6000/7000 series with ROCm)
+
+Both backends can run simultaneously on mixed-vendor systems (NVIDIA + AMD).
 
 ### GPU Modes
 
 Use the `-G` flag to control GPU usage:
 
-| Flag | Description | Performance (RTX 2080 SUPER) |
-|------|-------------|------------------------------|
+| Flag | Description | Performance (RTX 2080 SUPER / RX 6800 XT) |
+|------|-------------|-------------------------------------------|
 | `-G off` | Disable GPU, use CPU only | ~5-10 Mkeys/s per thread |
 | `-G auto` | Auto-detect best mode (default) | Uses full mode if available |
 | `-G hash` | GPU computes SHA256+RIPEMD160 (CPU generates ECC points) | ~50-100 Mkeys/s |
-| `-G full` | Full GPU search - ECC + hashing + matching on GPU | ~320-330 Mkeys/s |
+| `-G full` | Full GPU search - ECC + hashing + matching on GPU | ~320-330 Mkeys/s (CUDA) / ~200-250 Mkeys/s (OpenCL) |
 | `-G hybrid` | GPU + CPU in parallel for maximum throughput | ~400+ Mkeys/s combined |
 
 **Recommended for address/rmd160 searches:**
-- Single GPU: `-G full -l compress` (~325 Mkeys/s)
+- Single GPU: `-G full -l compress` (~325 Mkeys/s CUDA, ~200-250 Mkeys/s OpenCL)
 - Maximum throughput: `-G hybrid -l compress` (~400 Mkeys/s GPU+CPU combined)
 
 Example with hybrid mode:
@@ -213,7 +218,9 @@ Example with hybrid mode:
 ./keyhunt -m address -f targets.txt -b 66 -G hybrid -l compress
 ```
 
-### Build with CUDA
+## Optional CUDA (NVIDIA GPU) support
+
+If you have an NVIDIA GPU and the CUDA toolkit installed, the build system can compile with GPU acceleration.
 
 **Recommended: Use the build script** (auto-detects everything):
 
@@ -247,7 +254,78 @@ make NVCC=/usr/local/cuda/bin/nvcc \
      NVCCFLAGS='-O3 -std=c++17 -arch=sm_75 -allow-unsupported-compiler'
 ```
 
-See [GPU_BACKEND.md](docs/GPU_BACKEND.md) for detailed documentation.
+See [GPU_BACKEND.md](docs/GPU_BACKEND.md) for detailed CUDA documentation.
+
+## Optional OpenCL (AMD GPU) support
+
+If you have an AMD GPU (Radeon RX 6000/7000 series) with ROCm drivers, you can build with OpenCL acceleration.
+
+**Recommended: Use the build script** (auto-detects everything):
+
+```bash
+./build_opencl.sh
+```
+
+The script automatically:
+- Detects ROCm installation location
+- Detects your AMD GPU architecture (gfx1030, gfx1100, etc.)
+- Finds OpenCL headers and libraries
+- Builds with optimal settings for AMD GPUs
+
+For specific GPU architecture:
+
+```bash
+./build_opencl.sh --arch gfx1030    # RX 6000 series (RDNA 2)
+./build_opencl.sh --arch gfx1100    # RX 7000 series (RDNA 3)
+./build_opencl.sh --help            # Show all options
+```
+
+**Manual build** (if you prefer):
+
+```bash
+# Standard build (if OpenCL is detected)
+make
+
+# The build system auto-detects OpenCL headers and links with -lOpenCL
+```
+
+**Prerequisites for AMD GPUs:**
+- AMD ROCm 5.0+ drivers ([Installation Guide](https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html))
+- OpenCL runtime (`rocm-opencl-runtime` package)
+
+**Supported AMD GPUs:**
+- Radeon RX 7900 XTX/XT (RDNA 3 - gfx1100)
+- Radeon RX 7800/7700/7600 series (RDNA 3 - gfx1101)
+- Radeon RX 6900/6800/6700/6600 series (RDNA 2 - gfx1030)
+- Radeon RX 5000 series (RDNA 1 - gfx1010)
+
+**Performance on AMD GPUs:**
+- RX 7900 XTX: ~250-280 Mkeys/s (full mode)
+- RX 6800 XT: ~200-220 Mkeys/s (full mode)
+- RX 6700 XT: ~150-180 Mkeys/s (full mode)
+
+See [OPENCL_BACKEND.md](docs/OPENCL_BACKEND.md) for detailed OpenCL documentation.
+
+### Multi-Vendor GPU Systems (NVIDIA + AMD)
+
+If you have both NVIDIA and AMD GPUs, the build system can compile with both CUDA and OpenCL support simultaneously:
+
+```bash
+# Build with both backends
+make NVCC=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda
+
+# Or use both build scripts
+./build_cuda.sh && ./build_opencl.sh
+```
+
+Keyhunt will automatically detect and use all available GPUs:
+```bash
+./keyhunt -m address -f targets.txt -b 66 -G hybrid -l compress
+
+# Output example:
+# GPU 0: NVIDIA GeForce RTX 3080 (CUDA) - 10240 MB VRAM, 68 CUs
+# GPU 1: AMD Radeon RX 6800 XT (OpenCL) - 16384 MB VRAM, 72 CUs
+```
 
 if you have problems compiling the `main` version you can compile the `legacy` version
 

@@ -52,7 +52,14 @@ INCLUDES := -I$(SRCDIR)
 # Union removed from Int class - strict aliasing is now safe
 LTO_FLAGS ?= -flto=auto
 
-# Optional CUDA backend (auto-detected if nvcc is available)
+# ============================================================================
+# GPU Backend Detection and Selection (Supports Both CUDA and OpenCL)
+# ============================================================================
+# Both HAVE_CUDA_BACKEND and HAVE_OPENCL can be enabled simultaneously.
+# The runtime will select the best backend for each GPU device.
+# ============================================================================
+
+# Detect CUDA availability
 NVCC ?= nvcc
 CUDA_ARCH ?= sm_75
 # New Fedora/GCC versions may be newer than the CUDA validation matrix.
@@ -64,14 +71,50 @@ ifneq ($(CUDA_CC_BINDIR),)
   NVCCFLAGS += --compiler-bindir=$(CUDA_CC_BINDIR)
 endif
 HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
-ifeq ($(HAVE_NVCC),)
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o
-  GPU_CXXFLAGS :=
-else
-  GPU_OBJS := $(OBJDIR)/gpu/gpu_backend_cuda.o $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o
-  GPU_CXXFLAGS := -DHAVE_CUDA_BACKEND=1
+
+# Detect OpenCL availability using pkg-config or header check
+HAVE_OPENCL := $(shell pkg-config --exists OpenCL 2>/dev/null && echo 1 || \
+               (test -f /usr/include/CL/cl.h -o -f /usr/local/include/CL/cl.h) && echo 1 || echo 0)
+
+# Common GPU objects (always included regardless of backend)
+# Note: gpu_autotune is now provided by gpu_backend_unified.c
+GPU_COMMON_OBJS := $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o
+
+# Initialize backend objects
+GPU_BACKEND_OBJS :=
+GPU_CXXFLAGS :=
+
+# CUDA backend (if available)
+ifneq ($(HAVE_NVCC),)
+  GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_cuda.o
+  GPU_CXXFLAGS += -DHAVE_CUDA_BACKEND=1
   override NVCCFLAGS += -DHAVE_CUDA_BACKEND=1
+  CUDA_HOME ?= /usr/local/cuda
+  LDFLAGS += -L$(CUDA_HOME)/lib64
+  LDFLAGS += -Wl,-rpath,$(CUDA_HOME)/lib64
+  LDLIBS += -lcudart
 endif
+
+# OpenCL backend (if available)
+ifeq ($(HAVE_OPENCL),1)
+  GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_opencl.o
+  GPU_CXXFLAGS += -DHAVE_OPENCL=1
+  CFLAGS += -DHAVE_OPENCL=1
+  LDLIBS += -lOpenCL
+endif
+
+# Unified backend (always included - provides multi-vendor utility functions)
+# These functions (gpu_enumerate_backends, gpu_backend_get_type, gpu_backend_type_name)
+# are called by keyhunt.cpp regardless of which backends are available
+GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_unified.o
+
+# Fallback to none backend if no GPU backend is available
+ifeq ($(GPU_BACKEND_OBJS),)
+  GPU_BACKEND_OBJS := $(OBJDIR)/gpu/gpu_backend_none.o
+endif
+
+# Combine backend objects with common GPU objects
+GPU_OBJS := $(GPU_BACKEND_OBJS) $(GPU_COMMON_OBJS)
 
 CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
 CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES)
@@ -82,14 +125,6 @@ LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
 LDLIBS ?=
 LDLIBS += -lm -lpthread $(PLATFORM_LIBS)
 # SQLite3 is compiled as part of the project (amalgamation)
-
-# If CUDA backend is built, link against cudart (toolkit runtime)
-CUDA_HOME ?= /usr/local/cuda
-ifneq ($(HAVE_NVCC),)
-  LDFLAGS += -L$(CUDA_HOME)/lib64
-  LDFLAGS += -Wl,-rpath,$(CUDA_HOME)/lib64
-  LDLIBS += -lcudart
-endif
 
 # Optional TLS support with OpenSSL
 # Usage: make ENABLE_TLS=1
@@ -314,6 +349,15 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cu | directories
 # sqlite3 is third-party code — suppress its fallthrough warnings
 $(OBJDIR)/database/sqlite3.o: $(SRCDIR)/database/sqlite3.c | directories
 	$(CC) $(CFLAGS) -Wno-implicit-fallthrough -c $< -o $@
+
+# GPU backend compilation rules
+$(OBJDIR)/gpu/gpu_backend_opencl.o: $(SRCDIR)/gpu/gpu_backend_opencl.c $(SRCDIR)/gpu/gpu_backend.h $(SRCDIR)/gpu/opencl_check.h | directories
+	@mkdir -p $(OBJDIR)/gpu
+	$(CC) $(CFLAGS) -DHAVE_OPENCL_BACKEND=1 -c $< -o $@
+
+$(OBJDIR)/gpu/gpu_backend_unified.o: $(SRCDIR)/gpu/gpu_backend_unified.c $(SRCDIR)/gpu/gpu_backend.h | directories
+	@mkdir -p $(OBJDIR)/gpu
+	$(CC) $(CFLAGS) $(GPU_CXXFLAGS) -c $< -o $@
 
 # Specific rules for C files that need C++ compilation
 $(OBJDIR)/core/util.o: $(SRCDIR)/core/util.c | directories

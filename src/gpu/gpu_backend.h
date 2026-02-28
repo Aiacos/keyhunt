@@ -4,6 +4,11 @@
  * Supports two modes:
  * 1. Hash-only mode: CPU generates points, GPU computes hash160
  * 2. Full GPU mode: GPU does ECC + hash160 + matching (BitCrack style)
+ *
+ * Multi-vendor support:
+ * - CUDA backend for NVIDIA GPUs (highest priority)
+ * - OpenCL backend for AMD GPUs and other OpenCL-compatible devices
+ * - Both backends can coexist on mixed-vendor systems
  */
 
 #ifndef GPU_BACKEND_H
@@ -17,14 +22,25 @@
 extern "C" {
 #endif
 
+// GPU backend type enumeration
+typedef enum {
+    GPU_BACKEND_TYPE_NONE = 0,      // No GPU backend available
+    GPU_BACKEND_TYPE_CUDA = 1,      // NVIDIA CUDA backend
+    GPU_BACKEND_TYPE_OPENCL = 2,    // OpenCL backend (AMD, Intel, etc.)
+    GPU_BACKEND_TYPE_UNIFIED = 3    // Unified dispatcher (both CUDA + OpenCL)
+} gpu_backend_type_t;
+
+// GPU backend information structure
 typedef struct {
-    int gpu_count;
-    uint64_t vram_mb;
-    char name[128];
-    int compute_major;
-    int compute_minor;
-    int multiprocessors;
-    int max_threads_per_block;
+    gpu_backend_type_t backend_type;  // Backend type for this device
+    int gpu_count;                     // Number of GPUs available
+    uint64_t vram_mb;                  // VRAM in megabytes
+    char name[128];                    // GPU model name
+    char vendor[64];                   // Vendor name (NVIDIA, AMD, Intel, etc.)
+    int compute_major;                 // Compute capability major (CUDA) or OpenCL version major
+    int compute_minor;                 // Compute capability minor (CUDA) or OpenCL version minor
+    int multiprocessors;               // SM count (CUDA) or compute units (OpenCL)
+    int max_threads_per_block;         // Max threads per block (CUDA) or work-group size (OpenCL)
 } gpu_backend_info_t;
 
 // Callback for found keys
@@ -126,6 +142,33 @@ int gpu_autotune(size_t duration_ms, gpu_tune_result_t *result);
 
 // Apply tuned parameters (call before gpu_full_search)
 void gpu_apply_tune(const gpu_tune_result_t *tune);
+
+// ============================================================================
+// Multi-backend support (for mixed-vendor GPU systems)
+// ============================================================================
+
+// Get backend type name as a string (for display purposes)
+// Returns: "CUDA", "OpenCL", "Unified", or "None"
+const char* gpu_backend_type_name(gpu_backend_type_t type);
+
+// Enumerate available backend types on this system
+// Returns: bitmask of GPU_BACKEND_TYPE_* values (e.g., CUDA|OPENCL = 3)
+// Example: 0x01 = CUDA only, 0x02 = OpenCL only, 0x03 = both available
+int gpu_enumerate_backends(void);
+
+// Initialize specific backend type
+// backend_type: GPU_BACKEND_TYPE_CUDA or GPU_BACKEND_TYPE_OPENCL
+// info: optional pointer to receive backend info (can be NULL)
+// Returns: 0 on success, non-zero on error
+// Note: For unified backend, use gpu_backend_init() instead
+int gpu_backend_init_typed(gpu_backend_type_t backend_type, gpu_backend_info_t *info);
+
+// Get current backend type (returns GPU_BACKEND_TYPE_* value)
+gpu_backend_type_t gpu_backend_get_type(void);
+
+// Check if specific backend type is available
+// Returns: 1 if available, 0 otherwise
+int gpu_backend_type_available(gpu_backend_type_t backend_type);
 
 #ifdef __cplusplus
 }

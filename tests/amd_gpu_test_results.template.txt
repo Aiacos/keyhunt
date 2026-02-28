@@ -1,0 +1,401 @@
+###############################################################################
+# AMD RX 6000/7000 Series GPU Test Results
+###############################################################################
+
+Test Date: [YYYY-MM-DD HH:MM:SS]
+Tester: [Your Name/Username]
+Test Script Version: test_amd_rx6000_rx7000.sh
+
+###############################################################################
+# SYSTEM CONFIGURATION
+###############################################################################
+
+## Hardware Specifications
+
+GPU Model: [e.g., AMD Radeon RX 7900 XTX]
+GPU Architecture: [e.g., RDNA 3, gfx1100]
+Compute Units: [e.g., 96]
+VRAM: [e.g., 24 GB GDDR6]
+Memory Bandwidth: [e.g., 960 GB/s]
+
+CPU: [e.g., AMD Ryzen 9 7950X]
+CPU Cores/Threads: [e.g., 16/32]
+RAM: [e.g., 64 GB DDR5-6000]
+Motherboard: [e.g., ASUS X670E]
+PSU: [e.g., 1000W 80+ Gold]
+
+## Software Environment
+
+Operating System: [e.g., Ubuntu 22.04 LTS]
+Kernel Version: [e.g., 6.2.0-39-generic]
+ROCm Version: [e.g., 5.7.0]
+OpenCL Version: [e.g., OpenCL 2.0 AMD-APP.internal (3584.0)]
+amdgpu Driver Version: [e.g., 5.15.0]
+
+Build Configuration:
+- OpenCL Support: [Yes/No]
+- CUDA Support: [Yes/No]
+- Build Command: [e.g., ./build_opencl.sh]
+- Compiler: [e.g., GCC 11.4.0]
+
+###############################################################################
+# PRE-TEST VERIFICATION
+###############################################################################
+
+## GPU Detection
+
+Command: ./keyhunt -L
+
+Output:
+[Paste output here]
+
+Status: [PASS/FAIL]
+Notes: [Any observations]
+
+## OpenCL Device Information
+
+Command: clinfo -l
+
+Output:
+[Paste output here]
+
+Status: [PASS/FAIL]
+Notes: [Any observations]
+
+## ROCm Device Information
+
+Command: rocminfo | grep -A 10 "Name:"
+
+Output:
+[Paste output here]
+
+Architecture Confirmed: [gfx1030 / gfx1100 / gfx1101 / gfx1102 / Other]
+
+###############################################################################
+# TEST RESULTS
+###############################################################################
+
+## Test 1: Device Detection and Initialization
+
+Status: [PASS/FAIL]
+Duration: [X seconds]
+
+Output:
+[Paste relevant output]
+
+Notes:
+[Any observations or issues]
+
+---
+
+## Test 2: OpenCL Kernel Compilation
+
+Status: [PASS/FAIL]
+Duration: [X seconds]
+
+Compilation Errors: [Yes/No]
+Build Log:
+[Paste any relevant build output]
+
+Notes:
+[Any observations or warnings]
+
+---
+
+## Test 3: Hash-Only Mode (SHA256 + RIPEMD160)
+
+Status: [PASS/FAIL]
+Test Duration: [X seconds]
+
+Performance Metrics:
+- Throughput: [X.XX Mkey/s]
+- GPU Utilization: [XX%]
+- GPU Temperature: [XX°C]
+- GPU Power: [XXX W]
+- Memory Usage: [XX%]
+- GPU Clock: [XXXX MHz]
+- Memory Clock: [XXXX MHz]
+
+GPU Monitoring Log:
+[Paste rocm-smi output during test]
+
+Notes:
+[Any observations about performance or stability]
+
+---
+
+## Test 4: Full GPU Search Mode
+
+Status: [PASS/FAIL]
+Test Duration: [X seconds]
+
+Performance Metrics:
+- Throughput: [X.XX Mkey/s]
+- GPU Utilization: [XX%]
+- GPU Temperature: [XX°C]
+- GPU Power: [XXX W]
+- Memory Usage: [XX%]
+- Keys Found: [X]
+- False Positives: [X]
+
+GPU Monitoring Log:
+[Paste rocm-smi output during test]
+
+Notes:
+[Any observations about search accuracy or performance]
+
+---
+
+## Test 5: Hybrid CPU+GPU Mode
+
+Status: [PASS/FAIL]
+Test Duration: [X seconds]
+
+Performance Metrics:
+- Combined Throughput: [X.XX Mkey/s]
+- GPU Throughput: [X.XX Mkey/s]
+- CPU Throughput: [X.XX Mkey/s]
+- GPU Utilization: [XX%]
+- CPU Utilization: [XX%]
+
+Work Distribution:
+- GPU Work Share: [XX%]
+- CPU Work Share: [XX%]
+
+Notes:
+[Any observations about CPU/GPU coordination]
+
+---
+
+## Test 6: Multi-GPU Mode
+
+Status: [PASS/FAIL/SKIPPED]
+Reason for Skip: [e.g., Only 1 GPU available]
+Test Duration: [X seconds]
+
+Number of GPUs: [X]
+
+Per-Device Performance:
+- Device 0: [X.XX Mkey/s]
+- Device 1: [X.XX Mkey/s]
+- Device N: [X.XX Mkey/s]
+
+Combined Throughput: [X.XX Mkey/s]
+Load Balancing: [Even / Uneven - explain]
+
+Notes:
+[Any observations about multi-GPU scaling]
+
+---
+
+## Test 7: BSGS Mode
+
+Status: [PASS/FAIL/SKIPPED]
+Reason for Skip: [e.g., tests/125.txt not available]
+Test Duration: [X seconds]
+
+Performance Metrics:
+- Throughput: [X.XX Mkey/s]
+- GPU Utilization: [XX%]
+- Memory Usage: [XX%]
+
+Notes:
+[Any observations about BSGS GPU acceleration]
+
+---
+
+## Test 8: Auto-Tuning for AMD RDNA
+
+Status: [PASS/FAIL]
+Test Duration: [X seconds]
+
+Auto-Detected Parameters:
+- Blocks per CU: [XX]
+- Keys per Work-Item: [XXXX]
+- Work-Group Size: [XXX]
+
+Performance with Auto-Tuned Parameters:
+- Throughput: [X.XX Mkey/s]
+
+Notes:
+[Any observations about parameter selection]
+
+---
+
+## Test 9: Stress Test (Optional)
+
+Status: [PASS/FAIL/SKIPPED]
+Test Duration: [5 minutes]
+
+Stability: [Stable / Unstable - explain]
+
+Temperature Over Time:
+- Starting: [XX°C]
+- Average: [XX°C]
+- Peak: [XX°C]
+- Final: [XX°C]
+
+Power Consumption:
+- Average: [XXX W]
+- Peak: [XXX W]
+
+Thermal Throttling: [Yes/No]
+Clock Throttling: [Yes/No]
+
+Performance Over Time:
+- First 60s: [X.XX Mkey/s]
+- Last 60s: [X.XX Mkey/s]
+- Performance Degradation: [X%]
+
+Notes:
+[Any observations about long-term stability]
+
+###############################################################################
+# PERFORMANCE ANALYSIS
+###############################################################################
+
+## Summary Statistics
+
+Hash-Only Mode Throughput: [X.XX Mkey/s]
+Full Search Mode Throughput: [X.XX Mkey/s]
+Hybrid Mode Throughput: [X.XX Mkey/s]
+
+## Comparison with Expected Baseline
+
+GPU Model: [Your GPU]
+Expected Throughput: [XX-YY Mkey/s]
+Actual Throughput: [X.XX Mkey/s]
+Performance vs Expected: [Above/Within/Below expected range]
+
+## Comparison with NVIDIA CUDA (if applicable)
+
+NVIDIA GPU Model: [e.g., RTX 4090]
+NVIDIA CUDA Throughput: [X.XX Mkey/s]
+AMD OpenCL Throughput: [X.XX Mkey/s]
+Relative Performance: [(AMD/NVIDIA) × 100 = XX%]
+
+Target Achievement: [≥ 50% required]
+Status: [PASS/FAIL]
+
+## GPU Efficiency Metrics
+
+Power Efficiency: [Mkey/s per Watt]
+Memory Bandwidth Utilization: [Estimated XX%]
+Compute Utilization: [XX%]
+
+###############################################################################
+# ISSUES AND OBSERVATIONS
+###############################################################################
+
+## Issues Encountered
+
+1. [Issue description]
+   - Severity: [Low/Medium/High/Critical]
+   - Resolution: [How it was resolved or workaround]
+
+2. [Issue description]
+   - Severity: [Low/Medium/High/Critical]
+   - Resolution: [How it was resolved or workaround]
+
+## Warnings
+
+1. [Warning description]
+2. [Warning description]
+
+## Positive Observations
+
+1. [Positive observation]
+2. [Positive observation]
+
+## Performance Optimizations Applied
+
+1. [Optimization description and impact]
+2. [Optimization description and impact]
+
+###############################################################################
+# ERROR LOGS (if any)
+###############################################################################
+
+## Kernel Compilation Errors
+
+[Paste any compilation errors or build logs]
+
+## Runtime Errors
+
+[Paste any runtime errors from keyhunt output]
+
+## GPU Driver Errors
+
+Command: dmesg | grep -i amdgpu | tail -50
+
+Output:
+[Paste relevant dmesg output]
+
+###############################################################################
+# GPU MONITORING DATA
+###############################################################################
+
+## Temperature Profile
+
+[Paste temperature monitoring data or graph description]
+
+## Power Consumption Profile
+
+[Paste power monitoring data or graph description]
+
+## Clock Speed Profile
+
+[Paste clock speed monitoring data]
+
+## Memory Usage Profile
+
+[Paste memory usage monitoring data]
+
+###############################################################################
+# CONCLUSIONS
+###############################################################################
+
+## Overall Test Result: [PASS/FAIL]
+
+## Acceptance Criteria Verification
+
+- [✓/✗] AMD RX 6000/7000 GPU detected by OpenCL
+- [✓/✗] OpenCL kernels compile successfully
+- [✓/✗] Device information correctly reported
+- [✓/✗] Hash-only mode runs without errors
+- [✓/✗] Full GPU search mode runs without errors
+- [✓/✗] Throughput within expected range
+- [✓/✗] GPU utilization > 90% during tests
+- [✓/✗] No crashes, hangs, or driver resets
+- [✓/✗] Performance ≥ 50% of equivalent NVIDIA GPU (if applicable)
+
+## Recommendations
+
+1. [Recommendation for users with similar hardware]
+2. [Recommendation for developers/optimization]
+3. [Recommendation for documentation updates]
+
+## Additional Notes
+
+[Any additional observations, context, or recommendations]
+
+###############################################################################
+# ATTACHMENTS
+###############################################################################
+
+Log Files:
+- [Filename and description]
+- [Filename and description]
+
+Screenshots:
+- [Description of screenshots taken]
+
+Monitoring Data Files:
+- [Filename and description]
+
+###############################################################################
+# END OF TEST REPORT
+###############################################################################
+
+Report Completed By: [Your Name]
+Date: [YYYY-MM-DD]

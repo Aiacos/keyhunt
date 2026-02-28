@@ -15,7 +15,7 @@
  * Architecture:
  *   - Multi-threaded with SIMD optimizations (SSE2/AVX2/AVX-512)
  *   - Bloom filters for fast target lookup
- *   - Support for GPU acceleration (CUDA)
+ *   - Support for GPU acceleration (CUDA + OpenCL, multi-vendor)
  *   - Distributed mode for multi-machine coordination
  *
  * See src/search/search_common.h for modular search declarations.
@@ -2331,19 +2331,71 @@ int main(int argc, char **argv)	{
 										!FLAGENDOMORPHISM &&
 										wantCompressed && !wantUncompressed;
 
-		// Show GPU backend status
+		// Show GPU backend status - enumerate all available backends (CUDA, OpenCL, AMD)
 		if (FLAGGPU != 0 || FLAGGPU_FULL != 0) {
 			if (gpu_available) {
-				output_success("CUDA backend: %s (%d MPs, %lu MB VRAM)\n",
-					g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "NVIDIA GPU",
-					g_gpu_backend_info.multiprocessors,
-					(unsigned long)g_gpu_backend_info.vram_mb);
+				// Enumerate all available GPU backends
+				int available_backends = gpu_enumerate_backends();
+				gpu_backend_type_t current_backend = gpu_backend_get_type();
+
+				output_success("GPU Backend: %s\n", gpu_backend_type_name(current_backend));
+
+				// Show device information based on backend type
+				if (current_backend == GPU_BACKEND_TYPE_UNIFIED) {
+					// Unified backend - multiple device types
+					output_info("  Total devices: %d across multiple vendors\n", g_gpu_backend_info.gpu_count);
+
+					// Show summary of available backends
+					if (available_backends & (1 << GPU_BACKEND_TYPE_CUDA)) {
+						output_info("  - CUDA backend available (NVIDIA GPUs)\n");
+					}
+					if (available_backends & (1 << GPU_BACKEND_TYPE_OPENCL)) {
+						output_info("  - OpenCL backend available (AMD/Intel GPUs)\n");
+					}
+
+					// Show primary device info
+					if (g_gpu_backend_info.name[0]) {
+						output_info("  Primary device: %s", g_gpu_backend_info.name);
+						if (g_gpu_backend_info.vendor[0]) {
+							output_info(" (%s)", g_gpu_backend_info.vendor);
+						}
+						output_info("\n");
+					}
+
+					output_info("  Compute units: %d, VRAM: %lu MB\n",
+						g_gpu_backend_info.multiprocessors,
+						(unsigned long)g_gpu_backend_info.vram_mb);
+				} else if (current_backend == GPU_BACKEND_TYPE_CUDA) {
+					// CUDA-only backend
+					output_success("  CUDA device: %s (%d SMs, %lu MB VRAM)\n",
+						g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "NVIDIA GPU",
+						g_gpu_backend_info.multiprocessors,
+						(unsigned long)g_gpu_backend_info.vram_mb);
+				} else if (current_backend == GPU_BACKEND_TYPE_OPENCL) {
+					// OpenCL-only backend
+					output_success("  OpenCL device: %s", g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "GPU");
+					if (g_gpu_backend_info.vendor[0]) {
+						output_success(" (%s)", g_gpu_backend_info.vendor);
+					}
+					output_success("\n");
+					output_info("  Compute units: %d, VRAM: %lu MB\n",
+						g_gpu_backend_info.multiprocessors,
+						(unsigned long)g_gpu_backend_info.vram_mb);
+				}
 			} else {
-#ifdef HAVE_CUDA_BACKEND
-				output_warning("CUDA backend compiled but no GPU detected\n");
+				// No GPU available - show what backends are compiled
+				output_warning("No GPU devices detected\n");
+#if defined(HAVE_CUDA_BACKEND) && defined(HAVE_OPENCL_BACKEND)
+				output_info("Build supports: CUDA (NVIDIA) and OpenCL (AMD/Intel)\n");
+				output_info("To use GPU: install appropriate drivers (CUDA Toolkit or ROCm)\n");
+#elif defined(HAVE_CUDA_BACKEND)
+				output_info("Build supports: CUDA only (NVIDIA GPUs)\n");
+				output_info("To use GPU: install CUDA Toolkit and ensure 'nvcc' is in PATH\n");
+#elif defined(HAVE_OPENCL_BACKEND)
+				output_info("Build supports: OpenCL only (AMD/Intel GPUs)\n");
+				output_info("To use GPU: install OpenCL drivers (ROCm for AMD, or vendor OpenCL)\n");
 #else
-				output_warning("CUDA backend not compiled (nvcc not found at build time)\n");
-				output_info("To enable GPU: install CUDA toolkit, ensure 'nvcc' is in PATH, rebuild\n");
+				output_info("GPU backends not compiled - rebuild with CUDA or OpenCL support\n");
 #endif
 			}
 		}

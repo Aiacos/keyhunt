@@ -1,0 +1,570 @@
+================================================================================
+MIXED-VENDOR GPU TEST RESULTS (NVIDIA + AMD)
+================================================================================
+
+Test Date: _______________
+Tester Name: _______________
+Test Duration: _______________ seconds per test
+
+================================================================================
+SECTION 1: SYSTEM CONFIGURATION
+================================================================================
+
+Hardware Configuration:
+-----------------------
+
+NVIDIA GPU #1:
+  Model: _______________
+  VRAM: _______________ GB
+  Compute Capability / SMs: _______________
+  PCIe Slot: x___ (Gen ___)
+  TDP: _______________ W
+
+NVIDIA GPU #2 (if applicable):
+  Model: _______________
+  VRAM: _______________ GB
+  Compute Capability / SMs: _______________
+  PCIe Slot: x___ (Gen ___)
+  TDP: _______________ W
+
+AMD GPU #1:
+  Model: _______________
+  VRAM: _______________ GB
+  Compute Units: _______________
+  Architecture: _______________ (RDNA 2/3, Vega, etc.)
+  PCIe Slot: x___ (Gen ___)
+  TDP: _______________ W
+
+AMD GPU #2 (if applicable):
+  Model: _______________
+  VRAM: _______________ GB
+  Compute Units: _______________
+  Architecture: _______________ (RDNA 2/3, Vega, etc.)
+  PCIe Slot: x___ (Gen ___)
+  TDP: _______________ W
+
+CPU:
+  Model: _______________
+  Cores/Threads: _____ / _____
+  Base/Boost Clock: _____GHz / _____GHz
+
+System RAM: _______________ GB
+Motherboard: _______________
+PCIe Configuration: _______________
+Power Supply: _______________ W
+
+Cooling Configuration:
+  NVIDIA GPU(s): _______________
+  AMD GPU(s): _______________
+  Case Airflow: _______________
+
+
+Software Configuration:
+-----------------------
+
+Operating System: _______________
+Kernel Version: _______________
+
+NVIDIA Driver Version: _______________
+CUDA Toolkit Version: _______________
+CUDA Runtime Version: _______________
+
+AMD Driver Version: _______________
+ROCm Version: _______________
+ROCm Components Installed:
+  rocm-opencl: _______________ (Y/N, version)
+  rocm-smi: _______________ (Y/N, version)
+  rocminfo: _______________ (Y/N, version)
+
+OpenCL ICD Loader Version: _______________
+OpenCL Platforms Detected: _______________
+
+keyhunt Build Configuration:
+  Build Date: _______________
+  CUDA Support: _______________ (Y/N)
+  OpenCL Support: _______________ (Y/N)
+  Backend Type: _______________ (Unified/CUDA/OpenCL)
+  Compiler: _______________
+  Optimization Flags: _______________
+
+
+================================================================================
+SECTION 2: DEVICE DETECTION RESULTS
+================================================================================
+
+keyhunt -L Output:
+------------------
+[Paste complete output here]
+
+
+
+
+nvidia-smi Output:
+------------------
+[Paste output of: nvidia-smi --list-gpus]
+
+
+
+
+rocm-smi Output:
+----------------
+[Paste output of: rocm-smi --showproductname]
+
+
+
+
+clinfo Output:
+--------------
+[Paste output of: clinfo -l]
+
+
+
+
+Backend Detection:
+------------------
+Detected Backend Type: _______________ (CUDA / OpenCL / Unified)
+Total Devices Detected: _______________
+NVIDIA Devices: _______________
+AMD Devices: _______________
+
+Detection Status: _______________ (PASS / FAIL)
+
+
+================================================================================
+SECTION 3: TEST RESULTS
+================================================================================
+
+Test 1: Mixed-Vendor Detection
+-------------------------------
+Status: _______________ (PASS / FAIL)
+NVIDIA GPU(s) Detected: _______________ (Y/N)
+AMD GPU(s) Detected: _______________ (Y/N)
+Notes:
+
+
+
+
+Test 2: Unified Backend Initialization
+---------------------------------------
+Status: _______________ (PASS / FAIL)
+Backend Initialized: _______________ (Y/N)
+Initialization Time: _______________ seconds
+Errors Encountered: _______________ (Y/N)
+Error Messages (if any):
+
+
+
+Notes:
+
+
+
+
+Test 3: Hash-Only Mode (All GPUs)
+----------------------------------
+Status: _______________ (PASS / FAIL)
+Test Duration: _______________ seconds
+Command: ./keyhunt -m address -f tests/1to32.txt -r 1:FFFFFFFF -G hash -s ___
+
+Performance Results:
+  NVIDIA GPU #1 Throughput: _______________ Mkey/s
+  NVIDIA GPU #2 Throughput: _______________ Mkey/s (if applicable)
+  AMD GPU #1 Throughput: _______________ Mkey/s
+  AMD GPU #2 Throughput: _______________ Mkey/s (if applicable)
+  Combined Throughput: _______________ Mkey/s
+  Expected Combined: _______________ Mkey/s (sum of individual)
+  Efficiency: _______________ % (combined / expected)
+
+GPU Utilization:
+  NVIDIA GPU #1: _______________ %
+  NVIDIA GPU #2: _______________ % (if applicable)
+  AMD GPU #1: _______________ %
+  AMD GPU #2: _______________ % (if applicable)
+
+GPU Temperatures:
+  NVIDIA GPU #1: _______________ °C
+  NVIDIA GPU #2: _______________ °C (if applicable)
+  AMD GPU #1: _______________ °C
+  AMD GPU #2: _______________ °C (if applicable)
+
+Notes:
+
+
+
+
+Test 4: Full GPU Search Mode (All GPUs)
+----------------------------------------
+Status: _______________ (PASS / FAIL)
+Test Duration: _______________ seconds
+Command: ./keyhunt -m address -f tests/1to32.txt -r 1:FFFFFFFF -G full -s ___
+
+Performance Results:
+  NVIDIA GPU #1 Throughput: _______________ Mkey/s
+  NVIDIA GPU #2 Throughput: _______________ Mkey/s (if applicable)
+  AMD GPU #1 Throughput: _______________ Mkey/s
+  AMD GPU #2 Throughput: _______________ Mkey/s (if applicable)
+  Combined Throughput: _______________ Mkey/s
+  Expected Combined: _______________ Mkey/s
+  Efficiency: _______________ %
+
+GPU Utilization:
+  NVIDIA GPU #1: _______________ %
+  NVIDIA GPU #2: _______________ % (if applicable)
+  AMD GPU #1: _______________ %
+  AMD GPU #2: _______________ % (if applicable)
+
+Memory Usage:
+  NVIDIA GPU #1: _______________ MB / _______________ MB
+  NVIDIA GPU #2: _______________ MB / _______________ MB (if applicable)
+  AMD GPU #1: _______________ MB / _______________ MB
+  AMD GPU #2: _______________ MB / _______________ MB (if applicable)
+
+Notes:
+
+
+
+
+Test 5: Hybrid Mode (CPU + All GPUs)
+-------------------------------------
+Status: _______________ (PASS / FAIL)
+Test Duration: _______________ seconds
+Command: ./keyhunt -m address -f tests/1to32.txt -r 1:FFFFFFFF -G hybrid -s ___
+
+Performance Results:
+  CPU Throughput: _______________ Mkey/s
+  NVIDIA GPU #1 Throughput: _______________ Mkey/s
+  NVIDIA GPU #2 Throughput: _______________ Mkey/s (if applicable)
+  AMD GPU #1 Throughput: _______________ Mkey/s
+  AMD GPU #2 Throughput: _______________ Mkey/s (if applicable)
+  Combined Throughput: _______________ Mkey/s
+
+CPU Utilization: _______________ % (all cores average)
+GPU Utilization:
+  NVIDIA GPU #1: _______________ %
+  NVIDIA GPU #2: _______________ % (if applicable)
+  AMD GPU #1: _______________ %
+  AMD GPU #2: _______________ % (if applicable)
+
+Coordination:
+  CPU/GPU Conflicts: _______________ (Y/N)
+  Work Distribution: _______________ (Balanced / Unbalanced)
+
+Notes:
+
+
+
+
+Test 6: Work Distribution Verification
+---------------------------------------
+Status: _______________ (PASS / FAIL)
+Test Duration: _______________ seconds (minimum 60s)
+Command: ./keyhunt -m address -f tests/1to32.txt -r 1:FFFFFFFF -G full -s ___
+
+Work Distribution:
+  NVIDIA GPU #1: _______________ % of total work
+  NVIDIA GPU #2: _______________ % of total work (if applicable)
+  AMD GPU #1: _______________ % of total work
+  AMD GPU #2: _______________ % of total work (if applicable)
+
+Distribution Quality: _______________ (Excellent / Good / Poor)
+
+Performance Proportionality:
+  NVIDIA #1 Performance Weight: _______________
+  AMD #1 Performance Weight: _______________
+  Work Distribution Matches Performance: _______________ (Y/N)
+
+Notes:
+
+
+
+
+Test 7: Result Correctness Verification
+----------------------------------------
+Status: _______________ (PASS / FAIL)
+Test Type: Known key search
+Command: ./keyhunt -m address -f tests/1to32.txt -r 1:2 -G full -q
+
+Expected Key: 0x1
+Found Key: _______________
+Match: _______________ (Y/N)
+
+Device That Found Key: _______________ (NVIDIA / AMD, which device #)
+
+Additional Verification:
+  Result Address Matches: _______________ (Y/N)
+  Result Hash Matches: _______________ (Y/N)
+
+Notes:
+
+
+
+
+Test 8: GPU Monitoring
+----------------------
+Status: _______________ (PASS / FAIL - data collection)
+Monitoring Duration: _______________ seconds
+
+NVIDIA Monitoring Results:
+  nvidia-smi Data Collected: _______________ (Y/N)
+  Monitoring Log File: _______________
+  Average GPU Utilization: _______________ %
+  Peak Temperature: _______________ °C
+  Average Power Draw: _______________ W
+  Thermal Throttling Observed: _______________ (Y/N)
+
+AMD Monitoring Results:
+  rocm-smi Data Collected: _______________ (Y/N)
+  Monitoring Log File: _______________
+  Average GPU Utilization: _______________ %
+  Peak Temperature: _______________ °C
+  Average Power Draw: _______________ W
+  Thermal Throttling Observed: _______________ (Y/N)
+
+Notes:
+
+
+
+
+Test 9: Performance Balance Check
+----------------------------------
+Status: _______________ (PASS / FAIL)
+Test Duration: 90 seconds
+
+NVIDIA Performance:
+  Average Throughput: _______________ Mkey/s
+  Stability: _______________ (Stable / Unstable)
+  Utilization Consistency: _______________ %
+
+AMD Performance:
+  Average Throughput: _______________ Mkey/s
+  Stability: _______________ (Stable / Unstable)
+  Utilization Consistency: _______________ %
+
+Performance Balance:
+  NVIDIA Contributing: _______________ % of combined throughput
+  AMD Contributing: _______________ % of combined throughput
+  Balance Quality: _______________ (Balanced / Unbalanced)
+
+Notes:
+
+
+
+
+Test 10: Stress Test (Optional)
+--------------------------------
+Status: _______________ (PASS / FAIL / SKIPPED)
+Test Duration: 5 minutes
+Command: ./keyhunt -m address -f tests/66.txt -r 1:FFFFFFFFFFFF -G full -s 300
+
+Completion Status: _______________ (Completed / Failed / Skipped)
+
+NVIDIA Stability:
+  Crashes/Errors: _______________ (Y/N)
+  Thermal Throttling: _______________ (Y/N)
+  Peak Temperature: _______________ °C
+  Sustained Utilization: _______________ %
+
+AMD Stability:
+  Crashes/Errors: _______________ (Y/N)
+  Thermal Throttling: _______________ (Y/N)
+  Peak Temperature: _______________ °C
+  Sustained Utilization: _______________ %
+
+System Stability:
+  Memory Leaks: _______________ (Y/N)
+  CPU Overload: _______________ (Y/N)
+  System Responsive: _______________ (Y/N)
+
+Notes:
+
+
+
+
+================================================================================
+SECTION 4: PERFORMANCE ANALYSIS
+================================================================================
+
+Overall Performance Summary:
+----------------------------
+
+Total System Throughput: _______________ Mkey/s
+
+Individual GPU Performance vs. Baseline:
+  NVIDIA GPU #1: _______________ Mkey/s (_____% of baseline)
+  AMD GPU #1: _______________ Mkey/s (_____% of baseline)
+
+Combined Performance Efficiency:
+  Sum of Individual GPUs: _______________ Mkey/s
+  Actual Combined Throughput: _______________ Mkey/s
+  Efficiency: _______________ % (actual / sum)
+  Overhead: _______________ %
+
+Performance Comparison:
+  CUDA vs OpenCL Ratio: _______________ (NVIDIA throughput / AMD throughput)
+  Expected Ratio: _______________ (based on hardware specs)
+  Performance Balance: _______________ (Good / Needs Tuning)
+
+
+Performance Bottlenecks Identified:
+-----------------------------------
+[List any identified bottlenecks]
+
+
+
+
+Performance Optimization Opportunities:
+---------------------------------------
+[List potential optimizations]
+
+
+
+
+================================================================================
+SECTION 5: ISSUES AND OBSERVATIONS
+================================================================================
+
+Issues Encountered:
+-------------------
+[Document any issues, errors, or unexpected behavior]
+
+
+
+
+Workarounds Applied:
+--------------------
+[Document any workarounds or fixes applied]
+
+
+
+
+Observations:
+-------------
+[Document any notable observations]
+
+
+
+
+Recommendations:
+----------------
+[Provide recommendations for users or developers]
+
+
+
+
+================================================================================
+SECTION 6: ACCEPTANCE CRITERIA VERIFICATION
+================================================================================
+
+Critical Acceptance Criteria:
+------------------------------
+[ ] Both NVIDIA and AMD GPUs detected by keyhunt -L
+[ ] Backend type shows "Unified" or indicates both CUDA and OpenCL
+[ ] Hash-only mode runs successfully on all GPUs
+[ ] Full GPU search mode runs successfully on all GPUs
+[ ] Hybrid mode works with CPU + all GPUs
+[ ] Work is distributed to both NVIDIA and AMD devices
+[ ] Results are correct (matches known solutions)
+[ ] No crashes or segfaults during extended operation
+[ ] Combined throughput ≥ 90% of sum of individual GPUs
+[ ] No device errors in nvidia-smi or rocm-smi output
+
+Performance Criteria:
+---------------------
+[ ] NVIDIA GPU utilization ≥ 90% during full load
+[ ] AMD GPU utilization ≥ 90% during full load
+[ ] Thermal stability: Temperatures within safe limits
+[ ] Power draw reasonable for both GPUs under load
+[ ] No thermal throttling observed
+
+Monitoring Criteria:
+--------------------
+[ ] nvidia-smi shows activity during mixed-vendor operation
+[ ] rocm-smi shows activity during mixed-vendor operation
+[ ] Both GPUs contribute to overall throughput
+[ ] Statistics reported for both devices
+[ ] Monitoring logs captured successfully
+
+Stability Criteria:
+-------------------
+[ ] 5-minute stress test completes without issues
+[ ] No memory leaks observed over extended runtime
+[ ] Consistent performance throughout test duration
+[ ] Clean shutdown after tests complete
+
+Documentation Criteria:
+-----------------------
+[ ] Test results documented in this template
+[ ] GPU models recorded (exact SKUs)
+[ ] Driver versions recorded (CUDA, ROCm, kernel)
+[ ] Performance numbers recorded for both vendors
+[ ] Any issues noted with workarounds
+
+
+Overall Acceptance Status: _______________ (PASS / FAIL)
+
+
+================================================================================
+SECTION 7: CONCLUSIONS
+================================================================================
+
+Test Summary:
+-------------
+Total Tests Run: _______________
+Tests Passed: _______________
+Tests Failed: _______________
+Tests Skipped: _______________
+
+Overall Assessment:
+-------------------
+[Provide overall assessment of mixed-vendor functionality]
+
+
+
+
+Readiness for Production:
+-------------------------
+[Assess whether mixed-vendor support is ready for production use]
+
+
+
+
+Recommended Next Steps:
+-----------------------
+[List recommended next steps]
+
+
+
+
+================================================================================
+SECTION 8: SUPPORTING DATA
+================================================================================
+
+Attached Files:
+---------------
+[ ] Automated test output: mixed_vendor_test_YYYYMMDD_HHMMSS.txt
+[ ] NVIDIA monitoring log: nvidia_monitor_YYYYMMDD_HHMMSS.txt
+[ ] AMD monitoring log: amd_monitor_YYYYMMDD_HHMMSS.txt
+[ ] Screenshots (if applicable)
+[ ] Additional logs (list below)
+
+_______________
+_______________
+_______________
+
+
+Complete keyhunt -L Output:
+---------------------------
+[Paste complete detailed output]
+
+
+
+
+Complete Driver Information:
+----------------------------
+[Paste complete driver information from all sources]
+
+
+
+
+================================================================================
+END OF MIXED-VENDOR TEST RESULTS
+================================================================================

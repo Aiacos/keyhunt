@@ -33,6 +33,17 @@
 - **Async Pipeline** (`gpu/async_pipeline.c`): Triple-buffered GPU operations for max utilization
 - **Memory Pool** (`util/mempool.c`): Fast arena-style allocation with cache-line alignment
 
+## OpenCL GPU Backend (`src/gpu/`)
+- **Multi-Vendor Support**: Cross-platform acceleration for AMD (ROCm), NVIDIA, and Intel GPUs
+- **Auto-Detection Script** (`build_opencl.sh`): Auto-detects ROCm, GPU architecture, and OpenCL runtime
+- **Multi-Device Acceleration**: Heterogeneous GPU support with performance-weighted work distribution
+- **Platform Enumeration**: Runtime discovery of all OpenCL platforms and devices (max 8 GPUs)
+- **Device-Specific Tuning**: Optimized parameters per GPU architecture (RDNA 3/2, Vega, etc.)
+- **ROCm Integration**: Native support for AMD GPUs via ROCm 5.0+ OpenCL implementation
+- **Supported AMD GPUs**: RDNA 3 (gfx1100), RDNA 2 (gfx1030), RDNA 1 (gfx1010), Vega (gfx900)
+- **Kernel Optimization**: C-style OpenCL kernels for secp256k1 ECC and SHA256+RIPEMD160 pipeline
+- **Graceful Fallback**: CPU-only mode if OpenCL unavailable or initialization fails
+
 ## Parameter Validation (`parameter_validator.c`)
 - **Input Validation**: Threads vs cores, N/K vs RAM, batch size alignment
 - **Auto-Correction**: Prevents OOM crashes and excessive thread counts
