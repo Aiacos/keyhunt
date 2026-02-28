@@ -202,12 +202,13 @@ TEST_SEARCH_MOCKS_OBJ := $(TEST_OBJDIR)/test_search_mocks.o
 TEST_FUSED_HASH_OBJ := $(TEST_OBJDIR)/test_fused_hash.o
 TEST_SHA256_SIMD_OBJ := $(TEST_OBJDIR)/test_sha256_simd.o
 TEST_EXTENDED_RANGE_OBJ := $(TEST_OBJDIR)/test_extended_range.o
+TEST_BECH32_OBJ := $(TEST_OBJDIR)/test_bech32.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
 # CORE_OBJS includes util.o which has tohex() needed by SECP256K1
 TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
-                    $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
+                    $(OBJDIR)/base58/base58.o $(BECH32_OBJS) $(OBJDIR)/rmd160/rmd160.o \
                     $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
                     $(BSGS_OBJS) $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS) \
                     $(PLATFORM_OBJS) $(CLI_OBJS) $(CONFIG_OBJS) \
@@ -271,6 +272,9 @@ $(TEST_SHA256_SIMD_OBJ): tests/test_sha256_simd.cpp tests/test_framework.h | dir
 $(TEST_EXTENDED_RANGE_OBJ): tests/test_extended_range.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_BECH32_OBJ): tests/test_bech32.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -280,7 +284,7 @@ TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OB
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
              $(TEST_SHA512_SIMD_OBJ) $(TEST_SHA256_SIMD_OBJ) \
              $(TEST_SEARCH_XPOINT_OBJ) $(TEST_SEARCH_RMD160_OBJ) \
-             $(TEST_SEARCH_MOCKS_OBJ) $(TEST_FUSED_HASH_OBJ) $(TEST_EXTENDED_RANGE_OBJ)
+             $(TEST_SEARCH_MOCKS_OBJ) $(TEST_FUSED_HASH_OBJ) $(TEST_EXTENDED_RANGE_OBJ) $(TEST_BECH32_OBJ)
 
 # Build test runner
 $(TEST_EXE): directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
