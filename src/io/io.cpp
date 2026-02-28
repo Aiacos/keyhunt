@@ -10,6 +10,7 @@
 #include "../core/util.h"
 #include "../hash/sha256.h"
 #include "../base58/libbase58.h"
+#include "../bech32/bech32.h"
 #include "../secure_file.h"
 
 #include <stdio.h>
@@ -43,8 +44,9 @@ void writekey(bool compressed, Int *key) {
 
 	Point publickey;
 	FILE *keys;
-	char *hextemp, *hexrmd, public_key_hex[132], address[50], rmdhash[20];
+	char *hextemp, *hexrmd, public_key_hex[132], address[50], bech32_address[100], rmdhash[20];
 	memset(address, 0, 50);
+	memset(bech32_address, 0, 100);
 	memset(public_key_hex, 0, 132);
 	hextemp = key->GetBase16();
 	publickey = secp->ComputePublicKey(key);
@@ -53,20 +55,31 @@ void writekey(bool compressed, Int *key) {
 	hexrmd = tohex(rmdhash, 20);
 	rmd160toaddress_dst(rmdhash, address);
 
+	// Generate Bech32 address (P2WPKH) - only for compressed keys
+	if (compressed) {
+		if (!segwit_addr_encode(bech32_address, "bc", 0, (const uint8_t*)rmdhash, 20)) {
+			// If encoding fails, use empty string
+			strcpy(bech32_address, "[bech32 encoding failed]");
+		}
+	} else {
+		// Bech32 addresses require compressed keys
+		strcpy(bech32_address, "[bech32 requires compressed]");
+	}
+
 	platform_mutex_lock(&write_keys);
 	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys == NULL) {
 		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
 		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
 	} else {
-		int written = fprintf(keys, "Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n", hextemp, public_key_hex, address, hexrmd);
+		int written = fprintf(keys, "Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n", hextemp, public_key_hex, address, bech32_address, hexrmd);
 		int closed = fclose(keys);
 		if (written < 0 || closed != 0) {
 			output_error("CRITICAL: Failed to write key to file! Key: %s\n", hextemp);
 			output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
 		}
 	}
-	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n", hextemp, public_key_hex, address, hexrmd);
+	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n", hextemp, public_key_hex, address, bech32_address, hexrmd);
 
 	// Show celebratory key found display
 	output_key_found(hextemp, address, public_key_hex);
@@ -376,8 +389,8 @@ bool forceReadFileAddress(char *fileName) {
 		if(fgets(aux, 100, fileDescriptor) == NULL) break;
 		trim(aux, " \t\n\r");
 		r = strlen(aux);
-		if(r > 0 && r <= 40) {
-			if(r < 40 && isValidBase58String(aux)) {	//Address
+		if(r > 0 && r <= 90) {	// Extended to support Bech32 addresses (up to ~62 chars)
+			if(r < 40 && isValidBase58String(aux)) {	//Base58 Address
 				raw_value_length = 25;
 				b58tobin(rawvalue, &raw_value_length, aux, r);
 				if(raw_value_length == 25) {
@@ -387,12 +400,40 @@ bool forceReadFileAddress(char *fileName) {
 					validAddress = true;
 				}
 			}
-			if(r == 40 && isValidHex(aux)) {	//RMD
+			else if(r == 40 && isValidHex(aux)) {	//Raw RMD160 hex
 				hexs2bin(aux, rawvalue);
 				bloom_ext_add(&bloom, rawvalue, sizeof(struct address_value));
 				memcpy(addressTable[i].value, rawvalue, sizeof(struct address_value));
 				i++;
 				validAddress = true;
+			}
+			else if(r >= 42 && r <= 90 && isValidBech32String(aux)) {	//Bech32 Address (bc1q...)
+				int witver;
+				uint8_t witprog[40];
+				size_t witprog_len;
+				// Decode Bech32 address to get witness program
+				if(segwit_addr_decode(&witver, witprog, &witprog_len, "bc", aux)) {
+					// For P2WPKH (witness v0, 20-byte program), use witness program as hash
+					if(witver == 0 && witprog_len == 20) {
+						bloom_ext_add(&bloom, witprog, sizeof(struct address_value));
+						memcpy(addressTable[i].value, witprog, sizeof(struct address_value));
+						i++;
+						validAddress = true;
+					}
+					// For P2WSH (witness v0, 32-byte program), skip for now (not RMD160)
+					else if(witver == 0 && witprog_len == 32) {
+						output_info("Skipping P2WSH address (32-byte witness program): %s\n", aux);
+						numberItems--;
+					}
+					else {
+						output_info("Unsupported witness version %d or program length %zu: %s\n", witver, witprog_len, aux);
+						numberItems--;
+					}
+				}
+				else {
+					output_info("Failed to decode Bech32 address: %s\n", aux);
+					numberItems--;
+				}
 			}
 		}
 		if(!validAddress) {

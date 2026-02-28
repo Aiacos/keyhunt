@@ -100,6 +100,7 @@ ifdef ENABLE_TLS
 endif
 
 # Object files organized by module (all in obj/ directory)
+BECH32_OBJS := $(OBJDIR)/bech32/bech32.o
 BLOOM_OBJS := $(OBJDIR)/bloom/bloom.o $(OBJDIR)/bloom/bloom_simd.o
 HASH_OBJS := $(OBJDIR)/hash/ripemd160.o $(OBJDIR)/hash/ripemd160_sse.o $(OBJDIR)/hash/ripemd160_avx2.o $(OBJDIR)/hash/ripemd160_avx512.o $(OBJDIR)/hash/sha256.o $(OBJDIR)/hash/sha256_sse.o $(OBJDIR)/hash/sha256_avx2.o $(OBJDIR)/hash/sha256_avx512.o $(OBJDIR)/hash/sha256_shani.o $(OBJDIR)/hash/sha512.o $(OBJDIR)/hash/sha512_avx2.o $(OBJDIR)/hash/sha512_avx512.o
 SHA3_OBJS := $(OBJDIR)/sha3/sha3.o $(OBJDIR)/sha3/keccak.o
@@ -123,7 +124,7 @@ SORT_OBJS := $(OBJDIR)/sort/sort.o
 CRYPTO_OBJS := $(OBJDIR)/crypto/address_util.o $(OBJDIR)/crypto/bloom_init.o
 IO_OBJS := $(OBJDIR)/io/io.o
 
-COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(DATABASE_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS) $(SORT_OBJS) $(CRYPTO_OBJS) $(IO_OBJS)
+COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/bech32/bech32.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(DATABASE_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS) $(SORT_OBJS) $(CRYPTO_OBJS) $(IO_OBJS)
 
 # Legacy common excludes SEARCH_OBJS, SORT_OBJS, CRYPTO_OBJS, IO_OBJS
 # (keyhunt_legacy.cpp contains its own implementations of these functions)
@@ -140,7 +141,7 @@ LEGACY_EXE := keyhunt_legacy$(EXE_EXT)
 TEST_EXE := run_tests$(EXE_EXT)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/bech32 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
 .PHONY: all clean legacy bsgsd directories test run_tests sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 
@@ -201,12 +202,13 @@ TEST_SEARCH_MOCKS_OBJ := $(TEST_OBJDIR)/test_search_mocks.o
 TEST_FUSED_HASH_OBJ := $(TEST_OBJDIR)/test_fused_hash.o
 TEST_SHA256_SIMD_OBJ := $(TEST_OBJDIR)/test_sha256_simd.o
 TEST_EXTENDED_RANGE_OBJ := $(TEST_OBJDIR)/test_extended_range.o
+TEST_BECH32_OBJ := $(TEST_OBJDIR)/test_bech32.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
 # CORE_OBJS includes util.o which has tohex() needed by SECP256K1
 TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
-                    $(OBJDIR)/base58/base58.o $(OBJDIR)/rmd160/rmd160.o \
+                    $(OBJDIR)/base58/base58.o $(BECH32_OBJS) $(OBJDIR)/rmd160/rmd160.o \
                     $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
                     $(BSGS_OBJS) $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS) \
                     $(PLATFORM_OBJS) $(CLI_OBJS) $(CONFIG_OBJS) \
@@ -270,6 +272,9 @@ $(TEST_SHA256_SIMD_OBJ): tests/test_sha256_simd.cpp tests/test_framework.h | dir
 $(TEST_EXTENDED_RANGE_OBJ): tests/test_extended_range.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_BECH32_OBJ): tests/test_bech32.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -279,7 +284,7 @@ TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OB
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
              $(TEST_SHA512_SIMD_OBJ) $(TEST_SHA256_SIMD_OBJ) \
              $(TEST_SEARCH_XPOINT_OBJ) $(TEST_SEARCH_RMD160_OBJ) \
-             $(TEST_SEARCH_MOCKS_OBJ) $(TEST_FUSED_HASH_OBJ) $(TEST_EXTENDED_RANGE_OBJ)
+             $(TEST_SEARCH_MOCKS_OBJ) $(TEST_FUSED_HASH_OBJ) $(TEST_EXTENDED_RANGE_OBJ) $(TEST_BECH32_OBJ)
 
 # Build test runner
 $(TEST_EXE): directories $(TEST_OBJS) $(TEST_SHARED_OBJS)

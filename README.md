@@ -8,7 +8,8 @@ Tool for hunt privatekeys for crypto currencies that use secp256k1 elliptic curv
 Post: https://bitcointalk.org/index.php?topic=5322040.0
 
 Work for Bitcoin
-- address compress or uncompress
+- address compress or uncompress (P2PKH: 1...)
+- address Bech32 (P2WPKH: bc1q...)
 - hashes rmd160 compress or uncompress
 - publickeys compress or uncompress
 
@@ -357,6 +358,49 @@ output:
 [+] Sorting data ... done! 1 values were loaded and sorted
 ^C] Total 47634432 keys in 10 seconds: ~4 Mkeys/s (4763443 keys/s)
 ```
+
+### Bech32 Address Support
+
+keyhunt now supports **Bech32 (SegWit) addresses** in addition to legacy P2PKH addresses. Bech32 addresses start with `bc1q` and are commonly used in modern Bitcoin transactions.
+
+**Supported Address Types:**
+- **Legacy P2PKH**: `1...` (compressed and uncompressed)
+- **Bech32 P2WPKH**: `bc1q...` (native SegWit, compressed keys only)
+
+**Example:** Search for Bech32 addresses
+
+```
+./keyhunt -m address -f tests/bech32_addresses.txt -r 1:FFFFFFFF -l compress
+```
+
+Example file `tests/bech32_addresses.txt`:
+```
+bc1qz69aj8kzfjy6cqx0w0dyyfg7905w0z8eqwthrn
+bc1qjlw8td5u8at2qn8cscajnn0rs86pu6fxzgu59n
+bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3
+```
+
+**Mixed Address Types:**
+
+You can search for both legacy and Bech32 addresses in the same file:
+
+```
+1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH
+bc1qz69aj8kzfjy6cqx0w0dyyfg7905w0z8eqwthrn
+1CUNEBjYrCn2y1SdiUMohaKUi4wpP326Lb
+bc1qjlw8td5u8at2qn8cscajnn0rs86pu6fxzgu59n
+```
+
+**Important Notes:**
+- Bech32 addresses are **compressed keys only** (uncompressed keys have no valid Bech32 representation)
+- When using `-l compress`, both legacy compressed and Bech32 addresses are searched
+- When using `-l uncompress`, only legacy uncompressed addresses are searched (Bech32 addresses in the file will be ignored)
+- Bech32 addresses use lowercase characters; the decoder is case-insensitive but canonical form is lowercase
+
+**Limitations:**
+- Only P2WPKH (20-byte witness) Bech32 addresses are supported (`bc1q...`)
+- P2WSH (32-byte witness) and Taproot (bc1p...) addresses are not currently supported
+- Address validation is performed at load time; invalid Bech32 addresses will be reported and skipped
 
 ### vanity search.
 

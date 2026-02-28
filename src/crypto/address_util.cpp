@@ -29,6 +29,7 @@
 #include "../hash/ripemd160.h"
 #include "../sha3/sha3.h"
 #include "../base58/libbase58.h"
+#include "../bech32/bech32.h"
 
 /* ============================================================================
  * External Dependencies
@@ -107,6 +108,24 @@ void rmd160toaddress_dst(char *rmd, char *dst){
 	sha256((uint8_t*)digest+21, 32,(uint8_t*) digest+21);
 	if(!b58enc(dst,&pubaddress_size,digest,25)){
 		fprintf(stderr,"error b58enc\n");
+	}
+}
+
+void rmd160tobech32_dst(char *rmd, char *dst, int witness_version){
+	const char *hrp;
+
+	/* Determine HRP based on byte_encode_crypto */
+	if (byte_encode_crypto == 0x00) {
+		hrp = "bc";  /* Bitcoin mainnet */
+	} else if (byte_encode_crypto == 0x6F) {
+		hrp = "tb";  /* Bitcoin testnet */
+	} else {
+		hrp = "bc";  /* Default to mainnet */
+	}
+
+	/* Encode RIPEMD160 hash as Bech32 SegWit address */
+	if(!segwit_addr_encode(dst, hrp, witness_version, (const uint8_t*)rmd, 20)){
+		fprintf(stderr,"error segwit_addr_encode\n");
 	}
 }
 
@@ -206,5 +225,54 @@ bool isValidBase58String(char *str)	{
 	for (int i = 0; i < len && continuar; i++) {
 		continuar = isBase58(str[i]);
 	}
+	return continuar;
+}
+
+/* ============================================================================
+ * Bech32 Validation
+ * ============================================================================ */
+
+bool isBech32(char c) {
+    /* Define the bech32 character set (32 characters, lowercase) */
+    const char bech32Set[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    /* Check if the character is in the bech32 set */
+    return strchr(bech32Set, c) != NULL;
+}
+
+bool isValidBech32String(char *str)	{
+	int len = strlen(str);
+	if (len < 8) {
+		/* Bech32 addresses must be at least 8 characters (hrp + '1' + 6 data chars) */
+		return false;
+	}
+
+	/* Find the separator '1' */
+	int separator_pos = -1;
+	for (int i = len - 1; i >= 0; i--) {
+		if (str[i] == '1') {
+			separator_pos = i;
+			break;
+		}
+	}
+
+	/* No separator found or invalid position */
+	if (separator_pos < 1 || separator_pos > 83 || (len - separator_pos - 1) < 6) {
+		return false;
+	}
+
+	/* Validate HRP (human-readable part): must be lowercase alphanumeric */
+	for (int i = 0; i < separator_pos; i++) {
+		char c = str[i];
+		if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+			return false;
+		}
+	}
+
+	/* Validate data part: must be valid bech32 characters */
+	bool continuar = true;
+	for (int i = separator_pos + 1; i < len && continuar; i++) {
+		continuar = isBech32(str[i]);
+	}
+
 	return continuar;
 }

@@ -38,6 +38,7 @@ extern "C" {
 char *pubkeytopubaddress(char *pkey, int length);
 void pubkeytopubaddress_dst(char *pkey, int length, char *dst);
 void rmd160toaddress_dst(char *rmd, char *dst);
+void rmd160tobech32_dst(char *rmd, char *dst, int witness_version);
 
 /* ============================================================================
  * KECCAK-256
@@ -61,6 +62,13 @@ void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3,
 
 bool isBase58(char c);
 bool isValidBase58String(char *str);
+
+/* ============================================================================
+ * Bech32 Validation
+ * ============================================================================ */
+
+bool isBech32(char c);
+bool isValidBech32String(char *str);
 
 #ifdef __cplusplus
 }
