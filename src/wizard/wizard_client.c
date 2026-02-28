@@ -1157,15 +1157,191 @@ int wizard_client_run(wizard_config_t *cfg) {
             printf("[+] Background reconnection thread started\n");
         }
 
-        /* TODO: Multi-pool work loop will be implemented in subsequent subtasks
-         * For now, clean up and return */
-        printf("\n[-] Multi-pool work loop not yet implemented\n");
-        printf("    This will be completed in subsequent subtasks (5-3, 5-4, 5-5).\n");
+        /* Multi-pool work loop */
+        printf("\n[+] Starting multi-pool worker loop...\n");
+        printf("[+] Press Ctrl+C to stop.\n");
+        wizard_print_separator();
+        printf("\n");
+
+        /* Create persistent target file (reused across work units) */
+        if (create_target_file(cfg->target_address) != 0) {
+            printf("[-] Failed to create target file\n");
+            dist_multipool_stop_reconnect_thread();
+            dist_multipool_shutdown(&multipool);
+            return -1;
+        }
+
+        time_t start_time = time(NULL);
+        int work_count = 0;
+        uint64_t total_keys = 0;
+        int no_work_count = 0;
+
+        /* Main work loop - request work from multi-pool manager */
+        while (g_client_running && !g_shutdown_requested) {
+            /* Request work from multi-pool manager (uses weighted round-robin) */
+            char range_start[65], range_end[65];
+            int result = dist_multipool_request_work(&multipool, range_start, range_end);
+
+            if (result == 1) {
+                /* No work available from any pool */
+                no_work_count++;
+                if (no_work_count >= 10) {
+                    printf("\n[+] No more work available from any pool (waited 30s).\n");
+                    break;
+                }
+                printf("\r[i] Waiting for work from pools... (%d/10)     ", no_work_count);
+                fflush(stdout);
+                sleep(3);
+                continue;
+            }
+
+            no_work_count = 0;
+
+            if (result < 0) {
+                /* Work request failed from all pools - wait and retry */
+                printf("\r[!] All pools unavailable, waiting for reconnection...     ");
+                fflush(stdout);
+                sleep(5);
+                continue;
+            }
+
+            work_count++;
+
+            /* Store current range for graceful shutdown progress saving */
+            strncpy(g_client_last_range_start, range_start, sizeof(g_client_last_range_start) - 1);
+            strncpy(g_client_last_range_end, range_end, sizeof(g_client_last_range_end) - 1);
+
+            /* Process the range */
+            printf("\r[Unit #%d] Range: %.16s...%.8s ",
+                   work_count, range_start, range_end + strlen(range_end) - 8);
+            fflush(stdout);
+
+            uint64_t keys_checked = 0;
+            double unit_cpu_speed = 0.0, unit_gpu_speed = 0.0;
+            char found_key[65] = {0};
+            char found_addr[36] = {0};
+            time_t unit_start = time(NULL);
+
+            /* Run search */
+            int search_result = search_range_subprocess(
+                range_start, range_end,
+                cfg, &keys_checked, &unit_cpu_speed, &unit_gpu_speed,
+                &g_client_running, found_key, found_addr
+            );
+
+            time_t unit_elapsed = time(NULL) - unit_start;
+            if (unit_elapsed == 0) unit_elapsed = 1;
+
+            /* Handle results */
+            if (search_result == -1) {
+                /* Fatal error - log but continue to try next unit */
+                printf("\n[-] Search error, will try next unit\n");
+                continue;
+            }
+
+            if (search_result == -2) {
+                /* Timeout - partial progress */
+                printf("\n[!] Work unit timed out, reporting partial progress\n");
+            }
+
+            total_keys += keys_checked;
+            double speed = (double)keys_checked / unit_elapsed / 1000000.0;
+
+            /* Show progress */
+            time_t elapsed = time(NULL) - start_time;
+            if (unit_cpu_speed > 0 && unit_gpu_speed > 0) {
+                /* Hybrid mode - show CPU and GPU separately */
+                printf("\r[Unit #%d] %.2e keys | CPU: %.1f GPU: %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
+                       work_count,
+                       (double)keys_checked,
+                       unit_cpu_speed, unit_gpu_speed,
+                       (double)total_keys,
+                       elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+            } else {
+                printf("\r[Unit #%d] %.2e keys | %.1f Mkeys/s | Total: %.2e | Elapsed: %02ld:%02ld:%02ld",
+                       work_count,
+                       (double)keys_checked,
+                       speed,
+                       (double)total_keys,
+                       elapsed / 3600, (elapsed % 3600) / 60, elapsed % 60);
+            }
+            fflush(stdout);
+
+            /* Mark range as done in multi-pool manager to release from active ranges */
+            dist_multipool_mark_range_done(&multipool, range_start, range_end);
+
+            /* Save local progress */
+            wizard_save_local_progress(cfg->puzzle_number, range_start, range_end);
+
+            /* Check if key found */
+            if (search_result == 1 && found_key[0]) {
+                printf("\n\n");
+                printf("╔═══════════════════════════════════════════════════════════╗\n");
+                printf("║               🎉 PRIVATE KEY FOUND! 🎉                    ║\n");
+                printf("╠═══════════════════════════════════════════════════════════╣\n");
+                printf("║ Key:  %-52s ║\n", found_key);
+                printf("║ Addr: %-52s ║\n", found_addr);
+                printf("╚═══════════════════════════════════════════════════════════╝\n");
+
+                /* Report to all connected pools (will be implemented in subtask 5-5) */
+                /* For now, we continue to next work unit */
+
+                /* Save locally (restricted permissions — sensitive data) */
+                int key_fd = open("FOUND_KEY.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+                FILE *f = key_fd >= 0 ? fdopen(key_fd, "w") : NULL;
+                if (!f && key_fd >= 0) { close(key_fd); }
+                if (f) {
+                    time_t now = time(NULL);
+                    fprintf(f, "PRIVATE KEY FOUND!\n");
+                    fprintf(f, "Time: %s", ctime(&now));
+                    fprintf(f, "Puzzle: #%d\n", cfg->puzzle_number);
+                    fprintf(f, "Private Key: %s\n", found_key);
+                    fprintf(f, "Address: %s\n", found_addr);
+                    fclose(f);
+                    printf("\n[+] Key saved to FOUND_KEY.txt\n");
+                } else {
+                    fprintf(stderr, "\n[!] WARNING: Failed to save key to FOUND_KEY.txt\n");
+                    fprintf(stderr, "[!] PRIVATE KEY (save this!): %s\n", found_key);
+                }
+
+                /* Send webhook notifications if configured */
+                char tg_token[256] = {0}, tg_chat_id[128] = {0};
+                if (cfg->webhook_telegram_url[0] != '\0') {
+                    parse_telegram_url(cfg->webhook_telegram_url, tg_token, sizeof(tg_token),
+                                       tg_chat_id, sizeof(tg_chat_id));
+                }
+
+                int notified = wizard_webhook_notify_found(
+                    cfg->webhook_discord_url[0] != '\0' ? cfg->webhook_discord_url : NULL,
+                    tg_token[0] != '\0' ? tg_token : NULL,
+                    tg_chat_id[0] != '\0' ? tg_chat_id : NULL,
+                    found_key,
+                    found_addr,
+                    cfg->puzzle_number
+                );
+
+                if (notified > 0) {
+                    printf("[+] Sent %d webhook notification(s)\n", notified);
+                }
+
+                printf("[+] Continuing search in case of multiple targets...\n\n");
+            }
+
+            printf("\n");
+        }
 
         /* Clean shutdown */
+        printf("\n[+] Shutting down multi-pool worker...\n");
         dist_multipool_stop_reconnect_thread();
         dist_multipool_shutdown(&multipool);
-        return -1;
+
+        /* Cleanup target file */
+        if (g_target_file_created) {
+            unlink(g_target_file);
+        }
+
+        printf("[+] Shutdown complete. Total keys checked: %.2e\n", (double)total_keys);
+        return 0;
     }
 
     /* Single-pool mode: backwards compatible with existing implementation */
