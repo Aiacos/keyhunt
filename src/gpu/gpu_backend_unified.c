@@ -173,6 +173,8 @@ static void init_backend_vtables(void) {
 #endif
 }
 
+/* Mark as unused until multi-backend enumeration is implemented */
+__attribute__((unused))
 static int enumerate_backend_devices(backend_vtable_t *backend, gpu_backend_type_t type) {
     if (!backend || !backend->init || !backend->available) {
         return 0;

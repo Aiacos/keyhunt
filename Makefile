@@ -66,8 +66,9 @@ ifneq ($(CUDA_CC_BINDIR),)
 endif
 HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
 
-# Detect OpenCL availability
-HAVE_OPENCL := $(shell echo '\#include <CL/cl.h>' | $(CXX) -E - >/dev/null 2>&1 && echo 1 || echo 0)
+# Detect OpenCL availability using pkg-config or header check
+HAVE_OPENCL := $(shell pkg-config --exists OpenCL 2>/dev/null && echo 1 || \
+               (test -f /usr/include/CL/cl.h -o -f /usr/local/include/CL/cl.h) && echo 1 || echo 0)
 
 # Common GPU objects (always included regardless of backend)
 # Note: gpu_autotune is now provided by gpu_backend_unified.c
