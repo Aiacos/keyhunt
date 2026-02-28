@@ -34,6 +34,7 @@ For comprehensive documentation, see the **[Documentation Wiki](docs/wiki/README
 - [Interactive Wizard Guide](docs/wiki/wizard/wizard-guide.md) - Guided configuration
 - [Performance Optimization](docs/wiki/optimization/cpu-tuning.md) - CPU, GPU, and memory tuning
 - [Developer Documentation](docs/wiki/development/architecture.md) - Architecture and contributing
+- [Version Migration Guide](VERSION_MIGRATION.md) - Breaking changes and upgrade instructions
 
 # TL:DR
 
