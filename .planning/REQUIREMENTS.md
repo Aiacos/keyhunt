@@ -11,10 +11,10 @@ Requirements for production-ready release. Each maps to roadmap phases.
 
 - [x] **TEST-01**: All 19 pre-existing test failures fixed (test_point x8, test_intgroup x11) -- completed in 01-01, also fixed AVX2 ModMulK1 bug
 - [x] **TEST-02**: SHA256 test input size mismatches corrected (uint32_t[8] -> uint32_t[16]) -- completed in 01-01
-- [ ] **TEST-03**: NIST/IETF test vectors for SHA256 (FIPS 180-4 examples)
-- [ ] **TEST-04**: NIST/IETF test vectors for RIPEMD160
-- [ ] **TEST-05**: Test vectors for secp256k1 point operations (addition, doubling, scalar multiplication)
-- [ ] **TEST-06**: Test vectors for secp256k1 batch modular inversion (IntGroup)
+- [x] **TEST-03**: NIST/IETF test vectors for SHA256 (FIPS 180-4 examples)
+- [x] **TEST-04**: NIST/IETF test vectors for RIPEMD160
+- [x] **TEST-05**: Test vectors for secp256k1 point operations (addition, doubling, scalar multiplication)
+- [x] **TEST-06**: Test vectors for secp256k1 batch modular inversion (IntGroup)
 - [ ] **TEST-07**: End-to-end correctness test for ADDRESS mode (known privkey → known address)
 - [ ] **TEST-08**: End-to-end correctness test for BSGS mode (known pubkey in known range)
 - [ ] **TEST-09**: End-to-end correctness test for XPOINT mode (known X-coordinate)
@@ -109,10 +109,10 @@ Deferred to future release. Tracked but not in current roadmap.
 |-------------|-------|--------|
 | TEST-01 | Phase 1 | Pending |
 | TEST-02 | Phase 1 | Pending |
-| TEST-03 | Phase 1 | Pending |
-| TEST-04 | Phase 1 | Pending |
-| TEST-05 | Phase 1 | Pending |
-| TEST-06 | Phase 1 | Pending |
+| TEST-03 | Phase 1 | Complete |
+| TEST-04 | Phase 1 | Complete |
+| TEST-05 | Phase 1 | Complete |
+| TEST-06 | Phase 1 | Complete |
 | TEST-07 | Phase 1 | Pending |
 | TEST-08 | Phase 1 | Pending |
 | TEST-09 | Phase 1 | Pending |
