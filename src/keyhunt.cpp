@@ -1485,17 +1485,36 @@ static bool gpu_selftest_hash160_fromX() {
 	alignas(32) uint8_t gpu02[kCount][20];
 	alignas(32) uint8_t gpu03[kCount][20];
 	if (gpu_hash160_fromX_batch(x32_be, kCount, gpu02[0], gpu03[0]) != 0) {
-		output_error("GPU self-test failed: CUDA hash160 call failed\n");
+		error_report_t report;
+		error_gpu_init_failed("GPU",
+		                      "CUDA hash160 computation failed during self-test. "
+		                      "This indicates GPU kernel execution or memory transfer issues.",
+		                      &report);
+		error_print(&report);
 		return false;
 	}
 
 	for (size_t i = 0; i < kCount; ++i) {
 		if (memcmp(cpu02[i], gpu02[i], 20) != 0) {
-			output_error("GPU self-test failed: mismatch prefix 02 at index %zu\n", i);
+			error_report_t report;
+			char details[256];
+			snprintf(details, sizeof(details),
+			         "GPU hash160 output mismatch at index %zu (prefix 02). "
+			         "GPU computation produced incorrect results. "
+			         "This may indicate GPU hardware issues or driver bugs.", i);
+			error_gpu_init_failed("GPU", details, &report);
+			error_print(&report);
 			return false;
 		}
 		if (memcmp(cpu03[i], gpu03[i], 20) != 0) {
-			output_error("GPU self-test failed: mismatch prefix 03 at index %zu\n", i);
+			error_report_t report;
+			char details[256];
+			snprintf(details, sizeof(details),
+			         "GPU hash160 output mismatch at index %zu (prefix 03). "
+			         "GPU computation produced incorrect results. "
+			         "This may indicate GPU hardware issues or driver bugs.", i);
+			error_gpu_init_failed("GPU", details, &report);
+			error_print(&report);
 			return false;
 		}
 	}
@@ -1717,8 +1736,10 @@ int main(int argc, char **argv)	{
 			output_success("Loaded configuration from '%s'\n", config_file_arg);
 			g_config_loaded = true;
 		} else {
-			output_error("Failed to load config file: %s\n", config_file_arg);
-			exit(EXIT_FAILURE);
+			error_report_t report;
+			error_file_io(config_file_arg, "load configuration",
+			              "File not found, invalid format, or permission denied", &report);
+			error_fatal(&report);
 		}
 	} else {
 		// Try default config file (silently)
@@ -2558,7 +2579,12 @@ int main(int argc, char **argv)	{
 				if (gpu_upload_gtable_from_secp() == 0) {
 					output_success("G table uploaded to GPU (8192 points)\n");
 				} else {
-					output_error("Failed to upload G table to GPU\n");
+					error_report_t report;
+					error_gpu_init_failed("GPU",
+					                      "Failed to upload precomputed G table (8192 points). "
+					                      "This may indicate GPU out of memory or initialization failure.",
+					                      &report);
+					error_print(&report);
 					FLAGGPU_FULL = 0;
 					FLAGGPU = 0;
 				}
@@ -2577,7 +2603,14 @@ int main(int argc, char **argv)	{
 						}
 					}
 				} else if (FLAGGPU_FULL) {
-					output_error("Failed to upload targets to GPU\n");
+					error_report_t report;
+					char details[256];
+					snprintf(details, sizeof(details),
+					         "Failed to upload %" PRIu64 " target hashes to GPU. "
+					         "This may indicate GPU out of memory (requires ~%llu MB).",
+					         N, (unsigned long long)(N * 20 / (1024 * 1024)));
+					error_gpu_init_failed("GPU", details, &report);
+					error_print(&report);
 					FLAGGPU_FULL = 0;
 					FLAGGPU = 0;
 				}
