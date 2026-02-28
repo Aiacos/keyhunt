@@ -292,6 +292,11 @@ int dist_multipool_add_pool(dist_multipool_client_t *multipool,
     return -1;
 }
 
+int dist_multipool_connect_all(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    return -1;
+}
+
 void dist_multipool_shutdown(dist_multipool_client_t *multipool) {
     (void)multipool;
 }
@@ -3657,6 +3662,65 @@ int dist_multipool_add_pool(dist_multipool_client_t *multipool,
            perf_score);
 
     return pool_index;
+}
+
+/**
+ * Connect to all pools in the multi-pool manager
+ * Attempts to connect to all configured pools, continues even if some fail
+ * @param multipool Multi-pool client state
+ * @return Number of successful connections (>= 0), or -1 on error
+ */
+int dist_multipool_connect_all(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        fprintf(stderr, "[multipool] No pools configured\n");
+        return 0;
+    }
+
+    printf("[multipool] Connecting to %d pool(s)...\n", multipool->pool_count);
+
+    int successful_connections = 0;
+    int failed_connections = 0;
+
+    /* Thread-safe connection process */
+    platform_mutex_lock(&multipool->mutex);
+
+    /* Attempt to connect to each pool */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+
+        printf("[multipool] Connecting to pool %d (%s:%d)...\n",
+               i, client->coordinator_host, client->coordinator_port);
+
+        /* Attempt connection */
+        int result = dist_worker_connect(client);
+        if (result == 0) {
+            successful_connections++;
+            printf("[multipool] Successfully connected to pool %d (%s:%d)\n",
+                   i, client->coordinator_host, client->coordinator_port);
+        } else {
+            failed_connections++;
+            fprintf(stderr, "[multipool] Failed to connect to pool %d (%s:%d)\n",
+                    i, client->coordinator_host, client->coordinator_port);
+            /* Continue with remaining pools even if this one failed */
+        }
+    }
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    /* Summary */
+    printf("[multipool] Connection summary: %d successful, %d failed\n",
+           successful_connections, failed_connections);
+
+    if (successful_connections == 0) {
+        fprintf(stderr, "[multipool] Warning: No pools connected successfully\n");
+    }
+
+    return successful_connections;
 }
 
 /**

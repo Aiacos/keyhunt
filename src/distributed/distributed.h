@@ -733,6 +733,14 @@ int dist_multipool_add_pool(dist_multipool_client_t *multipool,
                              double perf_score);
 
 /**
+ * Connect to all pools in the multi-pool manager
+ * Attempts to connect to all configured pools, continues even if some fail
+ * @param multipool Multi-pool client state
+ * @return Number of successful connections (>= 0), or -1 on error
+ */
+int dist_multipool_connect_all(dist_multipool_client_t *multipool);
+
+/**
  * Shutdown multi-pool client and disconnect all pools
  * @param multipool Multi-pool client state
  */
