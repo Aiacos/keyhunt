@@ -8,8 +8,6 @@
 #include "database/sqlite3.h"
 
 #if !PLATFORM_WINDOWS
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
 #endif
 
@@ -18,6 +16,9 @@ static int get_perfdb_dir(char *path, size_t path_size) {
     if (!path || path_size == 0) return -1;
 
     const char *home = getenv("HOME");
+    if (!home || !home[0]) {
+        home = getenv("USERPROFILE");  /* Windows fallback */
+    }
     if (!home || !home[0]) {
         home = "/tmp";
     }
@@ -77,15 +78,19 @@ void perfdb_get_filepath(char *path, size_t path_size) {
     snprintf(path, path_size, "%s/%s", dir, PERFDB_FILENAME);
 }
 
-// Check if database exists
+// Check if database exists (portable: uses fopen instead of stat)
 bool perfdb_exists(void) {
     char filepath[512];
     perfdb_get_filepath(filepath, sizeof(filepath));
 
     if (filepath[0] == '\0') return false;
 
-    struct stat st;
-    return (stat(filepath, &st) == 0);
+    FILE *f = fopen(filepath, "r");
+    if (f) {
+        fclose(f);
+        return true;
+    }
+    return false;
 }
 
 // Simple hash function for hardware fingerprint
