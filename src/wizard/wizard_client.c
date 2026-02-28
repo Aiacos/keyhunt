@@ -1091,10 +1091,80 @@ int wizard_client_run(wizard_config_t *cfg) {
             }
         }
 
-        /* Multi-pool implementation will be added in subsequent subtasks */
-        printf("\n[-] Multi-pool mode not yet implemented\n");
-        printf("    This feature will be available in a future update.\n");
-        printf("    For now, please use single-pool mode (1 pool in configuration).\n");
+        /* Initialize multi-pool client manager */
+        dist_multipool_client_t multipool;
+        if (dist_multipool_init(&multipool) != 0) {
+            printf("[-] Failed to initialize multi-pool manager\n");
+            return -1;
+        }
+
+        /* Add all enabled pools to the manager */
+        int pools_added = 0;
+        for (int i = 0; i < cfg->pool_count && i < WIZARD_MAX_POOLS; i++) {
+            if (!cfg->pools[i].enabled) {
+                continue;
+            }
+
+            int pool_idx = dist_multipool_add_pool(&multipool,
+                                                    cfg->pools[i].host,
+                                                    cfg->pools[i].port,
+                                                    sysinfo.cpu_score);
+            if (pool_idx < 0) {
+                printf("[!] Warning: Failed to add pool %s:%d\n",
+                       cfg->pools[i].host, cfg->pools[i].port);
+                continue;
+            }
+
+            /* Set hardware info for this pool's client */
+            dist_worker_client_t *client = &multipool.clients[pool_idx];
+            dist_worker_set_hardware_info(client,
+                                          sysinfo.cpu_physical_cores,
+                                          sysinfo.cpu_logical_cores,
+                                          sysinfo.cpu_model,
+                                          sysinfo.gpu_name,
+                                          (int)sysinfo.gpu_vram_mb);
+
+            /* Set authentication token if configured */
+            if (cfg->pools[i].auth_token[0] != '\0') {
+                dist_worker_set_auth_token(client, cfg->pools[i].auth_token);
+                printf("    Pool %d: authentication enabled\n", i + 1);
+            }
+
+            pools_added++;
+        }
+
+        if (pools_added == 0) {
+            printf("[-] No pools were successfully added\n");
+            dist_multipool_shutdown(&multipool);
+            return -1;
+        }
+
+        printf("[+] Added %d pools to multi-pool manager\n", pools_added);
+
+        /* Connect to all pools */
+        printf("[+] Connecting to pools...\n");
+        int connected_count = dist_multipool_connect_all(&multipool);
+        if (connected_count <= 0) {
+            printf("[-] Failed to connect to any pools\n");
+            dist_multipool_shutdown(&multipool);
+            return -1;
+        }
+
+        printf("[+] Connected to %d/%d pools\n", connected_count, pools_added);
+
+        /* Start background reconnection thread for failed pools */
+        if (cfg->pool_failover_enabled && dist_multipool_start_reconnect_thread(&multipool) == 0) {
+            printf("[+] Background reconnection thread started\n");
+        }
+
+        /* TODO: Multi-pool work loop will be implemented in subsequent subtasks
+         * For now, clean up and return */
+        printf("\n[-] Multi-pool work loop not yet implemented\n");
+        printf("    This will be completed in subsequent subtasks (5-3, 5-4, 5-5).\n");
+
+        /* Clean shutdown */
+        dist_multipool_stop_reconnect_thread();
+        dist_multipool_shutdown(&multipool);
         return -1;
     }
 
