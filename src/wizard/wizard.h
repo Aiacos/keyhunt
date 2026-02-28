@@ -136,6 +136,24 @@ typedef struct {
     time_t fetch_time;           /* When data was fetched */
 } keyslol_progress_t;
 
+/* Pool configuration for multi-pool coordination */
+typedef struct {
+    char host[256];              /* Coordinator hostname or IP address */
+    int port;                    /* Coordinator port */
+    int priority;                /* Pool priority for weighted distribution (1-100, higher = more work) */
+    char auth_token[64];         /* Authentication token for this pool */
+    bool enabled;                /* Is this pool enabled? */
+
+    /* Connection state (runtime, not saved to JSON) */
+    bool connected;              /* Is currently connected? */
+    uint64_t last_connected;     /* Timestamp of last successful connection */
+    uint64_t keys_processed;     /* Keys processed for this pool */
+    int reconnect_backoff_sec;   /* Current reconnection backoff in seconds */
+} pool_config_t;
+
+/* Maximum number of pools for multi-pool coordination */
+#define WIZARD_MAX_POOLS 8
+
 /* ============================================================================
  * Wizard Entry Point
  * ============================================================================ */
