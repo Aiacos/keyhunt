@@ -38,6 +38,7 @@ extern "C" {
 char *pubkeytopubaddress(char *pkey, int length);
 void pubkeytopubaddress_dst(char *pkey, int length, char *dst);
 void rmd160toaddress_dst(char *rmd, char *dst);
+void rmd160tobech32_dst(char *rmd, char *dst, int witness_version);
 
 /* ============================================================================
  * KECCAK-256

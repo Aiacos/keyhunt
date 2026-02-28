@@ -29,6 +29,7 @@
 #include "../hash/ripemd160.h"
 #include "../sha3/sha3.h"
 #include "../base58/libbase58.h"
+#include "../bech32/bech32.h"
 
 /* ============================================================================
  * External Dependencies
@@ -107,6 +108,24 @@ void rmd160toaddress_dst(char *rmd, char *dst){
 	sha256((uint8_t*)digest+21, 32,(uint8_t*) digest+21);
 	if(!b58enc(dst,&pubaddress_size,digest,25)){
 		fprintf(stderr,"error b58enc\n");
+	}
+}
+
+void rmd160tobech32_dst(char *rmd, char *dst, int witness_version){
+	const char *hrp;
+
+	/* Determine HRP based on byte_encode_crypto */
+	if (byte_encode_crypto == 0x00) {
+		hrp = "bc";  /* Bitcoin mainnet */
+	} else if (byte_encode_crypto == 0x6F) {
+		hrp = "tb";  /* Bitcoin testnet */
+	} else {
+		hrp = "bc";  /* Default to mainnet */
+	}
+
+	/* Encode RIPEMD160 hash as Bech32 SegWit address */
+	if(!segwit_addr_encode(dst, hrp, witness_version, (const uint8_t*)rmd, 20)){
+		fprintf(stderr,"error segwit_addr_encode\n");
 	}
 }
 
