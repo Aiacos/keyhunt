@@ -788,6 +788,15 @@ int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
                                    uint64_t keys_since_last);
 
 /**
+ * Attempt to reconnect to failed pools with exponential backoff
+ * Only attempts reconnection if enough time has passed since last attempt
+ * Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s
+ * @param multipool Multi-pool client state
+ * @return Number of successful reconnections, or -1 on error
+ */
+int dist_multipool_reconnect(dist_multipool_client_t *multipool);
+
+/**
  * Check if a range conflicts with any active ranges from other pools
  * @param multipool Multi-pool client state
  * @param range_start Start of range to check (hex string)

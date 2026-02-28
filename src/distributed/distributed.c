@@ -309,6 +309,11 @@ int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
     return -1;
 }
 
+int dist_multipool_reconnect(dist_multipool_client_t *multipool) {
+    (void)multipool;
+    return -1;
+}
+
 int dist_multipool_check_range_conflict(dist_multipool_client_t *multipool,
                                          const char *range_start,
                                          const char *range_end,
@@ -3970,6 +3975,112 @@ int dist_multipool_heartbeat_all(dist_multipool_client_t *multipool,
     }
 
     return successful_heartbeats;
+}
+
+/**
+ * Attempt to reconnect to failed pools with exponential backoff
+ * Only attempts reconnection if enough time has passed since last attempt
+ * Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s
+ * @param multipool Multi-pool client state
+ * @return Number of successful reconnections, or -1 on error
+ */
+int dist_multipool_reconnect(dist_multipool_client_t *multipool) {
+    if (!multipool) {
+        fprintf(stderr, "[multipool] NULL multipool pointer\n");
+        return -1;
+    }
+
+    if (multipool->pool_count == 0) {
+        if (getenv("KEYHUNT_DEBUG")) {
+            fprintf(stderr, "[multipool] No pools configured for reconnection\n");
+        }
+        return 0;
+    }
+
+    /* Thread-safe reconnection attempts */
+    platform_mutex_lock(&multipool->mutex);
+
+    int successful_reconnects = 0;
+    uint64_t current_time = (uint64_t)time(NULL);
+
+    /* Attempt reconnection to disconnected pools */
+    for (int i = 0; i < multipool->pool_count; i++) {
+        dist_worker_client_t *client = &multipool->clients[i];
+        pool_connection_state_t *state = &multipool->pool_states[i];
+
+        /* Skip already connected pools */
+        if (state->connected) {
+            continue;
+        }
+
+        /* Check if enough time has passed since last connection attempt */
+        uint64_t time_since_last_attempt = current_time - state->last_connect_attempt;
+
+        if (time_since_last_attempt < (uint64_t)state->reconnect_delay_sec) {
+            /* Not yet time to retry this pool */
+            if (getenv("KEYHUNT_DEBUG")) {
+                printf("[multipool] Pool %d (%s:%d): waiting %d more seconds before retry\n",
+                       i, client->coordinator_host, client->coordinator_port,
+                       (int)(state->reconnect_delay_sec - time_since_last_attempt));
+            }
+            continue;
+        }
+
+        /* Update last connection attempt time */
+        state->last_connect_attempt = current_time;
+
+        if (getenv("KEYHUNT_DEBUG")) {
+            printf("[multipool] Attempting to reconnect to pool %d (%s:%d), delay=%ds, failures=%d\n",
+                   i, client->coordinator_host, client->coordinator_port,
+                   state->reconnect_delay_sec, state->failure_count);
+        }
+
+        /* Attempt to reconnect */
+        int connect_result = dist_worker_connect(client);
+
+        if (connect_result == 0) {
+            /* Reconnection successful! */
+            state->connected = true;
+            client->connected = true;
+            state->failure_count = 0;
+            state->reconnect_delay_sec = 1; /* Reset to initial delay */
+            state->is_healthy = true;
+            state->last_heartbeat = current_time;
+            successful_reconnects++;
+
+            printf("[multipool] Successfully reconnected to pool %d (%s:%d)\n",
+                   i, client->coordinator_host, client->coordinator_port);
+        } else {
+            /* Reconnection failed */
+            state->connected = false;
+            client->connected = false;
+            state->failure_count++;
+
+            /* Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, max 60s */
+            if (state->reconnect_delay_sec == 0) {
+                state->reconnect_delay_sec = 1; /* Initial delay */
+            } else {
+                state->reconnect_delay_sec *= 2; /* Double the delay */
+                if (state->reconnect_delay_sec > 60) {
+                    state->reconnect_delay_sec = 60; /* Cap at 60 seconds */
+                }
+            }
+
+            fprintf(stderr, "[multipool] Failed to reconnect to pool %d (%s:%d), "
+                    "failures=%d, next retry in %ds\n",
+                    i, client->coordinator_host, client->coordinator_port,
+                    state->failure_count, state->reconnect_delay_sec);
+        }
+    }
+
+    platform_mutex_unlock(&multipool->mutex);
+
+    if (getenv("KEYHUNT_DEBUG")) {
+        printf("[multipool] Reconnection attempt complete: %d successful\n",
+               successful_reconnects);
+    }
+
+    return successful_reconnects;
 }
 
 /**
