@@ -70,7 +70,8 @@ HAVE_NVCC := $(shell command -v $(NVCC) 2>/dev/null)
 HAVE_OPENCL := $(shell echo '\#include <CL/cl.h>' | $(CXX) -E - >/dev/null 2>&1 && echo 1 || echo 0)
 
 # Common GPU objects (always included regardless of backend)
-GPU_COMMON_OBJS := $(OBJDIR)/gpu/gpu_autotune.o $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
+# Note: gpu_autotune is now provided by gpu_backend_unified.c
+GPU_COMMON_OBJS := $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/async_pipeline.o
 
 # Initialize backend objects
 GPU_BACKEND_OBJS :=
@@ -94,6 +95,11 @@ ifeq ($(HAVE_OPENCL),1)
   CFLAGS += -DHAVE_OPENCL=1
   LDLIBS += -lOpenCL
 endif
+
+# Unified backend (always included - provides multi-vendor utility functions)
+# These functions (gpu_enumerate_backends, gpu_backend_get_type, gpu_backend_type_name)
+# are called by keyhunt.cpp regardless of which backends are available
+GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_unified.o
 
 # Fallback to none backend if no GPU backend is available
 ifeq ($(GPU_BACKEND_OBJS),)
@@ -314,6 +320,15 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c | directories
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.cu | directories
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+# GPU backend compilation rules
+$(OBJDIR)/gpu/gpu_backend_opencl.o: $(SRCDIR)/gpu/gpu_backend_opencl.c $(SRCDIR)/gpu/gpu_backend.h $(SRCDIR)/gpu/opencl_check.h | directories
+	@mkdir -p $(OBJDIR)/gpu
+	$(CC) $(CFLAGS) -DHAVE_OPENCL_BACKEND=1 -c $< -o $@
+
+$(OBJDIR)/gpu/gpu_backend_unified.o: $(SRCDIR)/gpu/gpu_backend_unified.c $(SRCDIR)/gpu/gpu_backend.h | directories
+	@mkdir -p $(OBJDIR)/gpu
+	$(CC) $(CFLAGS) $(GPU_CXXFLAGS) -c $< -o $@
 
 # Specific rules for C files that need C++ compilation
 $(OBJDIR)/core/util.o: $(SRCDIR)/core/util.c | directories
