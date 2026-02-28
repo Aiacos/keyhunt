@@ -562,8 +562,8 @@ void sleep_ms(int milliseconds);
 /* bsgs_sort, bsgs_myheapsort, bsgs_insertionsort, bsgs_introsort, bsgs_swap,
    bsgs_heapify, bsgs_partition, and bsgs_searchbinary now declared in bsgs/bsgs_sort.h */
 
-int bsgs_secondcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
-int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey);
+int bsgs_secondcheck(Int *start_range,uint64_t a,uint32_t k_index,Int *privatekey);
+int bsgs_thirdcheck(Int *start_range,uint64_t a,uint32_t k_index,Int *privatekey);
 
 /* Vanity functions (defined in search/search_vanity.cpp) */
 bool vanityrmdmatch(unsigned char *rmdhash);
