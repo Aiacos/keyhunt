@@ -4526,9 +4526,12 @@ int main(int argc, char **argv)	{
 					free(tt);  /* tt not used for minikeys (uses thread_args) */
 					break;
 				}
-				case MODE_VANITY:
-					s = platform_thread_create(&tid[j], thread_process_vanity, (void *)tt);
-				break;
+				case MODE_VANITY: {
+					thread_args *vargs = new thread_args{ &config, (int)j };
+					s = platform_thread_create(&tid[j], thread_process_vanity, (void *)vargs);
+					free(tt);  /* tt not used for vanity (uses thread_args) */
+					break;
+				}
 			}
 			if(s != 0)	{
 				output_error("pthread_create thread_process\n");

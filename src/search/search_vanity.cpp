@@ -1,7 +1,12 @@
 /*
  * search_vanity.cpp - Vanity address generation mode
  *
- * MIGRATION STATUS: Config-aware (extern globals)
+ * MIGRATION STATUS: Config-wired (thread_args)
+ *
+ * thread_process_vanity() receives all search parameters via thread_args->config.
+ * Helper functions (vanityrmdmatch, writevanitykey) also receive config.
+ * Only infrastructure externs remain (work pool, profiling, sysinfo).
+ * addvanity() uses local extern declarations for pre-thread global mutation.
  *
  * This file contains the VANITY mode search implementation:
  * - thread_process_vanity(): Main vanity search thread
@@ -22,8 +27,14 @@
 #ifndef BSGS_SORT_H
 #define BSGS_SORT_H
 #endif
-#include "search_context.h"
 #include "search_utils.h"
+
+/* CPU_GRP_SIZE: batch size for elliptic curve group operations.
+ * Canonical definition in search_context.h; replicated here since we
+ * no longer include search_context.h after config migration. */
+#ifndef CPU_GRP_SIZE
+#define CPU_GRP_SIZE 1024
+#endif
 #include "../output.h"
 #include "../io/io.h"
 #include "../core/util.h"
@@ -37,10 +48,11 @@
 #include <time.h>
 
 /* ============================================================================
- * External Dependencies (defined in keyhunt.cpp)
+ * External Dependencies (infrastructure only - defined in keyhunt.cpp)
+ *
+ * Config-mapped globals (FLAGSEARCH, stride, vanity state, etc.) have been
+ * migrated to keyhunt_config_t and are accessed via thread_args->config.
  * ============================================================================ */
-
-extern bool g_avx2_available;
 
 #include "../core/sysinfo.h"
 extern system_info_t g_sysinfo;
@@ -71,14 +83,17 @@ extern bool g_profile_enabled;
 extern thread_local profile_counters_t *tls_prof;
 extern void profile_set_thread(int idx);
 
+/* acquire_base_key is defined in keyhunt.cpp */
+extern bool acquire_base_key(Int &key);
+
 /* sub_u64_if_fits: now provided by search_utils.h as int_sub_to_u64() */
 
 /* ============================================================================
  * Forward declarations for functions defined in this file
  * ============================================================================ */
 
-bool vanityrmdmatch(unsigned char *rmdhash);
-void writevanitykey(bool compressed, Int *key);
+bool vanityrmdmatch(unsigned char *rmdhash, keyhunt_config_t *config);
+void writevanitykey(bool compressed, Int *key, keyhunt_config_t *config);
 int addvanity(char *target);
 int minimum_same_bytes(unsigned char* A, unsigned char* B, int length);
 
@@ -95,12 +110,48 @@ int minimum_same_bytes(unsigned char* A, unsigned char* B, int length);
  * - Bloom filter for multi-prefix matching
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_vanity(LPVOID vargp) {
-#else
-void *thread_process_vanity(void *vargp)	{
-#endif
-	struct tothread *tt;
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_vanity(void *vargp)	{
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	int thread_number = args->thread_id;
+	delete args;
+
+	/* Config reads (immutable after init) */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bool is_random = config->search.random_mode;
+	bool is_quiet = config->search.quiet_mode;
+	bool is_matrix = config->search.matrix_mode;
+
+	/* Derive legacy-compatible FLAGSEARCH, FLAGCRYPTO, FLAGENDOMORPHISM */
+	int FLAGSEARCH = (config->search.key_format == KEYTYPE_COMPRESSED) ? SEARCH_COMPRESS :
+	                 (config->search.key_format == KEYTYPE_UNCOMPRESSED) ? SEARCH_UNCOMPRESS :
+	                 SEARCH_BOTH;
+	int FLAGCRYPTO = (int)config->search.crypto_type;
+	int FLAGENDOMORPHISM = config->search.endomorphism ? 1 : 0;
+
+	/* Runtime state */
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	uint64_t N_SEQUENTIAL_MAX = config->runtime.sequential_max;
+	std::atomic<int> *THREADOUTPUT_ptr = (std::atomic<int> *)config->runtime.thread_output;
+
+	/* Generator points */
+	std::vector<Point> &Gn = *(std::vector<Point> *)config->runtime.generator_points;
+	Point &_2Gn = *(Point *)config->runtime.generator_point_2;
+
+	/* Range and stride */
+	Int &stride = *(Int *)config->runtime.stride;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+
+	/* Endomorphism constants */
+	Int &lambda = *(Int *)config->runtime.endo_lambda;
+	Int &lambda2 = *(Int *)config->runtime.endo_lambda2;
+	Int &beta = *(Int *)config->runtime.endo_beta;
+	Int &beta2 = *(Int *)config->runtime.endo_beta2;
+
+	/* AVX2 availability from sysinfo (infrastructure, not config) */
+	bool g_avx2_available = g_sysinfo.has_avx2;
+
 	Point pts[CPU_GRP_SIZE];
 	Point endomorphism_beta[CPU_GRP_SIZE];
 	Point endomorphism_beta2[CPU_GRP_SIZE];
@@ -119,7 +170,7 @@ void *thread_process_vanity(void *vargp)	{
 	int l,pp_offset,pn_offset,i,hLength = (CPU_GRP_SIZE / 2 - 1);
 	uint64_t j,count;
 	Point R,temporal,publickey;
-	int thread_number,continue_flag = 1,k;
+	int continue_flag = 1,k;
 	char *hextemp = NULL;
 	char publickeyhashrmd160[20];
 	char publickeyhashrmd160_uncompress[4][20];
@@ -130,9 +181,7 @@ void *thread_process_vanity(void *vargp)	{
 	Int key_center;
 	Int stride_half;
 	Int stride_four;
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-	free(tt);
+
 	profile_set_thread(thread_number);
 	grp->Set(dx);
 	stride_half.SetInt32(CPU_GRP_SIZE / 2);
@@ -153,7 +202,7 @@ void *thread_process_vanity(void *vargp)	{
 			if(continue_flag)	{
 					count = 0;
 					uint64_t block_limit = N_SEQUENTIAL_MAX;
-					if (!FLAGRANDOM && stride.IsOne()) {
+					if (!is_random && stride.IsOne()) {
 						Int range_end_local;
 						if (g_work_pool.enabled && cpu_cached_block_valid) {
 							range_end_local.Set(&cpu_cached_block_end);
@@ -165,19 +214,19 @@ void *thread_process_vanity(void *vargp)	{
 							block_limit = rem_u64;
 						}
 				}
-				if(FLAGMATRIX)	{
+				if(is_matrix)	{
 						hextemp = key_mpz.GetBase16();
 						printf("Base key: %s thread %i\n",hextemp,thread_number);
 						fflush(stdout);
 					free(hextemp);
 			}
 			else	{
-				if(FLAGQUIET == 0)	{
+				if(!is_quiet)	{
 					hextemp = key_mpz.GetBase16();
 					printf("\rBase key: %s     \r",hextemp);
 					fflush(stdout);
 					free(hextemp);
-					THREADOUTPUT.store(1, std::memory_order_release);
+					THREADOUTPUT_ptr->store(1, std::memory_order_release);
 				}
 			}
 				do {
@@ -421,30 +470,30 @@ void *thread_process_vanity(void *vargp)	{
 						keyCurrent.Set(&key_mpz);
 						for (size_t idx = 0; idx < CPU_GRP_SIZE; ++idx) {
 							if (wantCompressed) {
-								if (vanityrmdmatch((unsigned char*)hashCompressed02[idx])) {
+								if (vanityrmdmatch((unsigned char*)hashCompressed02[idx], config)) {
 									Int candidate(keyCurrent);
 									publickey = secp->ComputePublicKey(&candidate);
 									if(publickey.y.IsOdd()) {
 										candidate.Neg();
 										candidate.Add(&secp->order);
 									}
-									writevanitykey(true,&candidate);
+									writevanitykey(true,&candidate, config);
 								}
-								if (vanityrmdmatch((unsigned char*)hashCompressed03[idx])) {
+								if (vanityrmdmatch((unsigned char*)hashCompressed03[idx], config)) {
 									Int candidate(keyCurrent);
 									publickey = secp->ComputePublicKey(&candidate);
 									if(publickey.y.IsEven()) {
 										candidate.Neg();
 										candidate.Add(&secp->order);
 									}
-									writevanitykey(true,&candidate);
+									writevanitykey(true,&candidate, config);
 								}
 							}
 
 							if (wantUncompressed) {
-								if (vanityrmdmatch((unsigned char*)hashUncompressed[idx])) {
+								if (vanityrmdmatch((unsigned char*)hashUncompressed[idx], config)) {
 									Int candidate(keyCurrent);
-									writevanitykey(false,&candidate);
+									writevanitykey(false,&candidate, config);
 								}
 							}
 
@@ -500,7 +549,7 @@ void *thread_process_vanity(void *vargp)	{
 						if(FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH ){
 							if(FLAGENDOMORPHISM)	{
 								for(l = 0;l < 6; l++)	{
-									if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_endomorphism[l][k]))	{
+									if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_endomorphism[l][k], config))	{
 										// Here the given publickeyhashrmd160 match againts one of the vanity targets
 										// We need to check which of the cases is it.
 
@@ -557,13 +606,13 @@ void *thread_process_vanity(void *vargp)	{
 												// else we dont need to chage the current keyfound because it already have prefix 02
 											break;
 										}
-										writevanitykey(true,&keyfound);
+										writevanitykey(true,&keyfound, config);
 									}
 								}
 							}
 							else	{
 								for(l = 0;l < 2; l++)	{
-									if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_endomorphism[l][k]))	{
+									if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_endomorphism[l][k], config))	{
 										keyfound.SetInt32(k);
 										keyfound.Mult(&stride);
 										keyfound.Add(&key_mpz);
@@ -574,7 +623,7 @@ void *thread_process_vanity(void *vargp)	{
 											keyfound.Neg();
 											keyfound.Add(&secp->order);
 										}
-										writevanitykey(true,&keyfound);
+										writevanitykey(true,&keyfound, config);
 									}
 								}
 							}
@@ -582,7 +631,7 @@ void *thread_process_vanity(void *vargp)	{
 						if(FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH)	{
 							if(FLAGENDOMORPHISM)	{
 								for(l = 6;l < 12; l++)	{
-									if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_endomorphism[l][k]))	{
+									if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_endomorphism[l][k], config))	{
 										// Here the given publickeyhashrmd160 match againts one of the vanity targets
 										// We need to check which of the cases is it.
 
@@ -622,17 +671,17 @@ void *thread_process_vanity(void *vargp)	{
 												}
 											break;
 										}
-										writevanitykey(false,&keyfound);
+										writevanitykey(false,&keyfound, config);
 									}
 								}
 
 							}
 							else	{
-								if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_uncompress[k]))	{
+								if(vanityrmdmatch((uint8_t*)publickeyhashrmd160_uncompress[k], config))	{
 									keyfound.SetInt32(k);
 									keyfound.Mult(&stride);
 									keyfound.Add(&key_mpz);
-									writevanitykey(false,&keyfound);
+									writevanitykey(false,&keyfound, config);
 								}
 							}
 						}
@@ -675,9 +724,18 @@ void *thread_process_vanity(void *vargp)	{
  * range comparison against all registered vanity targets.
  * ============================================================================ */
 
-bool vanityrmdmatch(unsigned char *rmdhash)	{
+bool vanityrmdmatch(unsigned char *rmdhash, keyhunt_config_t *config)	{
 	bool r = false;
 	int i,j,cmpA,cmpB,result;
+
+	/* Read vanity state from config */
+	struct bloom *vanity_bloom = (struct bloom *)config->runtime.vanity_bloom;
+	int vanity_rmd_minimun_bytes_check_length = config->runtime.vanity_min_check_len;
+	int vanity_rmd_targets = config->runtime.vanity_targets;
+	int *vanity_rmd_limits = (int *)config->runtime.vanity_limits;
+	uint8_t ***vanity_rmd_limit_values_A = (uint8_t ***)config->runtime.vanity_values_a;
+	uint8_t ***vanity_rmd_limit_values_B = (uint8_t ***)config->runtime.vanity_values_b;
+
 	result = bloom_check(vanity_bloom,rmdhash,vanity_rmd_minimun_bytes_check_length);
 	switch(result)	{
 		case -1:
@@ -710,7 +768,10 @@ bool vanityrmdmatch(unsigned char *rmdhash)	{
  * Thread-safe via write_keys mutex.
  * ============================================================================ */
 
-void writevanitykey(bool compressed,Int *key)	{
+void writevanitykey(bool compressed, Int *key, keyhunt_config_t *config)	{
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	platform_mutex_t *write_keys = (platform_mutex_t *)config->runtime.write_mutex;
+
 	Point publickey;
 	FILE *keys;
 	char *hextemp,*hexrmd,public_key_hex[131],address[50],rmdhash[20];
@@ -722,7 +783,7 @@ void writevanitykey(bool compressed,Int *key)	{
 	hexrmd = tohex(rmdhash,20);
 	rmd160toaddress_dst(rmdhash,address);
 
-platform_mutex_lock(&write_keys);
+platform_mutex_lock(write_keys);
 	keys = fopen_secure_append("VANITYKEYFOUND.txt");
 	if(keys != NULL)	{
 		fprintf(keys,"Vanity Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
@@ -732,7 +793,7 @@ platform_mutex_lock(&write_keys);
 	}
 	printf("\nVanity Private Key: %s\npubkey: %s\nAddress %s\nrmd160 %s\n",hextemp,public_key_hex,address,hexrmd);
 
-platform_mutex_unlock(&write_keys);
+platform_mutex_unlock(write_keys);
 	free(hextemp);
 	free(hexrmd);
 }
@@ -745,10 +806,23 @@ platform_mutex_unlock(&write_keys);
  * 'z' characters for the upper bound to find the exact byte ranges
  * that match the prefix.
  *
+ * NOTE: This function is called from keyhunt.cpp BEFORE thread creation,
+ * so it uses extern globals directly. The results are copied into config
+ * by the config bridge before threads start.
+ *
  * Returns: number of range pairs added (0 on failure)
  * ============================================================================ */
 
 int addvanity(char *target)	{
+	/* Local extern declarations for pre-thread global state mutation */
+	extern int vanity_rmd_targets;
+	extern int vanity_rmd_total;
+	extern int *vanity_rmd_limits;
+	extern uint8_t ***vanity_rmd_limit_values_A;
+	extern uint8_t ***vanity_rmd_limit_values_B;
+	extern int vanity_rmd_minimun_bytes_check_length;
+	extern char **vanity_address_targets;
+
 	unsigned char raw_value_A[50],raw_value_B[50];
 	char target_copy[50];
 	int stringsize,targetsize,j,r = 0;
