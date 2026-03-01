@@ -67,7 +67,14 @@ Plans:
   2. All 6 search module files (search_address.cpp, search_bsgs.cpp, search_bsgs_threads.cpp, search_vanity.cpp, search_minikeys.cpp, search_xpoint.cpp, search_rmd160.cpp, io/io.cpp) compile without warnings when search_context.h is excluded from their include path
   3. A call to keyhunt_config_validate() succeeds before every test run, proving write sites were migrated before read sites
   4. Re-running the Phase 1 end-to-end mode tests still produces correct results, proving no silent mode mismatches were introduced
-**Plans**: TBD
+**Plans:** 5 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Freeze config schema + populate write-sites + migrate xpoint/rmd160 (trivial)
+- [ ] 03-02-PLAN.md — Wire config into search_minikeys.cpp and search_vanity.cpp
+- [ ] 03-03-PLAN.md — Wire config into search_address.cpp and io.cpp
+- [ ] 03-04-PLAN.md — Wire config into search_bsgs.cpp and search_bsgs_threads.cpp (bsgs_context_t)
+- [ ] 03-05-PLAN.md — Eliminate search_context.h externs + final validation
 
 ### Phase 4: Monolith Decomposition
 **Goal**: keyhunt.cpp is a thin orchestrator; each search mode is self-contained in src/modes/ with no dependency on keyhunt.cpp symbols
@@ -111,7 +118,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 |-------|----------------|--------|-----------|
 | 1. Test Baseline | 6/6 | Complete | - |
 | 2. Sanitizer Coverage | 2/4 | In progress | - |
-| 3. Config Migration | 0/TBD | Not started | - |
+| 3. Config Migration | 0/5 | Not started | - |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |
 | 5. CI Pipeline | 0/TBD | Not started | - |
 | 6. Fuzz and Advanced Verification | 0/TBD | Not started | - |
