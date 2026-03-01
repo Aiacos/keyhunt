@@ -4520,9 +4520,12 @@ int main(int argc, char **argv)	{
 				case MODE_RMD160:
 					s = platform_thread_create(&tid[j], thread_process, (void *)tt);
 				break;
-				case MODE_MINIKEYS:
-					s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)tt);
-				break;
+				case MODE_MINIKEYS: {
+					thread_args *margs = new thread_args{ &config, (int)j };
+					s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)margs);
+					free(tt);  /* tt not used for minikeys (uses thread_args) */
+					break;
+				}
 				case MODE_VANITY:
 					s = platform_thread_create(&tid[j], thread_process_vanity, (void *)tt);
 				break;

@@ -186,10 +186,10 @@ void KECCAK_256(uint8_t *source, size_t size, uint8_t *dst);
 /* C++ linkage */
 void generate_binaddress_eth(Point &publickey, unsigned char *dst_address);
 
-/* Minikey functions */
-void set_minikey(char *buffer, char *rawbuffer, int length);
-bool increment_minikey_index(char *buffer, char *rawbuffer, int index);
-void increment_minikey_N(char *rawbuffer);
+/* Minikey functions (coinbuffer/minikeyN params replace extern globals) */
+void set_minikey(char *buffer, char *rawbuffer, int length, char *coinbuffer);
+bool increment_minikey_index(char *buffer, char *rawbuffer, int index, char *coinbuffer);
+void increment_minikey_N(char *rawbuffer, char *minikeyN_buf, int n_limit);
 
 /* Generator initialization */
 void init_generator(void);
