@@ -1,6 +1,9 @@
 /*
  * io.h - File I/O operations for keyhunt
  *
+ * MIGRATION STATUS: Partial (Phase 3)
+ * See io.cpp header for migration plan and remaining extern dependencies.
+ *
  * Handles reading target files (addresses, vanity patterns, x-points),
  * writing found keys to output files, and checkpoint validation.
  *

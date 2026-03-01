@@ -1,4 +1,23 @@
-// src/io/io.cpp
+/*
+ * io.cpp - File I/O operations for keyhunt
+ *
+ * MIGRATION STATUS: Partial (Phase 3)
+ *
+ * io.cpp still reads globals through search_context.h.
+ * The writekey/writekeyeth functions would need a config parameter,
+ * but that requires updating all call sites in search modules.
+ *
+ * Remaining externs via search_context.h:
+ *   secp, FLAGMODE, FLAGCRYPTO, FLAGSAVEREADFILE, FLAGSKIPCHECKSUM,
+ *   FLAGVANITY, MAXLENGTHADDRESS, addressTable, N, bloom, write_keys
+ *
+ * Local externs (Phase 4 cleanup targets):
+ *   g_rangeProgressStart, g_rangeProgressEnd
+ *
+ * These will be resolved when search_context.h is emptied (Plan 03-05)
+ * and when writekey receives a config parameter (Phase 4).
+ */
+
 #include "io.h"
 #include "../search/search_context.h"
 #include "../search/search_utils.h"
