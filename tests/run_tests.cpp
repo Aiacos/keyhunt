@@ -49,6 +49,7 @@ int run_search_rmd160_tests(void);
 int run_fused_hash_tests(void);
 int run_extended_range_tests(void);
 int run_bech32_tests(void);
+int run_threading_tests(void);
 
 /* Color codes */
 #define CLR_CYAN    "\033[36m"
@@ -89,6 +90,7 @@ static void print_usage(const char *prog) {
     printf("  fused        Run fused hash pipeline tests\n");
     printf("  extended     Run extended range (256-bit) tests\n");
     printf("  bech32       Run Bech32 encoding/decoding tests\n");
+    printf("  threading    Run multi-threaded concurrency tests\n");
     printf("  help         Show this help\n");
     printf("\n");
 }
@@ -202,6 +204,11 @@ int main(int argc, char *argv[]) {
     if (module == NULL || strcmp(module, "bech32") == 0) {
         printf(CLR_BOLD "\n>>> Running Bech32 Encoding/Decoding Tests\n" CLR_RESET);
         total_failures += run_bech32_tests();
+    }
+
+    if (module == NULL || strcmp(module, "threading") == 0) {
+        printf(CLR_BOLD "\n>>> Running Threading Tests\n" CLR_RESET);
+        total_failures += run_threading_tests();
     }
 
     /* Final summary */

@@ -237,6 +237,7 @@ TEST_FUSED_HASH_OBJ := $(TEST_OBJDIR)/test_fused_hash.o
 TEST_SHA256_SIMD_OBJ := $(TEST_OBJDIR)/test_sha256_simd.o
 TEST_EXTENDED_RANGE_OBJ := $(TEST_OBJDIR)/test_extended_range.o
 TEST_BECH32_OBJ := $(TEST_OBJDIR)/test_bech32.o
+TEST_THREADING_OBJ := $(TEST_OBJDIR)/test_threading.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
@@ -313,6 +314,9 @@ $(TEST_EXTENDED_RANGE_OBJ): tests/test_extended_range.cpp tests/test_framework.h
 $(TEST_BECH32_OBJ): tests/test_bech32.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_THREADING_OBJ): tests/test_threading.cpp tests/test_framework.h | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -322,7 +326,8 @@ TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OB
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
              $(TEST_SHA512_SIMD_OBJ) $(TEST_SHA256_SIMD_OBJ) \
              $(TEST_SEARCH_XPOINT_OBJ) $(TEST_SEARCH_RMD160_OBJ) \
-             $(TEST_SEARCH_MOCKS_OBJ) $(TEST_FUSED_HASH_OBJ) $(TEST_EXTENDED_RANGE_OBJ) $(TEST_BECH32_OBJ)
+             $(TEST_SEARCH_MOCKS_OBJ) $(TEST_FUSED_HASH_OBJ) $(TEST_EXTENDED_RANGE_OBJ) $(TEST_BECH32_OBJ) \
+             $(TEST_THREADING_OBJ)
 
 # Build test runner
 $(TEST_EXE): directories $(TEST_OBJS) $(TEST_SHARED_OBJS)
