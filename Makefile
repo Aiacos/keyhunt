@@ -508,6 +508,7 @@ sanitize: clean-sanitize
 	@echo "Building with AddressSanitizer..."
 	@mkdir -p $(SANITIZE_OBJDIR)
 	$(MAKE) run_tests_asan$(EXE_EXT) OBJDIR=$(SANITIZE_OBJDIR) \
+		TEST_OBJDIR=$(SANITIZE_OBJDIR)/tests \
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(ASAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(ASAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(ASAN_LDFLAGS) -Wl,--as-needed" \
@@ -522,11 +523,15 @@ run_tests_asan$(EXE_EXT): directories $(TEST_OBJDIR) $(TEST_OBJS) $(TEST_SHARED_
 clean-sanitize:
 	$(RM) -r $(SANITIZE_OBJDIR) run_tests_asan$(EXE_EXT) run_tests_asan
 
+# Convenience alias
+asan: sanitize
+
 # ThreadSanitizer build
 tsan: clean-tsan
 	@echo "Building with ThreadSanitizer..."
 	@mkdir -p $(TSAN_OBJDIR)
 	$(MAKE) run_tests_tsan$(EXE_EXT) OBJDIR=$(TSAN_OBJDIR) \
+		TEST_OBJDIR=$(TSAN_OBJDIR)/tests \
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(TSAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(TSAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(TSAN_LDFLAGS) -Wl,--as-needed" \
@@ -620,7 +625,7 @@ clean-coverage:
 	$(RM) -r $(COVERAGE_OBJDIR) run_tests_cov$(EXE_EXT) run_tests_cov coverage *.gcda *.gcno
 	$(RM) -f coverage_report.html coverage_report.*.html
 
-.PHONY: sanitize run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
+.PHONY: sanitize asan run_tests_asan clean-sanitize tsan run_tests_tsan clean-tsan
 .PHONY: coverage run_tests_cov coverage-report clean-coverage
 .PHONY: pgo-generate keyhunt_pgo_gen pgo-use keyhunt_pgo clean-pgo
 
