@@ -111,6 +111,7 @@ void kh_search_config_init(search_config_t *cfg) {
     cfg->debug_mode = false;
     cfg->matrix_mode = false;
     cfg->progress_bar = false;
+    cfg->skip_checksum = false;
 }
 
 /* ============================================================================
@@ -223,6 +224,44 @@ void kh_runtime_state_init(runtime_state_t *state) {
 
     state->keys_found = 0;
     state->output_file[0] = '\0';
+
+    /* Phase 3 CFG-01: new fields */
+    state->secp = NULL;
+
+    state->thread_counters = NULL;
+    state->thread_flags = NULL;
+    state->thread_output = NULL;
+
+    state->generator_points = NULL;
+    state->generator_point_2 = NULL;
+
+    state->endo_lambda = NULL;
+    state->endo_lambda2 = NULL;
+    state->endo_beta = NULL;
+    state->endo_beta2 = NULL;
+
+    state->range_start = NULL;
+    state->range_end = NULL;
+    state->stride = NULL;
+
+    state->minikey_coinbuffer = NULL;
+    state->minikey_raw_base = NULL;
+    state->minikey_n = NULL;
+    state->minikey_n_limit = 0;
+
+    state->vanity_limits = NULL;
+    state->vanity_values_a = NULL;
+    state->vanity_values_b = NULL;
+    state->vanity_min_check_len = 0;
+    state->vanity_addresses = NULL;
+
+    state->bsgs_context = NULL;
+
+    state->bsgs_generator_points = NULL;
+    state->bsgs_generator_point_2 = NULL;
+
+    state->max_address_length = 20;
+    state->sequential_max = 0x100000000ULL;
 }
 
 /* ============================================================================
@@ -859,6 +898,31 @@ void kh_runtime_state_cleanup(runtime_state_t *state) {
     state->random_mutex = NULL;
     state->bsgs_mutex = NULL;
     state->work_pool = NULL;
+
+    /* Phase 3 CFG-01: new pointer fields */
+    state->secp = NULL;
+    state->thread_counters = NULL;
+    state->thread_flags = NULL;
+    state->thread_output = NULL;
+    state->generator_points = NULL;
+    state->generator_point_2 = NULL;
+    state->endo_lambda = NULL;
+    state->endo_lambda2 = NULL;
+    state->endo_beta = NULL;
+    state->endo_beta2 = NULL;
+    state->range_start = NULL;
+    state->range_end = NULL;
+    state->stride = NULL;
+    state->minikey_coinbuffer = NULL;
+    state->minikey_raw_base = NULL;
+    state->minikey_n = NULL;
+    state->vanity_limits = NULL;
+    state->vanity_values_a = NULL;
+    state->vanity_values_b = NULL;
+    state->vanity_addresses = NULL;
+    state->bsgs_context = NULL;
+    state->bsgs_generator_points = NULL;
+    state->bsgs_generator_point_2 = NULL;
 }
 
 /* ============================================================================

@@ -87,6 +87,7 @@ typedef struct {
     bool debug_mode;              /* Debug output */
     bool matrix_mode;             /* Matrix display */
     bool progress_bar;            /* Show progress bar */
+    bool skip_checksum;           /* FLAGSKIPCHECKSUM (minikey validation bypass) */
 } search_config_t;
 
 /* ============================================================================
@@ -219,7 +220,71 @@ typedef struct {
     /* Found keys */
     int      keys_found;          /* Total keys found this session */
     char     output_file[KH_PATH_BUF_SIZE]; /* Path to output file */
+
+    /* ------------------------------------------------------------------ */
+    /*  Fields below added for Phase 3 Config Migration (CFG-01)          */
+    /* ------------------------------------------------------------------ */
+
+    /* Secp256k1 curve instance */
+    void    *secp;                /* Secp256K1* (set once at init, read-only from threads) */
+
+    /* Thread progress arrays (allocated per-thread) */
+    void    *thread_counters;     /* struct thread_counter* (cache-padded counters) */
+    void    *thread_flags;        /* struct thread_flag* (thread completion flags) */
+    void    *thread_output;       /* std::atomic<int>* (output synchronization) */
+
+    /* Generator points (set once at init) */
+    void    *generator_points;    /* std::vector<Point>* Gn (precomputed points) */
+    void    *generator_point_2;   /* Point* _2Gn (doubled generator) */
+
+    /* Endomorphism constants (set once at init, read-only) */
+    void    *endo_lambda;         /* Int* lambda */
+    void    *endo_lambda2;        /* Int* lambda2 */
+    void    *endo_beta;           /* Int* beta */
+    void    *endo_beta2;          /* Int* beta2 */
+
+    /* Range parameters (set once, read-only from threads) */
+    void    *range_start;         /* Int* n_range_start */
+    void    *range_end;           /* Int* n_range_end */
+    void    *stride;              /* Int* stride value */
+
+    /* Minikey mode state (set once at init) */
+    void    *minikey_coinbuffer;  /* char* Ccoinbuffer (base58 lookup) */
+    void    *minikey_raw_base;    /* char* raw_baseminikey */
+    void    *minikey_n;           /* char* minikeyN */
+    int      minikey_n_limit;     /* int minikey_n_limit */
+
+    /* Vanity mode extended state */
+    void    *vanity_limits;       /* int* vanity_rmd_limits */
+    void    *vanity_values_a;     /* uint8_t*** vanity_rmd_limit_values_A */
+    void    *vanity_values_b;     /* uint8_t*** vanity_rmd_limit_values_B */
+    int      vanity_min_check_len;/* int vanity_rmd_minimun_bytes_check_length */
+    void    *vanity_addresses;    /* char** vanity_address_targets */
+
+    /* BSGS context (allocated only in BSGS mode) */
+    void    *bsgs_context;        /* bsgs_context_t* (see search_bsgs.cpp) */
+
+    /* BSGS generator points (set once at init) */
+    void    *bsgs_generator_points;  /* std::vector<Point>* GSn */
+    void    *bsgs_generator_point_2; /* Point* _2GSn */
+
+    /* Max address/hash length for bloom checks */
+    int      max_address_length;  /* MAXLENGTHADDRESS */
+
+    /* Sequential iteration limit */
+    uint64_t sequential_max;      /* N_SEQUENTIAL_MAX */
 } runtime_state_t;
+
+/* ============================================================================
+ * SCHEMA FROZEN -- Phase 3 Config Migration (CFG-01)
+ *
+ * All fields above are committed. During Phase 3 migration:
+ * - DO NOT remove or rename existing fields
+ * - Adding new fields is acceptable if discovered missing
+ * - Document any additions in this section
+ *
+ * Schema version: 3 (bumped from 2)
+ * ============================================================================ */
 
 /* ============================================================================
  * AutoTuneConfig - Auto-detected system parameters
@@ -483,7 +548,7 @@ void kh_env_overrides_init(env_overrides_t *env);
  * Configuration Version
  * ============================================================================ */
 
-#define KH_CONFIG_VERSION 2
+#define KH_CONFIG_VERSION 3
 
 #ifdef __cplusplus
 }
