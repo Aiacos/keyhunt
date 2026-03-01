@@ -31,13 +31,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. secp256k1 point addition, doubling, and scalar multiplication match reference vectors from bitcoin-core/secp256k1
   4. Each of the 6 search modes (ADDRESS, BSGS, XPOINT, RMD160, VANITY, MINIKEYS) locates a known private key in a controlled test run
   5. gcovr reports at least 80% line coverage on src/secp256k1/ and src/hash/ paths
-**Plans:** 4 plans
+**Plans:** 6 plans
 
 Plans:
 - [x] 01-01-PLAN.md — Fix 36 pre-existing test failures and add SKIP_TEST macro
-- [ ] 01-02-PLAN.md — Add NIST/IETF/bitcoin-core reference crypto test vectors
-- [ ] 01-03-PLAN.md — E2E tests for ADDRESS, BSGS, XPOINT modes
-- [ ] 01-04-PLAN.md — E2E tests for RMD160, VANITY, MINIKEYS modes + coverage gate
+- [x] 01-02-PLAN.md — Add NIST/IETF/bitcoin-core reference crypto test vectors
+- [x] 01-03-PLAN.md — E2E tests for ADDRESS, BSGS, XPOINT modes
+- [x] 01-04-PLAN.md — E2E tests for RMD160, VANITY, MINIKEYS modes + coverage gate
+- [ ] 01-05-PLAN.md — Gap closure: Int.cpp and SECP256K1.cpp coverage tests
+- [ ] 01-06-PLAN.md — Gap closure: sha256_sse tests + raise coverage gate to 80%
 
 ### Phase 2: Sanitizer Coverage
 **Goal**: The binary is free of memory errors, undefined behavior, and data races as confirmed by three independent sanitizer builds
@@ -97,11 +99,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Baseline | 1/4 | In progress | - |
+| 1. Test Baseline | 4/6 | In progress (gap closure) | - |
 | 2. Sanitizer Coverage | 0/TBD | Not started | - |
 | 3. Config Migration | 0/TBD | Not started | - |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |
