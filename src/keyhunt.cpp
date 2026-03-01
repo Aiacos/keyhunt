@@ -4497,6 +4497,12 @@ int main(int argc, char **argv)	{
 			config.runtime.thread_output = (void *)&THREADOUTPUT;
 			config.runtime.sequential_max = N_SEQUENTIAL_MAX;
 
+			// GPU and hardware detection bridge
+			config.gpu.enabled = FLAGGPU;
+			config.gpu.full_mode = (FLAGGPU_FULL != 0);
+			config.gpu.hybrid_mode = (FLAGGPU_HYBRID.load(std::memory_order_relaxed) != 0);
+			config.autotune.has_avx2 = g_avx2_available;
+
 			// Vanity state (if applicable)
 			config.runtime.vanity_targets = vanity_rmd_targets;
 			config.runtime.vanity_total = vanity_rmd_total;
@@ -4517,9 +4523,12 @@ int main(int argc, char **argv)	{
 			switch(FLAGMODE)	{
 				case MODE_ADDRESS:
 				case MODE_XPOINT:
-				case MODE_RMD160:
-					s = platform_thread_create(&tid[j], thread_process, (void *)tt);
-				break;
+				case MODE_RMD160: {
+					thread_args *aargs = new thread_args{ &config, (int)j };
+					s = platform_thread_create(&tid[j], thread_process, (void *)aargs);
+					free(tt);  /* tt not used for address modes (uses thread_args) */
+					break;
+				}
 				case MODE_MINIKEYS: {
 					thread_args *margs = new thread_args{ &config, (int)j };
 					s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)margs);

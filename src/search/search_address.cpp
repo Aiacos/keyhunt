@@ -1,7 +1,7 @@
 /*
  * search_address.cpp - ADDRESS, RMD160, and XPOINT mode search implementation
  *
- * MIGRATION STATUS: Config-aware (extern globals)
+ * MIGRATION STATUS: Config-wired (thread_args)
  *
  * This file contains the main CPU search thread and batch processing helpers:
  * - thread_process(): Main search thread for ADDRESS, RMD160, XPOINT modes
@@ -36,6 +36,7 @@
 #include "../gpu/gpu_backend.h"
 #include "../core/sysinfo.h"
 #include "../core/workpool.h"
+#include "../sort/sort.h"
 /* WorkQueue is only used in acquire_base_key() which remains in keyhunt.cpp */
 
 #include <cstdio>
@@ -47,17 +48,15 @@
 
 /* ============================================================================
  * External Dependencies (defined in keyhunt.cpp)
+ *
+ * Infrastructure externs that remain (not config-mapped):
+ * - g_sysinfo: hardware detection structure
+ * - g_work_pool / cpu_cached_block_*: work-stealing infrastructure
+ * - g_profile_enabled / tls_prof / profile_set_thread: profiling
+ * - acquire_base_key: key acquisition from work pool
  * ============================================================================ */
 
-extern bool g_avx2_available;
 extern system_info_t g_sysinfo;
-
-/* Binary search function from sort/sort.cpp */
-extern int searchbinary(struct address_value *buffer, char *data, int64_t array_length);
-
-extern int FLAGGPU;
-extern int FLAGGPU_FULL;
-extern std::atomic<int> FLAGGPU_HYBRID;
 
 /* Work pool / work queue (defined in keyhunt.cpp) */
 extern WorkPool g_work_pool;
@@ -128,18 +127,22 @@ extern void profile_set_thread(int idx);
  * Determine whether to use Y parity optimization for compressed-only BTC
  * search. This avoids computing hashes for both 02/03 prefixes when we
  * can determine the actual parity from the Y coordinate.
+ *
+ * Parameters are passed explicitly instead of reading extern globals.
  * ============================================================================ */
 
-static inline bool cpu_use_y_parity_for_compressed_btc() {
-	extern int FLAGMODE, FLAGCRYPTO, FLAGENDOMORPHISM, FLAGSEARCH;
-	if (!((FLAGMODE == MODE_ADDRESS || FLAGMODE == MODE_RMD160) &&
-		  FLAGCRYPTO == CRYPTO_BTC &&
-		  !FLAGENDOMORPHISM &&
-		  FLAGSEARCH == SEARCH_COMPRESS)) {
+static inline bool cpu_use_y_parity_for_compressed_btc(
+	int flagmode, int flagcrypto, int flagendomorphism,
+	int flagsearch, bool gpu_hybrid, bool gpu_full) {
+
+	if (!((flagmode == MODE_ADDRESS || flagmode == MODE_RMD160) &&
+		  flagcrypto == CRYPTO_BTC &&
+		  !flagendomorphism &&
+		  flagsearch == SEARCH_COMPRESS)) {
 		return false;
 	}
 
-	if (FLAGGPU_HYBRID && FLAGGPU_FULL == 1) {
+	if (gpu_hybrid && gpu_full) {
 		const char *env = getenv("KEYHUNT_HYBRID_CPU_USE_Y");
 		if (env && *env) {
 			return atoi(env) != 0;
@@ -166,18 +169,29 @@ extern bool acquire_base_key(Int &key);
  * Optimized batch processing for RMD160/ADDRESS mode with BTC crypto
  * when endomorphism is disabled. Uses AVX512/AVX2/SSE2 SIMD paths
  * for hashing and batch bloom filter checking for target matching.
+ *
+ * Config-wired: receives keyhunt_config_t* for bloom, addressTable, etc.
  * ============================================================================ */
 
-static void process_rmd160_batch_btc_simple(Int &key_mpz, Point *pts, uint64_t &count) {
-	extern int FLAGSEARCH;
-	extern uint64_t N;
-	extern bloom_extended_t bloom;
-	extern Int stride;
-	extern struct address_value *addressTable;
+static void process_rmd160_batch_btc_simple(keyhunt_config_t *config, Int &key_mpz, Point *pts, uint64_t &count) {
+	/* Extract config-mapped state */
+	int FLAGSEARCH = (config->search.key_format == KEYTYPE_COMPRESSED) ? SEARCH_COMPRESS :
+	                 (config->search.key_format == KEYTYPE_UNCOMPRESSED) ? SEARCH_UNCOMPRESS :
+	                 SEARCH_BOTH;
+	uint64_t N = (uint64_t)config->runtime.address_count;
+	bloom_extended_t *bloom = (bloom_extended_t *)config->runtime.bloom_filter;
+	Int &stride = *(Int *)config->runtime.stride;
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
+	bool g_avx2_available = config->autotune.has_avx2;
+	int FLAGGPU = config->gpu.enabled;
+	bool FLAGGPU_FULL = config->gpu.full_mode;
 
 	const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
 	const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
-	const bool haveYForCompressed = (wantUncompressed || cpu_use_y_parity_for_compressed_btc());
+	const bool haveYForCompressed = (wantUncompressed || cpu_use_y_parity_for_compressed_btc(
+		(int)config->search.mode, (int)config->search.crypto_type,
+		config->search.endomorphism ? 1 : 0, FLAGSEARCH,
+		config->gpu.hybrid_mode, FLAGGPU_FULL));
 
 	if(!wantCompressed && !wantUncompressed) {
 		return;
@@ -340,7 +354,7 @@ cpu_compress_only_hash:
 	const size_t HASH_STRIDE = 20;
 
 	// Helper lambda to compute key at index using O(1) multiplication
-	auto computeKeyAtIndex = [&key_mpz](Int &out, size_t idx) {
+	auto computeKeyAtIndex = [&key_mpz, &stride](Int &out, size_t idx) {
 		Int offset;
 		offset.SetInt64((int64_t)idx);
 		offset.Mult(&stride);
@@ -366,7 +380,7 @@ cpu_compress_only_hash:
 							uint64_t hits;
 							{
 								KH_PROF_SCOPE(ns_bloom);
-								hits = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashCompressed02[base], HASH_STRIDE, batchCount);
+								hits = bloom_ext_check_rmd160_strided(bloom, (const uint8_t*)hashCompressed02[base], HASH_STRIDE, batchCount);
 							}
 							while (hits) {
 								int i = __builtin_ctzll(hits);
@@ -413,7 +427,7 @@ cpu_compress_only_hash:
 							uint64_t hits02;
 							{
 								KH_PROF_SCOPE(ns_bloom);
-								hits02 = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashCompressed02[base], HASH_STRIDE, batchCount);
+								hits02 = bloom_ext_check_rmd160_strided(bloom, (const uint8_t*)hashCompressed02[base], HASH_STRIDE, batchCount);
 							}
 							while (hits02) {
 								int i = __builtin_ctzll(hits02);
@@ -439,7 +453,7 @@ cpu_compress_only_hash:
 							uint64_t hits03;
 							{
 								KH_PROF_SCOPE(ns_bloom);
-								hits03 = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashCompressed03[base], HASH_STRIDE, batchCount);
+								hits03 = bloom_ext_check_rmd160_strided(bloom, (const uint8_t*)hashCompressed03[base], HASH_STRIDE, batchCount);
 							}
 							while (hits03) {
 								int i = __builtin_ctzll(hits03);
@@ -479,7 +493,7 @@ cpu_compress_only_hash:
 				uint64_t hitsU;
 				{
 					KH_PROF_SCOPE(ns_bloom);
-					hitsU = bloom_ext_check_rmd160_strided(&bloom, (const uint8_t*)hashUncompressed[base], HASH_STRIDE, batchCount);
+					hitsU = bloom_ext_check_rmd160_strided(bloom, (const uint8_t*)hashUncompressed[base], HASH_STRIDE, batchCount);
 				}
 				while (hitsU) {
 					int i = __builtin_ctzll(hitsU);
@@ -516,14 +530,60 @@ cpu_compress_only_hash:
  * This is the primary CPU search thread. It generates batches of public keys
  * using the group law optimization (Shamir's trick) and checks them against
  * target addresses/hashes using bloom filters and binary search.
+ *
+ * Config-wired: receives thread_args with keyhunt_config_t* pointer.
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process(LPVOID vargp) {
-#else
-void *thread_process(void *vargp)	{
-#endif
-	struct tothread *tt;
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
+	/* Extract config and thread ID from thread_args */
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	int thread_number = args->thread_id;
+	delete args;
+
+	/* ---- Config-derived local variables ---- */
+
+	/* Search config (immutable during search) */
+	int local_mode = (int)config->search.mode;
+	int local_search = (config->search.key_format == KEYTYPE_COMPRESSED) ? SEARCH_COMPRESS :
+	                   (config->search.key_format == KEYTYPE_UNCOMPRESSED) ? SEARCH_UNCOMPRESS :
+	                   SEARCH_BOTH;
+	int local_crypto = (int)config->search.crypto_type;
+	bool local_endomorphism = config->search.endomorphism;
+	bool local_random = config->search.random_mode;
+	bool local_quiet = config->search.quiet_mode;
+	bool local_matrix = config->search.matrix_mode;
+
+	/* Runtime state */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bloom_extended_t *bloom = (bloom_extended_t *)config->runtime.bloom_filter;
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
+	int64_t N = config->runtime.address_count;
+	uint64_t N_SEQUENTIAL_MAX = config->runtime.sequential_max;
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	int MAXLENGTHADDRESS = config->runtime.max_address_length;
+
+	/* Generator points */
+	std::vector<Point> &Gn = *(std::vector<Point> *)config->runtime.generator_points;
+	Point &_2Gn = *(Point *)config->runtime.generator_point_2;
+
+	/* Range and stride */
+	Int &stride = *(Int *)config->runtime.stride;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+
+	/* Endomorphism constants */
+	Int &lambda = *(Int *)config->runtime.endo_lambda;
+	Int &lambda2 = *(Int *)config->runtime.endo_lambda2;
+	Int &beta = *(Int *)config->runtime.endo_beta;
+	Int &beta2 = *(Int *)config->runtime.endo_beta2;
+
+	/* GPU flags (used by cpu_use_y_parity_for_compressed_btc) */
+	bool FLAGGPU_FULL = config->gpu.full_mode;
+	bool FLAGGPU_HYBRID = config->gpu.hybrid_mode;
+
+	/* ---- End config-derived variables ---- */
+
 	Point pts[CPU_GRP_SIZE];
 	Point endomorphism_beta[CPU_GRP_SIZE];
 	Point endomorphism_beta2[CPU_GRP_SIZE];
@@ -541,7 +601,7 @@ void *thread_process(void *vargp)	{
 	int i,l,pp_offset,pn_offset,hLength = (CPU_GRP_SIZE / 2 - 1);
 	uint64_t j,count;
 	Point R,temporal,publickey;
-	int r,thread_number,continue_flag = 1,k;
+	int r,continue_flag = 1,k;
 	char *hextemp = NULL;
 
 	char publickeyhashrmd160[20];
@@ -550,43 +610,15 @@ void *thread_process(void *vargp)	{
 
 	char publickeyhashrmd160_endomorphism[12][4][20];
 
-	/* Extern globals needed by this function */
-	extern int FLAGMODE, FLAGSEARCH, FLAGCRYPTO, FLAGENDOMORPHISM;
-	extern int FLAGRANDOM, FLAGQUIET, FLAGMATRIX;
-	extern uint64_t N, N_SEQUENTIAL_MAX;
-	extern bloom_extended_t bloom;
-	extern int MAXLENGTHADDRESS;
-	extern struct thread_counter *steps;
-	extern struct thread_flag *ends;
-	extern std::vector<Point> Gn;
-	extern Point _2Gn;
-	extern Int stride;
-	extern Int n_range_end;
-	extern struct address_value *addressTable;
-	extern Int beta, beta2, lambda, lambda2;
-	/* THREADOUTPUT declared in search_context.h as std::atomic<int> */
-
-	/* Extract thread_number and config (if available) */
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-
-	/* Config-aware variables - use config if available, else fall back to globals */
-	int local_mode = FLAGMODE;
-	int local_search = FLAGSEARCH;
-	int local_crypto = FLAGCRYPTO;
-	bool local_endomorphism = FLAGENDOMORPHISM != 0;
-	bool local_random = FLAGRANDOM != 0;
-	bool local_quiet = FLAGQUIET != 0;
-	bool local_matrix = FLAGMATRIX != 0;
-
 	bool calculate_y = local_search == SEARCH_UNCOMPRESS || local_search == SEARCH_BOTH || local_crypto == CRYPTO_ETH;
-	calculate_y = calculate_y || cpu_use_y_parity_for_compressed_btc();
+	calculate_y = calculate_y || cpu_use_y_parity_for_compressed_btc(
+		local_mode, local_crypto, local_endomorphism ? 1 : 0, local_search,
+		FLAGGPU_HYBRID, FLAGGPU_FULL);
 	Int key_mpz,keyfound;
 	Int key_center;
 	Int stride_half;
 	Int stride_four;
 
-	free(tt);
 	profile_set_thread(thread_number);
 	grp->Set(dx);
 	stride_half.SetInt32(CPU_GRP_SIZE / 2);
@@ -751,7 +783,7 @@ void *thread_process(void *vargp)	{
 
 				if (prof) prof->ns_ec += (kh_profile_now_ns() - ec_start);
 				if((local_mode == MODE_RMD160 || local_mode == MODE_ADDRESS) && local_crypto == CRYPTO_BTC && !local_endomorphism) {
-					process_rmd160_batch_btc_simple(key_mpz, pts, count);
+					process_rmd160_batch_btc_simple(config, key_mpz, pts, count);
 				}
 				else {
 				for(j = 0; j < CPU_GRP_SIZE/4;j++){
@@ -837,7 +869,7 @@ void *thread_process(void *vargp)	{
 									if(local_search == SEARCH_COMPRESS || local_search == SEARCH_BOTH){
 										if(local_endomorphism)	{
 											for(l = 0;l < 6; l++)	{
-												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
+												r = bloom_ext_check_rmd160(bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -894,7 +926,7 @@ void *thread_process(void *vargp)	{
 										}
 										else	{
 											for(l = 0;l < 2; l++)	{
-												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
+												r = bloom_ext_check_rmd160(bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -918,7 +950,7 @@ void *thread_process(void *vargp)	{
 									if(local_search == SEARCH_UNCOMPRESS || local_search == SEARCH_BOTH)	{
 										if(local_endomorphism)	{
 											for(l = 6;l < 12; l++)	{
-												r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
+												r = bloom_ext_check_rmd160(bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 												if(r) {
 													r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 													if(r) {
@@ -962,7 +994,7 @@ void *thread_process(void *vargp)	{
 											}
 										}
 										else	{
-											r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
+											r = bloom_ext_check_rmd160(bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
 											if(r) {
 												r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 												if(r) {
@@ -980,7 +1012,7 @@ void *thread_process(void *vargp)	{
 								if(local_endomorphism)	{
 									for(k = 0; k < 4;k++)	{
 										for(l = 0;l < 6; l++)	{
-											r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
+											r = bloom_ext_check_rmd160(bloom, (uint8_t*)publickeyhashrmd160_endomorphism[l][k]);
 											if(r) {
 												r = searchbinary(addressTable,publickeyhashrmd160_endomorphism[l][k],N);
 												if(r) {
@@ -1026,7 +1058,7 @@ void *thread_process(void *vargp)	{
 								}
 								else	{
 									for(k = 0; k < 4;k++)	{
-										r = bloom_ext_check_rmd160(&bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
+										r = bloom_ext_check_rmd160(bloom, (uint8_t*)publickeyhashrmd160_uncompress[k]);
 										if(r) {
 											r = searchbinary(addressTable,publickeyhashrmd160_uncompress[k],N);
 											if(r) {
@@ -1044,7 +1076,7 @@ void *thread_process(void *vargp)	{
 							for(k = 0; k < 4;k++)	{
 								if(local_endomorphism)	{
 									pts[(4*j)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -1056,7 +1088,7 @@ void *thread_process(void *vargp)	{
 										}
 									}
 									endomorphism_beta[(j*4)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -1070,7 +1102,7 @@ void *thread_process(void *vargp)	{
 									}
 
 									endomorphism_beta2[(j*4)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
@@ -1084,7 +1116,7 @@ void *thread_process(void *vargp)	{
 								}
 								else	{
 									pts[(4*j)+k].x.Get32Bytes((unsigned char *)rawvalue);
-									r = bloom_ext_check(&bloom,rawvalue,MAXLENGTHADDRESS);
+									r = bloom_ext_check(bloom,rawvalue,MAXLENGTHADDRESS);
 									if(r) {
 										r = searchbinary(addressTable,rawvalue,N);
 										if(r) {
