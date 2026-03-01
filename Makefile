@@ -579,11 +579,11 @@ coverage: clean-coverage
 		--exclude 'src/hash/.*avx512.*' \
 		--exclude 'src/hash/.*shani.*' \
 		--exclude 'src/secp256k1/Random\.cpp' \
-		--fail-under-line 70 \
+		--fail-under-line 80 \
 		--print-summary \
 		--exclude-unreachable-branches
 	@echo ""
-	@echo "Coverage gate: 70% line coverage on crypto paths PASSED"
+	@echo "Coverage gate: 80% line coverage on crypto paths PASSED"
 	@echo "  (AVX-512/SHA-NI excluded: require specific CPU features)"
 	@echo "  (Random excluded: depends on system entropy, not unit-testable)"
 
