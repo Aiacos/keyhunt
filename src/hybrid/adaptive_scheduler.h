@@ -58,7 +58,7 @@ typedef struct {
 
     /* Thread safety */
     pthread_mutex_t lock;
-    volatile int update_in_progress;  /* Accessed via __atomic builtins for thread safety */
+    int update_in_progress;  /* Accessed via __atomic builtins for thread safety */
 
     /* State */
     bool initialized;

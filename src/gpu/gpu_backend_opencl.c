@@ -125,7 +125,7 @@ typedef struct {
     cl_kernel kernel_full_search;
 
     // Statistics
-    volatile uint64_t keys_processed;
+    uint64_t keys_processed;     /* Accessed via __atomic builtins for thread safety */
     double avg_throughput_mkeys;  // Moving average throughput (MKey/s)
 } opencl_device_t;
 
@@ -506,7 +506,7 @@ static int enumerate_opencl_devices(void) {
             dev->optimal_params = get_optimal_params_opencl(dev->vendor_name, dev->compute_units);
 
             // Initialize statistics
-            dev->keys_processed = 0;
+            __atomic_store_n(&dev->keys_processed, (uint64_t)0, __ATOMIC_RELAXED);
             dev->avg_throughput_mkeys = 0.0;
 
             printf("[OpenCL]   Device %d: %s\n", total_devices, dev->device_name);
@@ -676,7 +676,7 @@ void gpu_backend_get_stats(uint64_t *total_keys, double *total_mkeys_per_sec) {
     for (int d = 0; d < g_device_count; d++) {
         opencl_device_t *dev = &g_devices[d];
         if (dev->active) {
-            *total_keys += dev->keys_processed;
+            *total_keys += __atomic_load_n(&dev->keys_processed, __ATOMIC_ACQUIRE);
             *total_mkeys_per_sec += dev->avg_throughput_mkeys;
         }
     }
@@ -1199,8 +1199,8 @@ int opencl_full_search(const gpu_search_config_t *config) {
     // C++ mode: use atomic load
     while (!config->should_stop->load(std::memory_order_acquire) && u256_cmp_host(&cursor, &end_key) < 0) {
 #else
-    // C mode: use volatile read
-    while (!(*config->should_stop) && u256_cmp_host(&cursor, &end_key) < 0) {
+    // C mode: use __atomic builtin for thread-safe read
+    while (!__atomic_load_n(config->should_stop, __ATOMIC_ACQUIRE) && u256_cmp_host(&cursor, &end_key) < 0) {
 #endif
         // Launch kernel on all active devices with proportional work distribution
         for (int d = 0; d < g_device_count; d++) {
@@ -1285,7 +1285,7 @@ int opencl_full_search(const gpu_search_config_t *config) {
 
             // Advance cursor
             u256_add_u64_host(&cursor, keys_this_launch);
-            dev->keys_processed += keys_this_launch;
+            __atomic_fetch_add(&dev->keys_processed, keys_this_launch, __ATOMIC_RELAXED);
             total_keys += keys_this_launch;
         }
 
@@ -1376,7 +1376,8 @@ int opencl_full_search(const gpu_search_config_t *config) {
                 opencl_device_t *dev = &g_devices[d];
                 if (!dev->active) continue;
 
-                double dev_mkeys_per_sec = (dev->keys_processed / 1000000.0) / elapsed_sec;
+                uint64_t dev_keys = __atomic_load_n(&dev->keys_processed, __ATOMIC_ACQUIRE);
+                double dev_mkeys_per_sec = (dev_keys / 1000000.0) / elapsed_sec;
                 // Exponential moving average for throughput
                 if (dev->avg_throughput_mkeys == 0.0) {
                     dev->avg_throughput_mkeys = dev_mkeys_per_sec;
@@ -1386,7 +1387,7 @@ int opencl_full_search(const gpu_search_config_t *config) {
 
                 printf("  Device %d (%s): %.2f MKey/s (%.2f M keys)\n",
                        d, dev->device_name, dev_mkeys_per_sec,
-                       dev->keys_processed / 1000000.0);
+                       dev_keys / 1000000.0);
             }
 
             fflush(stdout);
@@ -1407,12 +1408,13 @@ int opencl_full_search(const gpu_search_config_t *config) {
             printf("[OpenCL] Per-device breakdown:\n");
             for (int d = 0; d < g_device_count; d++) {
                 opencl_device_t *dev = &g_devices[d];
-                if (dev->keys_processed > 0) {
-                    double dev_final_mkeys_per_sec = (dev->keys_processed / 1000000.0) / final_elapsed_sec;
-                    double percentage = (total_keys > 0) ? (dev->keys_processed * 100.0 / total_keys) : 0.0;
+                uint64_t dev_final_keys = __atomic_load_n(&dev->keys_processed, __ATOMIC_ACQUIRE);
+                if (dev_final_keys > 0) {
+                    double dev_final_mkeys_per_sec = (dev_final_keys / 1000000.0) / final_elapsed_sec;
+                    double percentage = (total_keys > 0) ? (dev_final_keys * 100.0 / total_keys) : 0.0;
                     printf("  Device %d (%s): %.2f MKey/s, %.2f M keys (%.1f%%)\n",
                            d, dev->device_name, dev_final_mkeys_per_sec,
-                           dev->keys_processed / 1000000.0, percentage);
+                           dev_final_keys / 1000000.0, percentage);
                 }
             }
         }

@@ -29,9 +29,9 @@ struct gpu_multi_worker_s {
 
     /* Synchronization */
     platform_mutex_t stats_lock;
-    volatile int should_stop;
-    volatile bool paused;
-    volatile bool has_result;
+    int should_stop;   /* Accessed via __atomic builtins for thread safety */
+    bool paused;       /* Accessed via __atomic builtins for thread safety */
+    bool has_result;   /* Accessed via __atomic builtins for thread safety */
 
     /* Status tracking */
     worker_status_t global_status;
@@ -71,9 +71,9 @@ gpu_multi_worker_t* gpu_worker_init(const worker_config_t *config) {
     /* Copy configuration */
     worker->config = *config;
     worker->worker_count = config->device_count;
-    worker->should_stop = false;
-    worker->paused = false;
-    worker->has_result = false;
+    __atomic_store_n(&worker->should_stop, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&worker->paused, false, __ATOMIC_RELAXED);
+    __atomic_store_n(&worker->has_result, false, __ATOMIC_RELAXED);
     worker->global_status = WORKER_IDLE;
 
     /* Initialize per-GPU worker contexts */
@@ -148,16 +148,16 @@ static platform_thread_return_t gpu_worker_thread(void *arg) {
     printf("[Worker %d] Thread started for GPU device %d\n", device_id, device_id);
 
     /* Main work loop */
-    while (!manager->should_stop && !manager->has_result) {
+    while (!__atomic_load_n(&manager->should_stop, __ATOMIC_ACQUIRE) && !__atomic_load_n(&manager->has_result, __ATOMIC_ACQUIRE)) {
         /* Check if paused */
-        if (manager->paused) {
+        if (__atomic_load_n(&manager->paused, __ATOMIC_ACQUIRE)) {
             platform_mutex_lock(&manager->stats_lock);
             ctx->stats.status = WORKER_IDLE;
             platform_mutex_unlock(&manager->stats_lock);
 
             /* Sleep briefly while paused */
             uint64_t pause_start = get_time_ms();
-            while (manager->paused && !manager->should_stop) {
+            while (__atomic_load_n(&manager->paused, __ATOMIC_ACQUIRE) && !__atomic_load_n(&manager->should_stop, __ATOMIC_ACQUIRE)) {
                 /* Sleep for 100ms */
                 uint64_t now = get_time_ms();
                 if (now - pause_start > 100) break;
@@ -212,7 +212,7 @@ static platform_thread_return_t gpu_worker_thread(void *arg) {
 
         /* Statistics tracking */
         search_config.keys_checked = NULL;  /* Worker tracks separately */
-        search_config.should_stop = (volatile int*)&manager->should_stop;
+        search_config.should_stop = (volatile int*)&manager->should_stop;  /* __atomic builtins handle synchronization at call sites */
         search_config.quiet = 1;  /* Suppress GPU progress output */
 
         /* Execute GPU search */
@@ -273,7 +273,7 @@ static platform_thread_return_t gpu_worker_thread(void *arg) {
 
         /* Check if key was found */
         if (found_count > 0) {
-            manager->has_result = true;
+            __atomic_store_n(&manager->has_result, true, __ATOMIC_RELEASE);
             printf("[Worker %d] Found %d key(s)! Signaling completion.\n",
                    device_id, found_count);
             break;
@@ -326,7 +326,7 @@ bool gpu_worker_start(gpu_multi_worker_t *worker) {
             /* Stop already-started threads before returning */
             if (started_count > 0) {
                 fprintf(stderr, "[Worker] Stopping %d already-started workers...\n", started_count);
-                worker->should_stop = true;
+                __atomic_store_n(&worker->should_stop, 1, __ATOMIC_RELEASE);
 
                 /* Wait for threads to stop */
                 for (int j = 0; j < i; j++) {
@@ -370,7 +370,7 @@ bool gpu_worker_stop(gpu_multi_worker_t *worker, uint64_t timeout_ms) {
     printf("[Worker] Stopping %d worker threads...\n", worker->worker_count);
 
     /* Signal all workers to stop */
-    worker->should_stop = true;
+    __atomic_store_n(&worker->should_stop, 1, __ATOMIC_RELEASE);
     worker->global_status = WORKER_STOPPING;
 
     /* Wait for all threads to finish */
@@ -445,7 +445,7 @@ bool gpu_worker_has_result(const gpu_multi_worker_t *worker) {
     if (!worker) {
         return false;
     }
-    return worker->has_result;
+    return __atomic_load_n(&worker->has_result, __ATOMIC_ACQUIRE);
 }
 
 void gpu_worker_get_stats(const gpu_multi_worker_t *worker,
@@ -506,7 +506,7 @@ bool gpu_worker_pause(gpu_multi_worker_t *worker) {
     }
 
     /* Check if already paused */
-    if (worker->paused) {
+    if (__atomic_load_n(&worker->paused, __ATOMIC_ACQUIRE)) {
         printf("[Worker] Workers already paused\n");
         return true;
     }
@@ -520,7 +520,7 @@ bool gpu_worker_pause(gpu_multi_worker_t *worker) {
     printf("[Worker] Pausing %d worker threads...\n", worker->worker_count);
 
     /* Signal workers to pause */
-    worker->paused = true;
+    __atomic_store_n(&worker->paused, true, __ATOMIC_RELEASE);
 
     /* Wait briefly for workers to enter paused state */
     uint64_t pause_start = get_time_ms();
@@ -565,7 +565,7 @@ bool gpu_worker_resume(gpu_multi_worker_t *worker) {
     }
 
     /* Check if actually paused */
-    if (!worker->paused) {
+    if (!__atomic_load_n(&worker->paused, __ATOMIC_ACQUIRE)) {
         printf("[Worker] Workers already running\n");
         return true;
     }
@@ -579,7 +579,7 @@ bool gpu_worker_resume(gpu_multi_worker_t *worker) {
     printf("[Worker] Resuming %d worker threads...\n", worker->worker_count);
 
     /* Clear pause flag */
-    worker->paused = false;
+    __atomic_store_n(&worker->paused, false, __ATOMIC_RELEASE);
 
     printf("[Worker] Worker threads resumed\n");
     return true;
