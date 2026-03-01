@@ -347,9 +347,9 @@ TEST(threading_atomic_counter_no_race) {
     platform_thread_create(&t1, worker_func, NULL);
     platform_thread_create(&t2, worker_func, NULL);
 
-    /* Let threads run briefly */
-    platform_time_now_ns(); /* Touch the clock */
-    for (volatile int i = 0; i < 100000; i++) {} /* Spin briefly */
+    /* Let threads run briefly — use nanosleep, NOT volatile spin loop */
+    struct timespec ts = {0, 10000000}; /* 10ms */
+    nanosleep(&ts, NULL);
 
     stop_flag.store(1, std::memory_order_release);
     platform_thread_join(t1, NULL);
