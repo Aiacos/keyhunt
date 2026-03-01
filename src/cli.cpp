@@ -3,6 +3,7 @@
 
 #include "cli.h"
 #include "config/config.h"
+#include "benchmark.h"
 #include "secp256k1/Int.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -195,14 +196,12 @@ int cli_parse(int argc, char **argv, cli_args_t *args) {
         }
         if (strcmp(argv[i], "--perf-history") == 0) {
             args->show_perf_history = true;
-            extern void benchmark_show_performance_history(void);
             benchmark_show_performance_history();
             return 0;
         }
         if (strcmp(argv[i], "--perf-compare") == 0) {
             args->show_perf_compare = true;
             // Display community statistics
-            extern void benchmark_show_community_stats(void);
             benchmark_show_community_stats();
             return 0;
         }
