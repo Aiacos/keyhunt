@@ -1,6 +1,9 @@
 /*
  * Fast BSGS - Optimized Baby Step Giant Step Implementation
  * C interface only - avoids macro conflicts with Int.h
+ *
+ * CPU feature detection is handled by the caller (keyhunt.cpp) via
+ * bsgs_fast_set_cpu_features() -- no local cpuid detection here.
  */
 
 #include <immintrin.h>
@@ -10,26 +13,11 @@
 #include <string.h>
 #include <stdio.h>
 
-#ifdef __linux__
-#include <cpuid.h>
-#endif
-
 // Global performance stats
 static bsgs_perf_stats_t g_stats;
 static bool g_initialized = false;
-static bool g_avx2_available = false;
-static bool g_avx512_available = false;
-
-// Check CPU features
-static void detect_cpu_features() {
-#ifdef __linux__
-    unsigned int eax, ebx, ecx, edx;
-    if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
-        g_avx2_available = (ebx & (1 << 5)) != 0;
-        g_avx512_available = (ebx & (1 << 16)) != 0;
-    }
-#endif
-}
+static bool g_bsgs_avx2 = false;
+static bool g_bsgs_avx512 = false;
 
 // ============================================================================
 // C Interface
@@ -37,10 +25,14 @@ static void detect_cpu_features() {
 
 extern "C" {
 
+void bsgs_fast_set_cpu_features(bool has_avx2, bool has_avx512) {
+    g_bsgs_avx2 = has_avx2;
+    g_bsgs_avx512 = has_avx512;
+}
+
 int bsgs_fast_init(void) {
     if (g_initialized) return 0;
 
-    detect_cpu_features();
     memset(&g_stats, 0, sizeof(g_stats));
     g_initialized = true;
 
@@ -62,13 +54,13 @@ void bsgs_fast_reset_stats(void) {
 }
 
 int bsgs_fast_simd_available(void) {
-    return g_avx2_available ? (g_avx512_available ? 2 : 1) : 0;
+    return g_bsgs_avx2 ? (g_bsgs_avx512 ? 2 : 1) : 0;
 }
 
 void bsgs_fast_print_caps(void) {
     printf("BSGS Fast Capabilities:\n");
-    printf("  AVX2:    %s\n", g_avx2_available ? "YES" : "NO");
-    printf("  AVX-512: %s\n", g_avx512_available ? "YES" : "NO");
+    printf("  AVX2:    %s\n", g_bsgs_avx2 ? "YES" : "NO");
+    printf("  AVX-512: %s\n", g_bsgs_avx512 ? "YES" : "NO");
 }
 
 // Increment bloom hits counter (thread-safe)

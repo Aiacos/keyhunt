@@ -151,13 +151,14 @@ void kh_bsgs_config_init(bsgs_config_t *cfg) {
 void kh_gpu_config_init(gpu_config_t *cfg) {
     if (!cfg) return;
 
-    /* NOTE: gpu_config_t fields use volatile qualifiers for cross-thread visibility.
-     * All fields are explicitly initialized below. */
+    /* NOTE: gpu_config_t uses std::atomic fields for cross-thread visibility.
+     * Atomic fields cannot be memset; initialize each field explicitly. */
 
     /* Defaults */
     cfg->enabled = 0;  /* Off by default */
     cfg->full_mode = false;
     cfg->hybrid_mode = false;
+    cfg->multi_gpu_enabled = false;
 
     for (int i = 0; i < GPU_MAX_DEVICES; i++) {
         cfg->device_ids[i] = -1;
@@ -170,9 +171,9 @@ void kh_gpu_config_init(gpu_config_t *cfg) {
     cfg->threads_per_block = 256;
     cfg->keys_per_thread = 256;
 
-    cfg->keys_checked = 0;
-    cfg->keys_checked_cur = 0;
-    cfg->should_stop = 0;
+    cfg->keys_checked.store(0, std::memory_order_relaxed);
+    cfg->keys_checked_cur.store(0, std::memory_order_relaxed);
+    cfg->should_stop.store(0, std::memory_order_relaxed);
 
     cfg->bloom_uploaded = false;
 }
@@ -257,7 +258,7 @@ void kh_autotune_config_init(autotune_config_t *cfg) {
 void kh_config_init(keyhunt_config_t *cfg) {
     if (!cfg) return;
 
-    /* NOTE: gpu_config_t uses volatile fields for cross-thread visibility.
+    /* NOTE: gpu_config_t uses std::atomic fields for cross-thread visibility.
      * Zero each section explicitly for clarity. */
 
     cfg->version = KH_CONFIG_VERSION;

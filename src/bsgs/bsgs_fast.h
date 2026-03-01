@@ -42,6 +42,9 @@ void bsgs_fast_get_stats(bsgs_perf_stats_t *stats);
 // Reset performance statistics
 void bsgs_fast_reset_stats(void);
 
+// Set CPU feature availability (called from main after sysinfo detection)
+void bsgs_fast_set_cpu_features(bool has_avx2, bool has_avx512);
+
 // Check if SIMD optimizations are available
 // Returns: 0 = none, 1 = AVX2, 2 = AVX-512
 int bsgs_fast_simd_available(void);

@@ -23,9 +23,12 @@
 #include "../cli.h"
 
 #ifdef __cplusplus
+#include <atomic>
 /* Forward declaration of Int class for C++ compilation */
 class Int;
 extern "C" {
+#else
+#include <stdatomic.h>
 #endif
 
 /* ============================================================================
@@ -151,10 +154,16 @@ typedef struct {
     int  threads_per_block;       /* Threads per CUDA block */
     int  keys_per_thread;         /* Keys processed per GPU thread */
 
-    /* Runtime stats (volatile for cross-thread visibility) */
-    volatile uint64_t keys_checked;      /* Total GPU keys checked */
-    volatile uint64_t keys_checked_cur;  /* Current block keys */
-    volatile int      should_stop;       /* Signal GPU to stop */
+    /* Runtime stats (atomic for cross-thread visibility) */
+#ifdef __cplusplus
+    std::atomic<uint64_t> keys_checked;      /* Total GPU keys checked */
+    std::atomic<uint64_t> keys_checked_cur;  /* Current block keys */
+    std::atomic<int>      should_stop;       /* Signal GPU to stop */
+#else
+    _Atomic uint64_t keys_checked;      /* Total GPU keys checked */
+    _Atomic uint64_t keys_checked_cur;  /* Current block keys */
+    _Atomic int      should_stop;       /* Signal GPU to stop */
+#endif
 
     /* Bloom filter state */
     bool bloom_uploaded;          /* GPU-side bloom filter ready */

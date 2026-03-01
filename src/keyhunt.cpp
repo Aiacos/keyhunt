@@ -56,6 +56,7 @@
 #include "output.h"
 #include "progress.h"
 #include "cli.h"
+#include "bsgs/bsgs_fast.h"
 #include "bsgs/bsgs_sort.h"
 #include "sort/sort.h"
 #include "crypto/address_util.h"
@@ -1698,6 +1699,9 @@ int main(int argc, char **argv)	{
 	} else {
 		output_info("AVX2 not available: Using SSE2 4-way parallel RIPEMD160\n");
 	}
+
+	// Propagate CPU features to bsgs_fast module (unified detection)
+	bsgs_fast_set_cpu_features(g_avx2_available, false);
 
 	// Store auto-tuned recommendations (don't apply yet - wait for user args)
 	OPTIMAL_THREADS = g_sysinfo.recommended_threads;
