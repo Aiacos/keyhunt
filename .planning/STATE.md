@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-01T09:10:54.074Z"
-progress:
-  total_phases: 2
-  completed_phases: 2
-  total_plans: 10
-  completed_plans: 10
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-01T08:40:51Z"
+last_updated: "2026-03-01T11:57:00Z"
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 10
-  completed_plans: 10
+  completed_phases: 2
+  total_plans: 15
+  completed_plans: 11
 ---
 
 # Project State
@@ -31,23 +18,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-28)
 
 **Core value:** Every search result must be cryptographically correct -- correctness and stability under sustained load are non-negotiable.
-**Current focus:** Phase 2 -- Sanitizer Coverage
+**Current focus:** Phase 3 -- Config Migration
 
 ## Current Position
 
-Phase: 2 of 6 (Sanitizer Coverage)
-Plan: 4 of 4 in current phase -- COMPLETE
+Phase: 3 of 6 (Config Migration)
+Plan: 1 of 5 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-01 -- Plan 02-04 complete: TSan threading tests with zero data-race findings
+Last activity: 2026-03-01 -- Plan 03-01 complete: Config schema freeze + write-site bridge + xpoint/rmd160 migration
 
-Progress: [████░░░░░░] 38% (10/26 estimated total plans)
+Progress: [████░░░░░░] 42% (11/26 estimated total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
-- Average duration: ~14 min
-- Total execution time: ~2.3 hours
+- Total plans completed: 11
+- Average duration: ~13 min
+- Total execution time: ~2.5 hours
 
 **By Phase:**
 
@@ -55,9 +42,10 @@ Progress: [████░░░░░░] 38% (10/26 estimated total plans)
 |-------|-------|-------|----------|
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
+| 3 - Config Migration | 1/5 | ~10 min | ~10 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-06 (~5 min), 02-01 (~15 min), 02-02 (~6 min), 02-04 (~16 min)
+- Last 5 plans: 02-01 (~15 min), 02-02 (~6 min), 02-03 (~16 min), 02-04 (~16 min), 03-01 (~10 min)
 - Trend: stable velocity
 
 *Updated after each plan completion*
@@ -105,6 +93,11 @@ Recent decisions affecting current work:
 - [02-04]: Thread tests use nanosleep(10ms) not volatile spin -- volatile contradicts MEM-03 and TSan flags it
 - [02-04]: GPU none-backend returns -1 from init to signal no GPU (tests SKIP properly on headless machines)
 - [02-04]: XPoint endomorphism test InitK1/SetupField args must be static (store raw pointers)
+- [03-01]: Config bridge placed after CLI parsing, secondary bridge before each thread creation path for runtime-allocated state
+- [03-01]: flagsearch_to_key_format() handles SEARCH_COMPRESS(1)/KEYTYPE_COMPRESSED(0) value swap between legacy and new enums
+- [03-01]: All runtime_state_t new fields are void* for C compatibility with comments documenting actual C++ types
+- [03-01]: sequential_max default 0x100000000ULL; max_address_length default 20
+- [03-01]: Schema freeze comment block prevents field removal during Phase 3
 
 ### Pending Todos
 
@@ -119,5 +112,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-03-PLAN.md (ASan+UBSan zero findings -- all production+test bugs fixed)
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None

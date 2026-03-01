@@ -13,7 +13,7 @@ Six phases harden an existing, feature-complete codebase to production quality. 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Test Baseline** - Fix all 19 pre-existing test failures and verify all 6 search modes against known answers
-- [ ] **Phase 2: Sanitizer Coverage** - Achieve ASan, UBSan, and TSan clean builds with zero findings
+- [x] **Phase 2: Sanitizer Coverage** - Achieve ASan, UBSan, and TSan clean builds with zero findings
 - [ ] **Phase 3: Config Migration** - Eliminate all extern globals by wiring keyhunt_config_t into every search module
 - [ ] **Phase 4: Monolith Decomposition** - Reduce keyhunt.cpp from ~5300 lines to a ~600-line orchestrator
 - [ ] **Phase 5: CI Pipeline** - Green GitHub Actions matrix on Linux, Windows, and macOS with regression detection
@@ -39,7 +39,7 @@ Plans:
 - [x] 01-03-PLAN.md — E2E tests for ADDRESS, BSGS, XPOINT modes
 - [x] 01-04-PLAN.md — E2E tests for RMD160, VANITY, MINIKEYS modes + coverage gate
 - [x] 01-05-PLAN.md — Gap closure: Int.cpp and SECP256K1.cpp coverage tests
-- [ ] 01-06-PLAN.md — Gap closure: sha256_sse tests + raise coverage gate to 80%
+- [x] 01-06-PLAN.md — Gap closure: sha256_sse tests + raise coverage gate to 80%
 
 ### Phase 2: Sanitizer Coverage
 **Goal**: The binary is free of memory errors, undefined behavior, and data races as confirmed by three independent sanitizer builds
@@ -55,8 +55,8 @@ Plans:
 Plans:
 - [x] 02-01-PLAN.md — Install sanitizer packages, MEM-03 (volatile->atomic in gpu_config_t), MEM-04 (eliminate bsgs_fast.cpp duplicate detection), add make asan alias
 - [x] 02-02-PLAN.md — Convert all remaining volatile cross-thread variables to atomics (THREADOUTPUT, bsgs_found, gpu_multi_worker, opencl, adaptive_scheduler)
-- [ ] 02-03-PLAN.md — ASan+UBSan clean build: run, catalog findings, fix to zero (MEM-01)
-- [ ] 02-04-PLAN.md — TSan clean build: create multi-threaded tests, run, fix to zero (MEM-02)
+- [x] 02-03-PLAN.md — ASan+UBSan clean build: run, catalog findings, fix to zero (MEM-01)
+- [x] 02-04-PLAN.md — TSan clean build: create multi-threaded tests, run, fix to zero (MEM-02)
 
 ### Phase 3: Config Migration
 **Goal**: Every search module receives all runtime state through keyhunt_config_t* and reads no extern globals
@@ -70,7 +70,7 @@ Plans:
 **Plans:** 5 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Freeze config schema + populate write-sites + migrate xpoint/rmd160 (trivial)
+- [x] 03-01-PLAN.md — Freeze config schema + populate write-sites + migrate xpoint/rmd160 (trivial)
 - [ ] 03-02-PLAN.md — Wire config into search_minikeys.cpp and search_vanity.cpp
 - [ ] 03-03-PLAN.md — Wire config into search_address.cpp and io.cpp
 - [ ] 03-04-PLAN.md — Wire config into search_bsgs.cpp and search_bsgs_threads.cpp (bsgs_context_t)
@@ -117,8 +117,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Test Baseline | 6/6 | Complete | - |
-| 2. Sanitizer Coverage | 2/4 | In progress | - |
-| 3. Config Migration | 0/5 | Not started | - |
+| 2. Sanitizer Coverage | 4/4 | Complete | - |
+| 3. Config Migration | 1/5 | In progress | - |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |
 | 5. CI Pipeline | 0/TBD | Not started | - |
 | 6. Fuzz and Advanced Verification | 0/TBD | Not started | - |
