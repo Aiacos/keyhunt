@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-01T12:27:31Z"
+last_updated: "2026-03-01T12:47:18Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 14
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 3 of 6 (Config Migration)
-Plan: 3 of 5 in current phase -- COMPLETE
+Plan: 4 of 5 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-01 -- Plan 03-03 complete: search_address.cpp + io.cpp config migration
+Last activity: 2026-03-01 -- Plan 03-04 complete: BSGS config migration via bsgs_context_t
 
-Progress: [█████░░░░░] 50% (13/26 estimated total plans)
+Progress: [█████░░░░░] 54% (14/26 estimated total plans)
 
 ## Performance Metrics
 
@@ -42,11 +42,11 @@ Progress: [█████░░░░░] 50% (13/26 estimated total plans)
 |-------|-------|-------|----------|
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
-| 3 - Config Migration | 3/5 | ~38 min | ~13 min |
+| 3 - Config Migration | 4/5 | ~63 min | ~16 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-03 (~16 min), 02-04 (~16 min), 03-01 (~10 min), 03-02 (~25 min), 03-03 (~3 min)
-- Trend: accelerating (config-wiring pattern now well-established)
+- Last 5 plans: 02-04 (~16 min), 03-01 (~10 min), 03-02 (~25 min), 03-03 (~3 min), 03-04 (~25 min)
+- Trend: BSGS migration was complex (30+ fields, 5 thread variants, scope lifetime bug)
 
 *Updated after each plan completion*
 
@@ -106,6 +106,10 @@ Recent decisions affecting current work:
 - [03-03]: FLAGSEARCH conversion at thread_process entry: KEYTYPE_COMPRESSED(0)->SEARCH_COMPRESS(1) via ternary
 - [03-03]: cpu_use_y_parity_for_compressed_btc parameterized (6 explicit args instead of 6 externs)
 - [03-03]: io.cpp writekey signature change deferred to Phase 4 (10+ call sites would break)
+- [03-04]: bsgs_context_t stores pointers to globals (not copies) -- Int/Point are 256-bit, threads share read-only
+- [03-04]: bsgs_ctx declared at main() scope to ensure lifetime outlives all BSGS threads (fixed segfault)
+- [03-04]: bPload threads keep local extern declarations since they run during init before bsgs_context exists
+- [03-04]: Tasks 1+2 committed atomically since BSGS thread functions call helper functions with new signatures
 
 ### Pending Todos
 
@@ -120,5 +124,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 03-03-PLAN.md
+Stopped at: Completed 03-04-PLAN.md
 Resume file: None

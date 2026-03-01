@@ -39,7 +39,7 @@ Requirements for production-ready release. Each maps to roadmap phases.
 
 - [x] **CFG-01**: Freeze keyhunt_config_t struct schema (no mid-migration shape changes)
 - [x] **CFG-02**: Wire config parameter into search_address.cpp (eliminate extern globals)
-- [ ] **CFG-03**: Wire config parameter into search_bsgs.cpp and search_bsgs_threads.cpp
+- [x] **CFG-03**: Wire config parameter into search_bsgs.cpp and search_bsgs_threads.cpp
 - [x] **CFG-04**: Wire config parameter into search_vanity.cpp
 - [x] **CFG-05**: Wire config parameter into search_minikeys.cpp
 - [x] **CFG-06**: Wire config parameter into search_xpoint.cpp and search_rmd160.cpp
