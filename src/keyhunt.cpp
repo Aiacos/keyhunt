@@ -170,8 +170,9 @@ int thread_rand_n(int n) {
 
 /* Mode, crypto, and search constants now provided by search/search_common.h */
 
-// NOTE: Global variables migration in progress to keyhunt_config_t (see src/config/config.h)
-// Many variables still use global state until migration is complete
+// NOTE: Global variables migrated to keyhunt_config_t (Phase 3 complete).
+// Search modules access state via config pointer. Globals remain for keyhunt.cpp
+// and io.cpp until Phase 4 monolith decomposition.
 
 // Infrastructure globals
 uint32_t THREADBPWORKLOAD = 1048576;
@@ -636,7 +637,7 @@ platform_mutex_t write_random;
 platform_mutex_t bsgs_thread;
 platform_mutex_t *bPload_mutex = NULL;
 
-// NOTE: Thread runtime state variables migration in progress to runtime_state_t in keyhunt_config_t
+// Thread runtime state (mirrored to runtime_state_t; globals remain until Phase 4)
 uint64_t FINISHED_THREADS_COUNTER = 0;
 uint64_t FINISHED_THREADS_BP = 0;
 uint64_t THREADCYCLES = 0;
@@ -646,7 +647,7 @@ uint64_t OLDFINISHED_ITEMS = 0;
 
 uint8_t byte_encode_crypto = 0x00;		/* Bitcoin  */
 
-// NOTE: Vanity and bloom variables migration in progress to runtime_state_t in keyhunt_config_t
+// Vanity and bloom variables (mirrored to runtime_state_t; globals remain until Phase 4)
 int vanity_rmd_targets = 0;
 int vanity_rmd_total = 0;
 int *vanity_rmd_limits = NULL;
@@ -663,8 +664,7 @@ struct thread_counter *steps = NULL;
 struct thread_flag *ends = NULL;
 uint64_t N = 0;
 
-// NOTE: Global FLAG* variables migration in progress to keyhunt_config_t (see MIGRATION_GUIDE.md)
-// Search configuration flags
+// Search configuration flags (mirrored to search_config_t; globals remain until Phase 4)
 int FLAGSKIPCHECKSUM = 0;
 int FLAGENDOMORPHISM = 0;
 int FLAGBLOOMMULTIPLIER = 1;
@@ -1674,6 +1674,10 @@ int main(int argc, char **argv)	{
 
 	// -------------------------------------------------------------------------
 	// Initialize unified configuration structure
+	//
+	// Phase 3 Config Migration Complete (CFG-01 through CFG-09)
+	// All search modules receive state via keyhunt_config_t* through thread_args.
+	// Remaining local externs in io.cpp are Phase 4 cleanup targets.
 	// -------------------------------------------------------------------------
 	keyhunt_config_t config;
 	kh_config_init(&config);
