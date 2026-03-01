@@ -215,8 +215,8 @@ TEST(fused_1B_all_ones) {
  * ============================================================================ */
 
 TEST(fused_2B_zero_input) {
-    /* Test 2-block version with all-zero input */
-    uint32_t input[8][16];
+    /* Test 2-block version with all-zero input (2 blocks = 32 uint32_t per stream) */
+    uint32_t input[8][32];
     uint8_t output_separate[8][32];
     uint8_t hash_separate[8][20];
     uint8_t hash_fused[8][20];
@@ -254,13 +254,14 @@ TEST(fused_2B_zero_input) {
 }
 
 TEST(fused_2B_pattern_input) {
-    /* Test 2-block version with pattern input */
-    uint32_t input[8][16];
+    /* Test 2-block version with pattern input (2 blocks = 32 uint32_t per stream) */
+    uint32_t input[8][32];
     uint8_t output_separate[8][32];
     uint8_t hash_separate[8][20];
     uint8_t hash_fused[8][20];
 
-    /* Fill each lane with different pattern */
+    /* Zero-initialize then fill first block with pattern (second block stays zero) */
+    memset(input, 0, sizeof(input));
     for (int i = 0; i < 8; i++) {
         fill_test_pattern(input[i], i * 13);
     }
@@ -296,8 +297,8 @@ TEST(fused_2B_pattern_input) {
 
 TEST(fused_2B_uncompressed_key) {
     /* Test with uncompressed public key pattern */
-    /* This simulates real uncompressed key data (65 bytes) */
-    uint32_t input[8][16];
+    /* This simulates real uncompressed key data (65 bytes padded to 2 blocks = 128 bytes) */
+    uint32_t input[8][32];
     uint8_t output_separate[8][32];
     uint8_t hash_separate[8][20];
     uint8_t hash_fused[8][20];

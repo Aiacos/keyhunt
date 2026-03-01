@@ -30,11 +30,7 @@ struct address_value {
 int searchbinary(struct address_value *buffer, char *data, int64_t array_length) {
     /* Iterate through all targets to find a match */
     for (int64_t i = 0; i < array_length; i++) {
-        /* Try 32-byte comparison first (XPOINT) */
-        if (memcmp(buffer[i].address, data, 32) == 0) {
-            return 1;
-        }
-        /* Try 20-byte comparison (RMD160) */
+        /* Try 20-byte comparison first (RMD160 - always safe since data is at least 20 bytes) */
         if (memcmp(buffer[i].address, data, 20) == 0) {
             return 1;
         }
