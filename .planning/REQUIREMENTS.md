@@ -44,8 +44,8 @@ Requirements for production-ready release. Each maps to roadmap phases.
 - [x] **CFG-05**: Wire config parameter into search_minikeys.cpp
 - [x] **CFG-06**: Wire config parameter into search_xpoint.cpp and search_rmd160.cpp
 - [x] **CFG-07**: Wire config parameter into io/io.cpp
-- [ ] **CFG-08**: Eliminate search_context.h extern declarations (target: 0 remaining)
-- [ ] **CFG-09**: All search modules accept keyhunt_config_t* as parameter, no global reads
+- [x] **CFG-08**: Eliminate search_context.h extern declarations (target: 0 remaining)
+- [x] **CFG-09**: All search modules accept keyhunt_config_t* as parameter, no global reads
 
 ### Code Structure
 
@@ -136,8 +136,8 @@ Deferred to future release. Tracked but not in current roadmap.
 | CFG-05 | Phase 3 | Complete |
 | CFG-06 | Phase 3 | Complete |
 | CFG-07 | Phase 3 | Complete |
-| CFG-08 | Phase 3 | Pending |
-| CFG-09 | Phase 3 | Pending |
+| CFG-08 | Phase 3 | Complete |
+| CFG-09 | Phase 3 | Complete |
 | STR-01 | Phase 4 | Pending |
 | STR-02 | Phase 4 | Pending |
 | STR-03 | Phase 4 | Pending |

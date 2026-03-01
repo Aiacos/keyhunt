@@ -8,7 +8,7 @@ progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 15
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -22,19 +22,19 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 
 ## Current Position
 
-Phase: 3 of 6 (Config Migration)
-Plan: 4 of 5 in current phase -- COMPLETE
-Status: In Progress
-Last activity: 2026-03-01 -- Plan 03-04 complete: BSGS config migration via bsgs_context_t
+Phase: 3 of 6 (Config Migration) -- COMPLETE
+Plan: 5 of 5 in current phase -- COMPLETE
+Status: Phase 3 Complete
+Last activity: 2026-03-01 -- Plan 03-05 complete: search_context.h externs eliminated, Phase 3 validated
 
-Progress: [█████░░░░░] 54% (14/26 estimated total plans)
+Progress: [██████░░░░] 58% (15/26 estimated total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
+- Total plans completed: 12
 - Average duration: ~13 min
-- Total execution time: ~2.5 hours
+- Total execution time: ~2.6 hours
 
 **By Phase:**
 
@@ -42,11 +42,11 @@ Progress: [█████░░░░░] 54% (14/26 estimated total plans)
 |-------|-------|-------|----------|
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
-| 3 - Config Migration | 4/5 | ~63 min | ~16 min |
+| 3 - Config Migration | 5/5 | ~71 min | ~14 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-04 (~16 min), 03-01 (~10 min), 03-02 (~25 min), 03-03 (~3 min), 03-04 (~25 min)
-- Trend: BSGS migration was complex (30+ fields, 5 thread variants, scope lifetime bug)
+- Last 5 plans: 03-01 (~10 min), 03-02 (~25 min), 03-03 (~3 min), 03-04 (~25 min), 03-05 (~8 min)
+- Trend: Final cleanup plan fast -- most work done in prior plans
 
 *Updated after each plan completion*
 
@@ -111,6 +111,10 @@ Recent decisions affecting current work:
 - [03-04]: bPload threads keep local extern declarations since they run during init before bsgs_context exists
 - [03-04]: Tasks 1+2 committed atomically since BSGS thread functions call helper functions with new signatures
 
+- [03-05]: io.cpp local externs (22 globals) are Phase 4 cleanup targets, not Phase 3 scope
+- [03-05]: THREADOUTPUT accessed via config->runtime.thread_output std::atomic<int>& reference
+- [03-05]: search_common.h BSGS externs retained for bPload threads running before bsgs_context_t exists
+
 ### Pending Todos
 
 None yet.
@@ -124,5 +128,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 03-04-PLAN.md
+Stopped at: Completed 03-05-PLAN.md (Phase 3 complete)
 Resume file: None
