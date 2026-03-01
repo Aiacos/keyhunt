@@ -47,13 +47,8 @@
 #include "search_xpoint.h"
 #include <string.h>
 
-/* ============================================================================
- * External Dependencies
- * These are defined in keyhunt.cpp and linked at compile time
- * ============================================================================ */
-
-/* Binary search function from keyhunt.cpp */
-extern int searchbinary(struct address_value *buffer, char *data, int64_t array_length);
+/* Binary search for address/hash targets (from sort module) */
+#include "../sort/sort.h"
 
 /* ============================================================================
  * XPOINT Search Implementation

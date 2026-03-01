@@ -120,6 +120,22 @@ static inline void aligned_free(void *ptr) {
 }
 
 /* ============================================================================
+ * Config Migration Helpers
+ * ============================================================================ */
+
+/* Convert legacy FLAGSEARCH (SEARCH_COMPRESS=1, SEARCH_UNCOMPRESS=0) to
+ * key_format_t (KEYTYPE_COMPRESSED=0, KEYTYPE_UNCOMPRESSED=1).
+ * Values 0 and 1 are SWAPPED between legacy and new enums. */
+static key_format_t flagsearch_to_key_format(int flagsearch) {
+    switch (flagsearch) {
+        case 0: return KEYTYPE_UNCOMPRESSED;  /* SEARCH_UNCOMPRESS=0 */
+        case 1: return KEYTYPE_COMPRESSED;    /* SEARCH_COMPRESS=1 */
+        case 2: return KEYTYPE_BOTH;          /* SEARCH_BOTH=2 */
+        default: return KEYTYPE_BOTH;
+    }
+}
+
+/* ============================================================================
  * Thread-Safe Random Number Generation
  * ============================================================================ */
 
@@ -2564,6 +2580,58 @@ int main(int argc, char **argv)	{
 			}
 		}
 	}
+	// ============================================================================
+	// Config bridge: populate config from parsed globals
+	// This bridge allows gradual migration -- search modules read config fields
+	// while keyhunt.cpp continues using globals during Phase 3.
+	// ============================================================================
+
+	// Search flags (immutable after init)
+	config.search.mode = (search_mode_t)FLAGMODE;
+	config.search.key_format = flagsearch_to_key_format(FLAGSEARCH);
+	config.search.crypto_type = (crypto_type_t)FLAGCRYPTO;
+	config.search.endomorphism = (FLAGENDOMORPHISM != 0);
+	config.search.random_mode = (FLAGRANDOM != 0);
+	config.search.quiet_mode = (FLAGQUIET != 0);
+	config.search.debug_mode = (FLAGDEBUG != 0);
+	config.search.matrix_mode = (FLAGMATRIX != 0);
+	config.search.skip_checksum = (FLAGSKIPCHECKSUM != 0);
+
+	// BSGS config
+	config.bsgs.k_factor = KFACTOR;
+	config.bsgs.bsgs_mode = (bsgs_mode_t)FLAGBSGSMODE;
+	config.bsgs.save_progress = (FLAGSAVEREADFILE != 0);
+
+	// Runtime state pointers (set-once values available after CLI parsing)
+	config.runtime.num_threads = NTHREADS;
+	config.runtime.secp = (void *)secp;
+	config.runtime.max_address_length = MAXLENGTHADDRESS;
+	config.runtime.sequential_max = N_SEQUENTIAL_MAX;
+
+	// Endomorphism constants (set during CLI parsing via -e flag)
+	config.runtime.endo_lambda = (void *)&lambda;
+	config.runtime.endo_lambda2 = (void *)&lambda2;
+	config.runtime.endo_beta = (void *)&beta;
+	config.runtime.endo_beta2 = (void *)&beta2;
+
+	// Range parameters
+	config.runtime.range_start = (void *)&n_range_start;
+	config.runtime.range_end = (void *)&n_range_end;
+	config.runtime.stride = (void *)&stride;
+
+	// Generator points
+	config.runtime.generator_points = (void *)&Gn;
+	config.runtime.generator_point_2 = (void *)&_2Gn;
+
+	// Minikey state
+	config.runtime.minikey_coinbuffer = (void *)Ccoinbuffer;
+	config.runtime.minikey_raw_base = (void *)raw_baseminikey;
+	config.runtime.minikey_n = (void *)minikeyN;
+	config.runtime.minikey_n_limit = minikey_n_limit;
+
+	// Validate config (auto-corrects invalid values)
+	kh_config_validate(&config);
+
 	N = 0;
 
 	if(FLAGMODE != MODE_BSGS )	{
@@ -4015,6 +4083,21 @@ int main(int argc, char **argv)	{
 		}
 #endif
 		
+		// Config bridge: populate runtime state allocated during BSGS init
+		config.runtime.num_threads = NTHREADS;
+		config.runtime.bloom_filter = (void *)bloom_bP;
+		config.runtime.address_table = (void *)addressTable;
+		config.runtime.address_count = (int64_t)N;
+		config.runtime.write_mutex = (void *)&write_keys;
+		config.runtime.random_mutex = (void *)&write_random;
+		config.runtime.bsgs_mutex = (void *)&bsgs_thread;
+		config.runtime.thread_counters = (void *)steps;
+		config.runtime.thread_flags = (void *)ends;
+		config.runtime.thread_output = (void *)&THREADOUTPUT;
+		config.runtime.bsgs_generator_points = (void *)&GSn;
+		config.runtime.bsgs_generator_point_2 = (void *)&_2GSn;
+		config.runtime.sequential_max = N_SEQUENTIAL_MAX;
+
 		profile_init_threads((int)NTHREADS);
 		for(j= 0;j < NTHREADS; j++)	{
 			tt = (tothread*) malloc(sizeof(struct tothread));
@@ -4402,6 +4485,28 @@ int main(int argc, char **argv)	{
 					shutdown_work_queue();
 				}
 #endif
+			// Config bridge: populate runtime state allocated during non-BSGS init
+			config.runtime.num_threads = NTHREADS;
+			config.runtime.bloom_filter = (void *)&bloom;
+			config.runtime.address_table = (void *)addressTable;
+			config.runtime.address_count = (int64_t)N;
+			config.runtime.write_mutex = (void *)&write_keys;
+			config.runtime.random_mutex = (void *)&write_random;
+			config.runtime.thread_counters = (void *)steps;
+			config.runtime.thread_flags = (void *)ends;
+			config.runtime.thread_output = (void *)&THREADOUTPUT;
+			config.runtime.sequential_max = N_SEQUENTIAL_MAX;
+
+			// Vanity state (if applicable)
+			config.runtime.vanity_targets = vanity_rmd_targets;
+			config.runtime.vanity_total = vanity_rmd_total;
+			config.runtime.vanity_bloom = (void *)vanity_bloom;
+			config.runtime.vanity_limits = (void *)vanity_rmd_limits;
+			config.runtime.vanity_values_a = (void *)vanity_rmd_limit_values_A;
+			config.runtime.vanity_values_b = (void *)vanity_rmd_limit_values_B;
+			config.runtime.vanity_min_check_len = vanity_rmd_minimun_bytes_check_length;
+			config.runtime.vanity_addresses = (void *)vanity_address_targets;
+
 			profile_init_threads((int)NTHREADS);
 			for(j= 0;j < NTHREADS; j++)	{
 				tt = (tothread*) malloc(sizeof(struct tothread));
