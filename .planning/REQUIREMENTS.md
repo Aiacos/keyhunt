@@ -18,10 +18,10 @@ Requirements for production-ready release. Each maps to roadmap phases.
 - [x] **TEST-07**: End-to-end correctness test for ADDRESS mode (known privkey → known address)
 - [x] **TEST-08**: End-to-end correctness test for BSGS mode (known pubkey in known range)
 - [x] **TEST-09**: End-to-end correctness test for XPOINT mode (known X-coordinate)
-- [ ] **TEST-10**: End-to-end correctness test for RMD160 mode (known RIPEMD160 hash)
-- [ ] **TEST-11**: End-to-end correctness test for VANITY mode (known prefix match)
-- [ ] **TEST-12**: End-to-end correctness test for MINIKEYS mode
-- [ ] **TEST-13**: Code coverage gate at 80% on crypto paths (secp256k1, hash, bloom) via gcovr
+- [x] **TEST-10**: End-to-end correctness test for RMD160 mode (known RIPEMD160 hash)
+- [x] **TEST-11**: End-to-end correctness test for VANITY mode (known prefix match)
+- [x] **TEST-12**: End-to-end correctness test for MINIKEYS mode
+- [x] **TEST-13**: Code coverage gate at 80% on crypto paths (secp256k1, hash, bloom) via gcovr
 
 ### Memory Safety
 
@@ -116,10 +116,10 @@ Deferred to future release. Tracked but not in current roadmap.
 | TEST-07 | Phase 1 | Complete |
 | TEST-08 | Phase 1 | Complete |
 | TEST-09 | Phase 1 | Complete |
-| TEST-10 | Phase 1 | Pending |
-| TEST-11 | Phase 1 | Pending |
-| TEST-12 | Phase 1 | Pending |
-| TEST-13 | Phase 1 | Pending |
+| TEST-10 | Phase 1 | Complete |
+| TEST-11 | Phase 1 | Complete |
+| TEST-12 | Phase 1 | Complete |
+| TEST-13 | Phase 1 | Complete |
 | MEM-01 | Phase 2 | Pending |
 | MEM-02 | Phase 2 | Pending |
 | MEM-03 | Phase 2 | Pending |
