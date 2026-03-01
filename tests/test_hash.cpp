@@ -1106,6 +1106,223 @@ TEST(sha256_binary_data) {
 }
 
 /* ============================================================================
+ * SHA256 SSE Standalone Function Tests
+ *
+ * These tests exercise sha256sse_1B, sha256sse_2B, sha256_ripemd160_sse_1B,
+ * and sha256_ripemd160_sse_2B directly, covering the unpack/shuffle output
+ * sections and the fused SHA256->RIPEMD160 pipeline.
+ * ============================================================================ */
+
+TEST(sha256sse_1B_standalone) {
+    /* Test sha256sse_1B with the "abc" NIST test vector.
+     * The SSE function is a compression function on 4 pre-padded 64-byte blocks.
+     * We prepare the SHA-256 padded block for "abc" (3 bytes -> 1 block).
+     */
+
+    /* Prepare the "abc" message in SHA-256 padded format as uint32_t[16] */
+    uint8_t padded[64];
+    sha256_pad_block(padded, (const uint8_t *)"abc", 3);
+
+    /* Convert to big-endian uint32_t array (SHA-256 block format) */
+    uint32_t block[16] __attribute__((aligned(16)));
+    for (int i = 0; i < 16; i++) {
+        block[i] = ((uint32_t)padded[i*4] << 24) |
+                   ((uint32_t)padded[i*4+1] << 16) |
+                   ((uint32_t)padded[i*4+2] << 8) |
+                   ((uint32_t)padded[i*4+3]);
+    }
+
+    /* Use the same block for all 4 inputs */
+    uint32_t i0[16] __attribute__((aligned(16)));
+    uint32_t i1[16] __attribute__((aligned(16)));
+    uint32_t i2[16] __attribute__((aligned(16)));
+    uint32_t i3[16] __attribute__((aligned(16)));
+    memcpy(i0, block, sizeof(block));
+    memcpy(i1, block, sizeof(block));
+    memcpy(i2, block, sizeof(block));
+    memcpy(i3, block, sizeof(block));
+
+    /* Output buffers (32 bytes each, 16-byte aligned) */
+    uint8_t d0[32] __attribute__((aligned(16)));
+    uint8_t d1[32] __attribute__((aligned(16)));
+    uint8_t d2[32] __attribute__((aligned(16)));
+    uint8_t d3[32] __attribute__((aligned(16)));
+
+    sha256sse_1B(i0, i1, i2, i3, d0, d1, d2, d3);
+
+    /* Known SHA256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad */
+    uint8_t expected[32];
+    hex_to_bytes("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", expected, 32);
+
+    ASSERT_MEM_EQ(expected, d0, 32);
+    ASSERT_MEM_EQ(expected, d1, 32);
+    ASSERT_MEM_EQ(expected, d2, 32);
+    ASSERT_MEM_EQ(expected, d3, 32);
+}
+
+TEST(sha256sse_2B_standalone) {
+    /* Test sha256sse_2B with a 65-byte message (simulating an uncompressed pubkey).
+     * This covers the 2-block SHA-256 path. */
+
+    /* Create a 65-byte message: 0x04 followed by 64 bytes of known data */
+    uint8_t msg[65];
+    msg[0] = 0x04;
+    for (int i = 1; i < 65; i++) {
+        msg[i] = (uint8_t)(i * 7);
+    }
+
+    /* Pad into 2 SHA-256 blocks (128 bytes) */
+    uint8_t padded[128];
+    memset(padded, 0, 128);
+    memcpy(padded, msg, 65);
+    padded[65] = 0x80;
+    /* Write message length in bits (65 * 8 = 520 = 0x208) as big-endian uint64 at offset 120 */
+    uint64_t bit_len = (uint64_t)65 * 8;
+    for (int i = 0; i < 8; i++)
+        padded[120 + i] = (uint8_t)(bit_len >> (56 - i * 8));
+
+    /* Convert to big-endian uint32_t array */
+    uint32_t block[32] __attribute__((aligned(16)));
+    for (int i = 0; i < 32; i++) {
+        block[i] = ((uint32_t)padded[i*4] << 24) |
+                   ((uint32_t)padded[i*4+1] << 16) |
+                   ((uint32_t)padded[i*4+2] << 8) |
+                   ((uint32_t)padded[i*4+3]);
+    }
+
+    /* Use the same block for all 4 inputs */
+    uint32_t i0[32] __attribute__((aligned(16)));
+    uint32_t i1[32] __attribute__((aligned(16)));
+    uint32_t i2[32] __attribute__((aligned(16)));
+    uint32_t i3[32] __attribute__((aligned(16)));
+    memcpy(i0, block, sizeof(block));
+    memcpy(i1, block, sizeof(block));
+    memcpy(i2, block, sizeof(block));
+    memcpy(i3, block, sizeof(block));
+
+    /* Output buffers */
+    uint8_t d0[32] __attribute__((aligned(16)));
+    uint8_t d1[32] __attribute__((aligned(16)));
+    uint8_t d2[32] __attribute__((aligned(16)));
+    uint8_t d3[32] __attribute__((aligned(16)));
+
+    sha256sse_2B(i0, i1, i2, i3, d0, d1, d2, d3);
+
+    /* Cross-validate against scalar sha256 */
+    uint8_t expected[32];
+    sha256(msg, 65, expected);
+
+    ASSERT_MEM_EQ(expected, d0, 32);
+    ASSERT_MEM_EQ(expected, d1, 32);
+    ASSERT_MEM_EQ(expected, d2, 32);
+    ASSERT_MEM_EQ(expected, d3, 32);
+}
+
+TEST(sha256_ripemd160_sse_1B_fused) {
+    /* Test the fused SHA256->RIPEMD160 pipeline for 1-block (compressed key) inputs.
+     * Cross-validates against scalar sha256 followed by scalar ripemd160_32. */
+
+    /* Prepare the "abc" message in SHA-256 padded format */
+    uint8_t padded[64];
+    sha256_pad_block(padded, (const uint8_t *)"abc", 3);
+
+    /* Convert to big-endian uint32_t array */
+    uint32_t block[16] __attribute__((aligned(16)));
+    for (int i = 0; i < 16; i++) {
+        block[i] = ((uint32_t)padded[i*4] << 24) |
+                   ((uint32_t)padded[i*4+1] << 16) |
+                   ((uint32_t)padded[i*4+2] << 8) |
+                   ((uint32_t)padded[i*4+3]);
+    }
+
+    uint32_t i0[16] __attribute__((aligned(16)));
+    uint32_t i1[16] __attribute__((aligned(16)));
+    uint32_t i2[16] __attribute__((aligned(16)));
+    uint32_t i3[16] __attribute__((aligned(16)));
+    memcpy(i0, block, sizeof(block));
+    memcpy(i1, block, sizeof(block));
+    memcpy(i2, block, sizeof(block));
+    memcpy(i3, block, sizeof(block));
+
+    /* RIPEMD160 output buffers (20 bytes each, 16-byte aligned for safety) */
+    uint8_t d0[20] __attribute__((aligned(16)));
+    uint8_t d1[20] __attribute__((aligned(16)));
+    uint8_t d2[20] __attribute__((aligned(16)));
+    uint8_t d3[20] __attribute__((aligned(16)));
+
+    sha256_ripemd160_sse_1B(i0, i1, i2, i3, d0, d1, d2, d3);
+
+    /* Cross-validate: scalar SHA256("abc"), then scalar RIPEMD160 of that output */
+    uint8_t sha_out[32];
+    sha256((unsigned char *)"abc", 3, sha_out);
+    uint8_t expected[20];
+    ripemd160_32(sha_out, expected);
+
+    ASSERT_MEM_EQ(expected, d0, 20);
+    ASSERT_MEM_EQ(expected, d1, 20);
+    ASSERT_MEM_EQ(expected, d2, 20);
+    ASSERT_MEM_EQ(expected, d3, 20);
+}
+
+TEST(sha256_ripemd160_sse_2B_fused) {
+    /* Test the fused SHA256->RIPEMD160 pipeline for 2-block (uncompressed key) inputs.
+     * Cross-validates against scalar sha256 followed by scalar ripemd160_32. */
+
+    /* Create a 65-byte message (simulated uncompressed pubkey) */
+    uint8_t msg[65];
+    msg[0] = 0x04;
+    for (int i = 1; i < 65; i++) {
+        msg[i] = (uint8_t)(i * 13);
+    }
+
+    /* Pad into 2 blocks */
+    uint8_t padded[128];
+    memset(padded, 0, 128);
+    memcpy(padded, msg, 65);
+    padded[65] = 0x80;
+    uint64_t bit_len = (uint64_t)65 * 8;
+    for (int i = 0; i < 8; i++)
+        padded[120 + i] = (uint8_t)(bit_len >> (56 - i * 8));
+
+    /* Convert to big-endian uint32_t array */
+    uint32_t block[32] __attribute__((aligned(16)));
+    for (int i = 0; i < 32; i++) {
+        block[i] = ((uint32_t)padded[i*4] << 24) |
+                   ((uint32_t)padded[i*4+1] << 16) |
+                   ((uint32_t)padded[i*4+2] << 8) |
+                   ((uint32_t)padded[i*4+3]);
+    }
+
+    uint32_t i0[32] __attribute__((aligned(16)));
+    uint32_t i1[32] __attribute__((aligned(16)));
+    uint32_t i2[32] __attribute__((aligned(16)));
+    uint32_t i3[32] __attribute__((aligned(16)));
+    memcpy(i0, block, sizeof(block));
+    memcpy(i1, block, sizeof(block));
+    memcpy(i2, block, sizeof(block));
+    memcpy(i3, block, sizeof(block));
+
+    /* RIPEMD160 output buffers */
+    uint8_t d0[20] __attribute__((aligned(16)));
+    uint8_t d1[20] __attribute__((aligned(16)));
+    uint8_t d2[20] __attribute__((aligned(16)));
+    uint8_t d3[20] __attribute__((aligned(16)));
+
+    sha256_ripemd160_sse_2B(i0, i1, i2, i3, d0, d1, d2, d3);
+
+    /* Cross-validate: scalar SHA256(65-byte), then scalar RIPEMD160 */
+    uint8_t sha_out[32];
+    sha256(msg, 65, sha_out);
+    uint8_t expected[20];
+    ripemd160_32(sha_out, expected);
+
+    ASSERT_MEM_EQ(expected, d0, 20);
+    ASSERT_MEM_EQ(expected, d1, 20);
+    ASSERT_MEM_EQ(expected, d2, 20);
+    ASSERT_MEM_EQ(expected, d3, 20);
+}
+
+/* ============================================================================
  * Main Test Runner
  * ============================================================================ */
 
@@ -1169,6 +1386,12 @@ int run_hash_tests(void) {
     RUN_TEST(sha256_single_byte);
     RUN_TEST(ripemd160_binary_data);
     RUN_TEST(sha256_binary_data);
+
+    TEST_SECTION("SHA256 SSE Standalone Functions");
+    RUN_TEST(sha256sse_1B_standalone);
+    RUN_TEST(sha256sse_2B_standalone);
+    RUN_TEST(sha256_ripemd160_sse_1B_fused);
+    RUN_TEST(sha256_ripemd160_sse_2B_fused);
 
     return TEST_RESULTS();
 }

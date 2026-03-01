@@ -1298,6 +1298,192 @@ TEST(secp256k1_gethash160_deterministic) {
 }
 
 /* ============================================================================
+ * AVX2 GetHash160 Cross-Validation Tests
+ *
+ * These tests exercise the 8-way AVX2 hash pipeline and cross-validate
+ * against the single-point GetHash160 reference implementation.
+ * All tests are guarded by runtime AVX2 detection.
+ * ============================================================================ */
+
+TEST(secp256k1_gethash160_avx2_compressed) {
+    if (!__builtin_cpu_supports("avx2")) {
+        printf("\n    (Skipped: AVX2 not available)\n");
+        return;
+    }
+
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute 8 public keys (privkeys 1-8) */
+    Point keys[8];
+    for (int i = 0; i < 8; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* 8-point AVX2 compressed */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    uint8_t h4[20], h5[20], h6[20], h7[20];
+    secp.GetHash160_AVX2(P2PKH, true,
+        keys[0], keys[1], keys[2], keys[3],
+        keys[4], keys[5], keys[6], keys[7],
+        h0, h1, h2, h3, h4, h5, h6, h7);
+
+    /* Cross-validate each against single-point */
+    uint8_t *hashes[8] = {h0, h1, h2, h3, h4, h5, h6, h7};
+    for (int i = 0; i < 8; i++) {
+        unsigned char expected[20];
+        secp.GetHash160(P2PKH, true, keys[i], expected);
+        ASSERT_MEM_EQ(expected, hashes[i], 20);
+    }
+}
+
+TEST(secp256k1_gethash160_avx2_uncompressed) {
+    if (!__builtin_cpu_supports("avx2")) {
+        printf("\n    (Skipped: AVX2 not available)\n");
+        return;
+    }
+
+    Secp256K1 secp;
+    secp.Init();
+
+    Point keys[8];
+    for (int i = 0; i < 8; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* 8-point AVX2 uncompressed */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    uint8_t h4[20], h5[20], h6[20], h7[20];
+    secp.GetHash160_AVX2(P2PKH, false,
+        keys[0], keys[1], keys[2], keys[3],
+        keys[4], keys[5], keys[6], keys[7],
+        h0, h1, h2, h3, h4, h5, h6, h7);
+
+    /* Cross-validate each against single-point */
+    uint8_t *hashes[8] = {h0, h1, h2, h3, h4, h5, h6, h7};
+    for (int i = 0; i < 8; i++) {
+        unsigned char expected[20];
+        secp.GetHash160(P2PKH, false, keys[i], expected);
+        ASSERT_MEM_EQ(expected, hashes[i], 20);
+    }
+}
+
+TEST(secp256k1_gethash160_fromX_avx2) {
+    if (!__builtin_cpu_supports("avx2")) {
+        printf("\n    (Skipped: AVX2 not available)\n");
+        return;
+    }
+
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute 8 pubkeys, extract x-coordinates */
+    Point keys[8];
+    for (int i = 0; i < 8; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* Call GetHash160_fromX_AVX2 with 0x02 prefix */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    uint8_t h4[20], h5[20], h6[20], h7[20];
+    secp.GetHash160_fromX_AVX2(P2PKH, 0x02,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        &keys[4].x, &keys[5].x, &keys[6].x, &keys[7].x,
+        h0, h1, h2, h3, h4, h5, h6, h7);
+
+    /* Cross-validate: use 4-point SSE GetHash160_fromX for reference */
+    uint8_t ref0[20], ref1[20], ref2[20], ref3[20];
+    uint8_t ref4[20], ref5[20], ref6[20], ref7[20];
+    secp.GetHash160_fromX(P2PKH, 0x02,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        ref0, ref1, ref2, ref3);
+    secp.GetHash160_fromX(P2PKH, 0x02,
+        &keys[4].x, &keys[5].x, &keys[6].x, &keys[7].x,
+        ref4, ref5, ref6, ref7);
+
+    ASSERT_MEM_EQ(ref0, h0, 20);
+    ASSERT_MEM_EQ(ref1, h1, 20);
+    ASSERT_MEM_EQ(ref2, h2, 20);
+    ASSERT_MEM_EQ(ref3, h3, 20);
+    ASSERT_MEM_EQ(ref4, h4, 20);
+    ASSERT_MEM_EQ(ref5, h5, 20);
+    ASSERT_MEM_EQ(ref6, h6, 20);
+    ASSERT_MEM_EQ(ref7, h7, 20);
+}
+
+TEST(secp256k1_gethash160_fromX_02_03_avx2) {
+    if (!__builtin_cpu_supports("avx2")) {
+        printf("\n    (Skipped: AVX2 not available)\n");
+        return;
+    }
+
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute 8 pubkeys */
+    Point keys[8];
+    for (int i = 0; i < 8; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* Call GetHash160_fromX_02_03_AVX2 */
+    uint8_t h02_0[20], h02_1[20], h02_2[20], h02_3[20];
+    uint8_t h02_4[20], h02_5[20], h02_6[20], h02_7[20];
+    uint8_t h03_0[20], h03_1[20], h03_2[20], h03_3[20];
+    uint8_t h03_4[20], h03_5[20], h03_6[20], h03_7[20];
+
+    secp.GetHash160_fromX_02_03_AVX2(P2PKH,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        &keys[4].x, &keys[5].x, &keys[6].x, &keys[7].x,
+        h02_0, h02_1, h02_2, h02_3,
+        h02_4, h02_5, h02_6, h02_7,
+        h03_0, h03_1, h03_2, h03_3,
+        h03_4, h03_5, h03_6, h03_7);
+
+    /* Cross-validate against 4-point SSE GetHash160_fromX_02_03 */
+    uint8_t ref02_0[20], ref02_1[20], ref02_2[20], ref02_3[20];
+    uint8_t ref03_0[20], ref03_1[20], ref03_2[20], ref03_3[20];
+    secp.GetHash160_fromX_02_03(P2PKH,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        ref02_0, ref02_1, ref02_2, ref02_3,
+        ref03_0, ref03_1, ref03_2, ref03_3);
+
+    ASSERT_MEM_EQ(ref02_0, h02_0, 20);
+    ASSERT_MEM_EQ(ref02_1, h02_1, 20);
+    ASSERT_MEM_EQ(ref02_2, h02_2, 20);
+    ASSERT_MEM_EQ(ref02_3, h02_3, 20);
+    ASSERT_MEM_EQ(ref03_0, h03_0, 20);
+    ASSERT_MEM_EQ(ref03_1, h03_1, 20);
+    ASSERT_MEM_EQ(ref03_2, h03_2, 20);
+    ASSERT_MEM_EQ(ref03_3, h03_3, 20);
+
+    /* Also cross-validate keys 4-7 */
+    uint8_t ref02_4[20], ref02_5[20], ref02_6[20], ref02_7[20];
+    uint8_t ref03_4[20], ref03_5[20], ref03_6[20], ref03_7[20];
+    secp.GetHash160_fromX_02_03(P2PKH,
+        &keys[4].x, &keys[5].x, &keys[6].x, &keys[7].x,
+        ref02_4, ref02_5, ref02_6, ref02_7,
+        ref03_4, ref03_5, ref03_6, ref03_7);
+
+    ASSERT_MEM_EQ(ref02_4, h02_4, 20);
+    ASSERT_MEM_EQ(ref02_5, h02_5, 20);
+    ASSERT_MEM_EQ(ref02_6, h02_6, 20);
+    ASSERT_MEM_EQ(ref02_7, h02_7, 20);
+    ASSERT_MEM_EQ(ref03_4, h03_4, 20);
+    ASSERT_MEM_EQ(ref03_5, h03_5, 20);
+    ASSERT_MEM_EQ(ref03_6, h03_6, 20);
+    ASSERT_MEM_EQ(ref03_7, h03_7, 20);
+}
+
+/* ============================================================================
  * Pubkey Hex/Raw Roundtrip Tests
  * ============================================================================ */
 
@@ -1447,6 +1633,12 @@ int run_point_tests(void) {
     TEST_SECTION("GetHash160_fromX Variants");
     RUN_TEST(secp256k1_gethash160_fromX);
     RUN_TEST(secp256k1_gethash160_fromX_02_03);
+
+    TEST_SECTION("GetHash160 AVX2 (8-Point vs Single)");
+    RUN_TEST(secp256k1_gethash160_avx2_compressed);
+    RUN_TEST(secp256k1_gethash160_avx2_uncompressed);
+    RUN_TEST(secp256k1_gethash160_fromX_avx2);
+    RUN_TEST(secp256k1_gethash160_fromX_02_03_avx2);
 
     TEST_SECTION("Public Key Hex Roundtrip");
     RUN_TEST(secp256k1_pubkey_hex_roundtrip_multiple);
