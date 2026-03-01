@@ -275,37 +275,40 @@ extern bool acquire_base_key(Int &key);
 /*  Thread function declarations                                      */
 /* ------------------------------------------------------------------ */
 
+/* Thread function declarations - unified platform_thread_return_t signature.
+ * Platform-specific DWORD WINAPI / void* is handled by platform_thread_return_t
+ * and PLATFORM_THREAD_CALL macros from search_common.h.
+ *
+ * Legacy declarations kept here for keyhunt.cpp compatibility until full
+ * migration to search_common.h declarations is complete. */
 #if defined(_WIN64) && !defined(__CYGWIN__)
 DWORD WINAPI thread_process(LPVOID vargp);
 DWORD WINAPI thread_process_vanity(LPVOID vargp);
 DWORD WINAPI thread_process_minikeys(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_backward(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_both(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_random(LPVOID vargp);
-DWORD WINAPI thread_process_bsgs_dance(LPVOID vargp);
 DWORD WINAPI thread_bPload(LPVOID vargp);
 DWORD WINAPI thread_bPload_2blooms(LPVOID vargp);
 #else
 void *thread_process(void *vargp);
 void *thread_process_vanity(void *vargp);
 void *thread_process_minikeys(void *vargp);
-void *thread_process_bsgs(void *vargp);
-void *thread_process_bsgs_backward(void *vargp);
-void *thread_process_bsgs_both(void *vargp);
-void *thread_process_bsgs_random(void *vargp);
-void *thread_process_bsgs_dance(void *vargp);
 void *thread_bPload(void *vargp);
 void *thread_bPload_2blooms(void *vargp);
 #endif
+
+/* BSGS search thread functions use unified platform signature (from search_common.h) */
 
 /* ------------------------------------------------------------------ */
 /*  BSGS helper function declarations                                 */
 /*  Sort/search functions declared in bsgs/bsgs_sort.h (extern "C")   */
 /* ------------------------------------------------------------------ */
 
-int bsgs_secondcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
-int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
-void calcualteindex(int i, Int *key);
+/* BSGS helper functions now accept bsgs_context_t* (defined in search_common.h).
+ * search_context.h forward-declares the struct here for callers that only
+ * include search_context.h.  Full definition is in search_common.h. */
+struct bsgs_context_t;
+
+int bsgs_secondcheck(bsgs_context_t *bctx, Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
+int bsgs_thirdcheck(bsgs_context_t *bctx, Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
+void calcualteindex(bsgs_context_t *bctx, int i, Int *key);
 
 #endif /* SEARCH_CONTEXT_H */

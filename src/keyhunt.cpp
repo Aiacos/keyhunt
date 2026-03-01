@@ -1678,6 +1678,11 @@ int main(int argc, char **argv)	{
 	keyhunt_config_t config;
 	kh_config_init(&config);
 
+	// BSGS context lives at main() scope so it outlives all BSGS threads.
+	// Populated later (line ~4101) when BSGS mode initializes algorithm state.
+	bsgs_context_t bsgs_ctx;
+	memset(&bsgs_ctx, 0, sizeof(bsgs_ctx));
+
 	// Auto-detect system configuration and optimize parameters
 	// (sysinfo is now a global variable for memory checks)
 
@@ -4098,28 +4103,68 @@ int main(int argc, char **argv)	{
 		config.runtime.bsgs_generator_point_2 = (void *)&_2GSn;
 		config.runtime.sequential_max = N_SEQUENTIAL_MAX;
 
+		// Populate BSGS context (declared at main() scope, populated here)
+		bsgs_ctx.BSGS_CURRENT = &BSGS_CURRENT;
+		bsgs_ctx.BSGS_R = &BSGS_R;
+		bsgs_ctx.BSGS_AUX = &BSGS_AUX;
+		bsgs_ctx.BSGS_N = &BSGS_N;
+		bsgs_ctx.BSGS_N_double = &BSGS_N_double;
+		bsgs_ctx.BSGS_M = &BSGS_M;
+		bsgs_ctx.BSGS_M_double = &BSGS_M_double;
+		bsgs_ctx.BSGS_M2 = &BSGS_M2;
+		bsgs_ctx.BSGS_M2_double = &BSGS_M2_double;
+		bsgs_ctx.BSGS_M3 = &BSGS_M3;
+		bsgs_ctx.BSGS_M3_double = &BSGS_M3_double;
+		bsgs_ctx.BSGS_MP_double = &BSGS_MP_double;
+		bsgs_ctx.BSGS_MP2_double = &BSGS_MP2_double;
+		bsgs_ctx.BSGS_MP3_double = &BSGS_MP3_double;
+		bsgs_ctx.BSGS_AMP2 = &BSGS_AMP2;
+		bsgs_ctx.BSGS_AMP3 = &BSGS_AMP3;
+		bsgs_ctx.OriginalPointsBSGS = &OriginalPointsBSGS;
+		bsgs_ctx.OriginalPointsBSGScompressed = OriginalPointsBSGScompressed;
+		bsgs_ctx.GSn = &GSn;
+		bsgs_ctx._2GSn = &_2GSn;
+		bsgs_ctx.bsgs_found = bsgs_found;
+		bsgs_ctx.bloom_bP = bloom_bP;
+		bsgs_ctx.bloom_bPx2nd = bloom_bPx2nd;
+		bsgs_ctx.bloom_bPx3rd = bloom_bPx3rd;
+		bsgs_ctx.bPtable = bPtable;
+		bsgs_ctx.bloom_bP_mutex = bloom_bP_mutex;
+		bsgs_ctx.bloom_bPx2nd_mutex = bloom_bPx2nd_mutex;
+		bsgs_ctx.bloom_bPx3rd_mutex = bloom_bPx3rd_mutex;
+		bsgs_ctx.bPload_mutex = bPload_mutex;
+		bsgs_ctx.bsgs_m = bsgs_m;
+		bsgs_ctx.bsgs_m2 = bsgs_m2;
+		bsgs_ctx.bsgs_m3 = bsgs_m3;
+		bsgs_ctx.bsgs_aux = bsgs_aux;
+		bsgs_ctx.bsgs_point_number = bsgs_point_number;
+		bsgs_ctx.BSGS_BUFFERXPOINTLENGTH = BSGS_BUFFERXPOINTLENGTH;
+		bsgs_ctx.FLAGREADEDFILE1 = FLAGREADEDFILE1;
+		bsgs_ctx.FLAGREADEDFILE2 = FLAGREADEDFILE2;
+		bsgs_ctx.FLAGREADEDFILE3 = FLAGREADEDFILE3;
+		bsgs_ctx.FLAGREADEDFILE4 = FLAGREADEDFILE4;
+		config.runtime.bsgs_context = (void *)&bsgs_ctx;
+
 		profile_init_threads((int)NTHREADS);
 		for(j= 0;j < NTHREADS; j++)	{
-			tt = (tothread*) malloc(sizeof(struct tothread));
-			checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
-			tt->nt = j;
+			thread_args *bargs = new thread_args{ &config, (int)j };
 			steps[j].value = 0;
 			s = 0;
 			switch(FLAGBSGSMODE)	{
 				case 0:
-					s = platform_thread_create(&tid[j], thread_process_bsgs, (void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs, (void *)bargs);
 				break;
 				case 1:
-					s = platform_thread_create(&tid[j], thread_process_bsgs_backward, (void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_backward, (void *)bargs);
 				break;
 				case 2:
-					s = platform_thread_create(&tid[j], thread_process_bsgs_both, (void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_both, (void *)bargs);
 				break;
 				case 3:
-					s = platform_thread_create(&tid[j], thread_process_bsgs_random, (void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_random, (void *)bargs);
 				break;
 				case 4:
-					s = platform_thread_create(&tid[j], thread_process_bsgs_dance, (void *)tt);
+					s = platform_thread_create(&tid[j], thread_process_bsgs_dance, (void *)bargs);
 				break;
 			}
 			if(s != 0)	{

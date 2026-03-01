@@ -1,55 +1,33 @@
 /*
  * search_bsgs.cpp - Baby Step Giant Step (BSGS) mode search implementation
  *
- * MIGRATION STATUS: Config-aware (extern globals)
+ * MIGRATION STATUS: Config-wired (bsgs_context_t parameter)
  *
  * This file contains the BSGS helper functions: verification checks
  * (secondcheck, thirdcheck) and key calculation utilities.
  *
+ * All 3 helper functions receive bsgs_context_t* parameter for algorithm
+ * state instead of reading extern globals.
+ *
  * Sorting and binary search functions are provided by the shared bsgs_sort
  * library to eliminate code duplication across multiple files.
  *
- * Current implementation:
- * - Uses extern BSGS algorithm state variables (BSGS_M*, BSGS_AMP*, etc.)
- * - These are defined in keyhunt.cpp and declared in search_common.h
- * - Sorting functions are pure utilities (no globals, config-independent)
- * - Helper functions (calcualteindex, bsgs_secondcheck, bsgs_thirdcheck)
- *   use extern BSGS state and will be migrated to accept config parameter
- *
- * The main BSGS thread functions remain in keyhunt.cpp due to extensive
- * global variable dependencies, but will be migrated here incrementally.
- *
- * Extern BSGS globals used:
- * - BSGS_M_double, BSGS_M2_double, BSGS_M3, BSGS_M3_double (Int types)
- * - OriginalPointsBSGS (target public keys)
- * - BSGS_AMP2, BSGS_AMP3 (amplification point vectors)
- * - bloom_bPx2nd, bloom_bPx3rd (extended bloom filters)
- * - bPtable (baby step point table)
- * - bsgs_m3 (M3 value for table size)
- * - BSGS_BUFFERXPOINTLENGTH (X-point buffer length constant)
- * - secp (SECP256K1 instance for elliptic curve operations)
- *
- * Future migration:
- * - Move BSGS algorithm state into keyhunt_config_t->runtime.bsgs_*
- * - Update helper functions to accept config parameter
- * - Move main BSGS thread functions from keyhunt.cpp to this file
- *
- * BSGS Algorithm Overview:
- * - Time complexity: O(sqrt(N)) instead of O(N)
- * - Space complexity: O(sqrt(N))
- * - Requires known public key (X-coordinate)
- *
- * See search_context.h for shared declarations and extern globals.
+ * See search_common.h for bsgs_context_t definition.
  */
 
-#include "search_context.h"
+/* Include bsgs_sort.h FIRST to define struct bsgs_xvalue and BSGS_SORT_H,
+ * so search_common.h's conditional definition is skipped. */
 #include "../bsgs/bsgs_sort.h"
+#include "search_common.h"
 #include "../output.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
 #include <cinttypes>
+
+/* Secp256k1 instance accessed via local extern (used by all 3 functions) */
+extern Secp256K1 *secp;
 
 /* ============================================================================
  * BSGS Helper Functions
@@ -59,7 +37,10 @@
 /* Calculate index for third check
  * key = BSGS_M3 + i * BSGS_M3_double
  */
-void calcualteindex(int i, Int *key) {
+void calcualteindex(bsgs_context_t *bctx, int i, Int *key) {
+    Int &BSGS_M3 = *bctx->BSGS_M3;
+    Int &BSGS_M3_double = *bctx->BSGS_M3_double;
+
     if (i == 0) {
         key->Set(&BSGS_M3);
     } else {
@@ -75,7 +56,14 @@ void calcualteindex(int i, Int *key) {
  * Performs a second BSGS search in a smaller range using the secondary
  * bloom filter (bloom_bPx2nd) with 1/32 the size of the primary filter.
  */
-int bsgs_secondcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey) {
+int bsgs_secondcheck(bsgs_context_t *bctx, Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey) {
+    /* Extract BSGS state from context */
+    Int &BSGS_M_double = *bctx->BSGS_M_double;
+    std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+    std::vector<Point> &BSGS_AMP2 = *bctx->BSGS_AMP2;
+    bloom_extended_t *bloom_bPx2nd = bctx->bloom_bPx2nd;
+    uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
+
     int i = 0, found = 0, r = 0;
     Int base_key;
     Point base_point, point_aux;
@@ -102,7 +90,7 @@ int bsgs_secondcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privat
         BSGS_S.x.GetHi16Bytes(xpoint_raw);
         r = bloom_ext_check(&bloom_bPx2nd[(uint8_t)xpoint_raw[0]], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
         if (r) {
-            found = bsgs_thirdcheck(&base_key, i, k_index, privatekey);
+            found = bsgs_thirdcheck(bctx, &base_key, i, k_index, privatekey);
         }
         i++;
     } while (i < 32 && !found);
@@ -115,7 +103,16 @@ int bsgs_secondcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privat
  * Final verification using the bPtable and bloom_bPx3rd filter.
  * If a match is found here, the private key is computed and verified.
  */
-int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey) {
+int bsgs_thirdcheck(bsgs_context_t *bctx, Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey) {
+    /* Extract BSGS state from context */
+    Int &BSGS_M2_double = *bctx->BSGS_M2_double;
+    std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+    std::vector<Point> &BSGS_AMP3 = *bctx->BSGS_AMP3;
+    bloom_extended_t *bloom_bPx3rd = bctx->bloom_bPx3rd;
+    struct bsgs_xvalue *bPtable = bctx->bPtable;
+    uint64_t bsgs_m3 = bctx->bsgs_m3;
+    uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
+
     uint64_t j = 0;
     int i = 0, found = 0, r = 0;
     Int base_key, calculatedkey;
@@ -142,7 +139,7 @@ int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *private
             BSGS_S.x.GetLo16Bytes(xpoint_raw + 16);
             r = bsgs_searchbinary(bPtable, (char *)xpoint_raw, bsgs_m3, &j);
             if (r) {
-                calcualteindex(i, &calculatedkey);
+                calcualteindex(bctx, i, &calculatedkey);
                 privatekey->Set(&calculatedkey);
                 privatekey->Add((uint64_t)(j + 1));
                 privatekey->Add(&base_key);
@@ -150,7 +147,7 @@ int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *private
                 if (point_aux.x.IsEqual(&OriginalPointsBSGS[k_index].x)) {
                     found = 1;
                 } else {
-                    calcualteindex(i, &calculatedkey);
+                    calcualteindex(bctx, i, &calculatedkey);
                     privatekey->Set(&calculatedkey);
                     privatekey->Sub((uint64_t)(j + 1));
                     privatekey->Add(&base_key);
@@ -166,7 +163,7 @@ int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *private
              * are negations of each other.
              */
             if (BSGS_Q.x.IsEqual(&BSGS_AMP3[i].x)) {
-                calcualteindex(i, &calculatedkey);
+                calcualteindex(bctx, i, &calculatedkey);
                 privatekey->Set(&calculatedkey);
                 privatekey->Add(&base_key);
                 point_aux = secp->ComputePublicKey(privatekey);
@@ -179,16 +176,3 @@ int bsgs_thirdcheck(Int *start_range, uint64_t a, uint32_t k_index, Int *private
     } while (i < 32 && !found);
     return found;
 }
-
-/*
- * NOTE: The main BSGS thread functions (thread_process_bsgs, etc.) remain in
- * keyhunt.cpp due to extensive global variable dependencies. They will be
- * migrated here incrementally as the codebase is refactored.
- *
- * Functions to migrate:
- * - thread_process_bsgs: Sequential BSGS search
- * - thread_process_bsgs_backward: Search from end towards start
- * - thread_process_bsgs_both: Bidirectional search
- * - thread_process_bsgs_random: Random starting points
- * - thread_process_bsgs_dance: Interleaved top/bottom/random pattern
- */

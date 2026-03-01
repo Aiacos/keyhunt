@@ -95,6 +95,91 @@ struct thread_args {
 };
 
 /* ============================================================================
+ * BSGS Context - Algorithm state for Baby Step Giant Step mode
+ *
+ * This struct encapsulates all BSGS-specific algorithm state that threads
+ * need access to. It is NOT user configuration -- it is mutable algorithm
+ * state initialized once before threads start.
+ *
+ * Stored in config->runtime.bsgs_context and cast to bsgs_context_t*.
+ *
+ * DESIGN NOTE: The struct stores POINTERS to Int/Point values (not copies)
+ * because:
+ *   1. Int/Point are large objects (256 bits each)
+ *   2. The globals already exist in keyhunt.cpp -- we point to them, not copy
+ *   3. Multiple threads share the same values (read-only after init)
+ *   4. BSGS_CURRENT is written by threads (needs mutex, already existing)
+ * ============================================================================ */
+
+struct bsgs_context_t {
+    /* Int parameters (BSGS key range and step values) */
+    Int *BSGS_CURRENT;
+    Int *BSGS_R;
+    Int *BSGS_AUX;
+    Int *BSGS_N;
+    Int *BSGS_N_double;
+    Int *BSGS_M;
+    Int *BSGS_M_double;
+    Int *BSGS_M2;
+    Int *BSGS_M2_double;
+    Int *BSGS_M3;
+    Int *BSGS_M3_double;
+
+    /* Point parameters (precomputed step points) */
+    Point *BSGS_MP_double;
+    Point *BSGS_MP2_double;
+    Point *BSGS_MP3_double;
+
+    /* Amplification point vectors */
+    std::vector<Point> *BSGS_AMP2;
+    std::vector<Point> *BSGS_AMP3;
+
+    /* Target public keys */
+    std::vector<Point> *OriginalPointsBSGS;
+    bool *OriginalPointsBSGScompressed;
+
+    /* Generator points for BSGS */
+    std::vector<Point> *GSn;
+    Point *_2GSn;
+
+    /* Found state (per-target atomic flags) */
+    std::atomic<int> *bsgs_found;
+
+    /* Bloom filters (3-tier) */
+    bloom_extended_t *bloom_bP;
+    bloom_extended_t *bloom_bPx2nd;
+    bloom_extended_t *bloom_bPx3rd;
+
+    /* Baby step point table */
+    struct bsgs_xvalue *bPtable;
+
+    /* Bloom filter mutexes */
+    platform_mutex_t *bloom_bP_mutex;
+    platform_mutex_t *bloom_bPx2nd_mutex;
+    platform_mutex_t *bloom_bPx3rd_mutex;
+    platform_mutex_t *bPload_mutex;
+
+    /* Scalar parameters */
+    uint64_t bsgs_m;
+    uint64_t bsgs_m2;
+    uint64_t bsgs_m3;
+    uint64_t bsgs_aux;
+    uint32_t bsgs_point_number;
+    uint64_t BSGS_BUFFERXPOINTLENGTH;
+
+    /* Cache loading state */
+    int FLAGREADEDFILE1;
+    int FLAGREADEDFILE2;
+    int FLAGREADEDFILE3;
+    int FLAGREADEDFILE4;
+};
+
+/* BSGS helper functions (receive bsgs_context_t* parameter) */
+int bsgs_secondcheck(bsgs_context_t *bctx, Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
+int bsgs_thirdcheck(bsgs_context_t *bctx, Int *start_range, uint64_t a, uint32_t k_index, Int *privatekey);
+void calcualteindex(bsgs_context_t *bctx, int i, Int *key);
+
+/* ============================================================================
  * Shared Global Variables (extern declarations)
  * These are defined in keyhunt.cpp
  * NOTE: These will be gradually removed as migration to config progresses

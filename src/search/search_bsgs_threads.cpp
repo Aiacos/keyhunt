@@ -1,7 +1,7 @@
 /*
  * search_bsgs_threads.cpp - BSGS thread functions
  *
- * MIGRATION STATUS: Config-aware (extern globals)
+ * MIGRATION STATUS: Config-wired (bsgs_context_t via thread_args)
  *
  * This file contains all BSGS thread entry points moved from keyhunt.cpp:
  * - thread_process_bsgs: Sequential BSGS search
@@ -12,12 +12,17 @@
  * - thread_process_bsgs_backward: Search from end towards start
  * - thread_process_bsgs_both: Bidirectional search
  *
- * These functions use extern BSGS state variables declared in search_context.h
- * and helper functions (bsgs_secondcheck, bsgs_thirdcheck) from search_bsgs.cpp.
+ * All 5 BSGS search thread variants receive thread_args with config pointer.
+ * BSGS algorithm state is accessed via config->runtime.bsgs_context (bsgs_context_t*).
+ * Helper functions (bsgs_secondcheck, bsgs_thirdcheck) receive bsgs_context_t*.
  *
- * See search_context.h for shared declarations and extern globals.
+ * See search_common.h for bsgs_context_t definition and thread_args.
  */
 
+/* Include bsgs_sort.h FIRST so BSGS_SORT_H is defined before search_common.h
+ * and search_context.h try to define struct bsgs_xvalue conditionally. */
+#include "../bsgs/bsgs_sort.h"
+#include "search_common.h"
 #include "search_context.h"
 #include "search_utils.h"
 #include "../secp256k1/IntGroup.h"
@@ -32,53 +37,8 @@
 #include "../secure_file.h"
 #include <cmath>
 
-/* ------------------------------------------------------------------ */
-/*  Additional extern globals used by BSGS threads                     */
-/* ------------------------------------------------------------------ */
-
-extern uint64_t bsgs_aux;
-extern uint32_t bsgs_point_number;
-extern bool *OriginalPointsBSGScompressed;
-
-extern std::vector<Point> GSn;
-extern Point _2GSn;
-extern std::vector<Point> Gn;
-extern Point _2Gn;
-
-extern Int BSGS_N;
-extern Int BSGS_N_double;
-extern Int n_range_start;
-extern Int n_range_end;
-
-extern int FLAGMATRIX;
-extern int FLAGQUIET;
-
-extern int FLAGREADEDFILE1;
-extern int FLAGREADEDFILE2;
-extern int FLAGREADEDFILE3;
-extern int FLAGREADEDFILE4;
-
-extern uint64_t bsgs_m;
-extern uint64_t bsgs_m2;
-
-extern struct thread_counter *steps;
-extern struct thread_flag *ends;
-
-/* Platform mutex arrays for bloom filter loading */
-extern platform_mutex_t *bloom_bP_mutex;
-extern platform_mutex_t *bloom_bPx2nd_mutex;
-extern platform_mutex_t *bloom_bPx3rd_mutex;
-
-extern platform_mutex_t *bPload_mutex;
-
-/* profile_set_thread is defined in keyhunt.cpp */
+/* Infrastructure function externs (not BSGS state) */
 extern void profile_set_thread(int idx);
-
-/* ============================================================================
- * BSGS N/M Value Validation
- * ============================================================================ */
-
-/* External system info for RAM availability */
 extern system_info_t g_sysinfo;
 
 /**
@@ -89,9 +49,10 @@ extern system_info_t g_sysinfo;
  *
  * @param thread_id      Thread number for reporting
  * @param bit_range      User's requested bit range (e.g., 160)
- * @param current_k      Current K factor
+ * @param current_k      Current K factor (from config->bsgs.k_factor)
  */
 static void suggest_practical_alternatives(uint32_t thread_id, int bit_range, int current_k) {
+	/* Use global sysinfo for RAM availability */
 	uint64_t available_ram_mb = g_sysinfo.ram_available;
 	if (available_ram_mb == 0) {
 		available_ram_mb = 4096; /* Fallback: assume 4 GB */
@@ -206,14 +167,14 @@ static void suggest_practical_alternatives(uint32_t thread_id, int bit_range, in
  * Graceful degradation: If N > uint64_t, suggests reducing K factor or using smaller N
  *
  * @param thread_id  Thread number for error reporting
+ * @param bctx       BSGS context with N/M values
+ * @param k_factor   K factor from config
  * @return           0 on success, -1 if values are impractical
- *
- * Example warnings:
- * - N > 2^80: "BSGS N value is beyond practical computation range"
- * - M > 2^64: "BSGS M value exceeds addressable memory limits"
- * - N > 2^64: Suggests practical alternatives with different N/K combinations
  */
-static int validate_bsgs_nm_values(uint32_t thread_id) {
+static int validate_bsgs_nm_values(uint32_t thread_id, bsgs_context_t *bctx, int k_factor) {
+	Int &BSGS_N = *bctx->BSGS_N;
+	Int &BSGS_M = *bctx->BSGS_M;
+	int KFACTOR = k_factor;
 	bool n_overflow = false;
 	bool m_overflow = false;
 
@@ -338,14 +299,44 @@ static int validate_bsgs_nm_values(uint32_t thread_id) {
  * thread_process_bsgs - Sequential BSGS search
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_bsgs(LPVOID vargp) {
-#else
-void *thread_process_bsgs(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs(void *vargp) {
+	/* Extract config and thread ID from thread_args */
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	uint32_t thread_number = (uint32_t)args->thread_id;
+	delete args;
+
+	/* BSGS context from config */
+	bsgs_context_t *bctx = (bsgs_context_t *)config->runtime.bsgs_context;
+
+	/* Config-derived local variables (shadows matching old global names) */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bool FLAGMATRIX = config->search.matrix_mode;
+	bool FLAGQUIET = config->search.quiet_mode;
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	std::atomic<int> &THREADOUTPUT = *(std::atomic<int> *)config->runtime.thread_output;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+	platform_mutex_t &bsgs_thread = *(platform_mutex_t *)config->runtime.bsgs_mutex;
+	platform_mutex_t &write_keys = *(platform_mutex_t *)config->runtime.write_mutex;
+
+	/* BSGS context reads */
+	Int &BSGS_CURRENT = *bctx->BSGS_CURRENT;
+	Int &BSGS_N_double = *bctx->BSGS_N_double;
+	Int &BSGS_M = *bctx->BSGS_M;
+	Int &BSGS_M_double = *bctx->BSGS_M_double;
+	std::vector<Point> &GSn = *bctx->GSn;
+	Point &_2GSn = *bctx->_2GSn;
+	std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+	bool *OriginalPointsBSGScompressed = bctx->OriginalPointsBSGScompressed;
+	std::atomic<int> *bsgs_found = bctx->bsgs_found;
+	bloom_extended_t *bloom_bP = bctx->bloom_bP;
+	uint64_t bsgs_aux = bctx->bsgs_aux;
+	uint32_t bsgs_point_number = bctx->bsgs_point_number;
+	uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
+
 	// File-related variables
 	FILE* filekey;
-	struct tothread* tt;
 
 	// Character variables
 	uint8_t xpoint_raw[16];
@@ -363,7 +354,7 @@ void *thread_process_bsgs(void *vargp)	{
 	Point pp, pn;
 
 	// Unsigned integer variables
-	uint32_t k, l, r, salir, thread_number;
+	uint32_t k, l, r, salir;
 	uint64_t cycles;
 
 	// Other variables
@@ -373,16 +364,13 @@ void *thread_process_bsgs(void *vargp)	{
 	// Batch context for optimized operations
 	bsgs_batch_ctx_t batch_ctx;
 
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-	free(tt);
 	profile_set_thread((int)thread_number);
 
-	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
-	if (validate_bsgs_nm_values(thread_number) != 0) {
+	/* Validate BSGS N/M values */
+	if (validate_bsgs_nm_values(thread_number, bctx, config->bsgs.k_factor) != 0) {
 		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	// Initialize batch context
@@ -411,10 +399,6 @@ platform_mutex_lock(&bsgs_thread);
 
 		base_key.Set(&BSGS_CURRENT);	/* we need to set our base_key to the current BSGS_CURRENT value*/
 		BSGS_CURRENT.Add(&BSGS_N_double);		/*Then add 2*BSGS_N to BSGS_CURRENT*/
-		/*
-		BSGS_CURRENT.Add(&BSGS_N);		//Then add BSGS_N to BSGS_CURRENT
-		BSGS_CURRENT.Add(&BSGS_N);		//Then add BSGS_N to BSGS_CURRENT
-		*/
 
 platform_mutex_unlock(&bsgs_thread);
 
@@ -428,7 +412,7 @@ platform_mutex_unlock(&bsgs_thread);
 			free(aux_c);
 		}
 		else	{
-			if(FLAGQUIET == 0){
+			if(!FLAGQUIET){
 				aux_c = base_key.GetBase16();
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
@@ -452,7 +436,7 @@ platform_mutex_unlock(&bsgs_thread);
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
-							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
+							r = bsgs_secondcheck(bctx,&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
 								output_success("Thread Key found privkey %s   \n",hextemp);
@@ -515,19 +499,47 @@ platform_mutex_unlock(&write_keys);
  * thread_process_bsgs_random - Random starting point BSGS search
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_bsgs_random(LPVOID vargp) {
-#else
-void *thread_process_bsgs_random(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_random(void *vargp) {
+	/* Extract config and thread ID from thread_args */
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	uint32_t thread_number = (uint32_t)args->thread_id;
+	delete args;
+
+	/* BSGS context from config */
+	bsgs_context_t *bctx = (bsgs_context_t *)config->runtime.bsgs_context;
+
+	/* Config-derived local variables */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bool FLAGMATRIX = config->search.matrix_mode;
+	bool FLAGQUIET = config->search.quiet_mode;
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	std::atomic<int> &THREADOUTPUT = *(std::atomic<int> *)config->runtime.thread_output;
+	Int &n_range_start = *(Int *)config->runtime.range_start;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+	platform_mutex_t &bsgs_thread = *(platform_mutex_t *)config->runtime.bsgs_mutex;
+	platform_mutex_t &write_keys = *(platform_mutex_t *)config->runtime.write_mutex;
+
+	/* BSGS context reads */
+	Int &BSGS_M = *bctx->BSGS_M;
+	Int &BSGS_M_double = *bctx->BSGS_M_double;
+	std::vector<Point> &GSn = *bctx->GSn;
+	Point &_2GSn = *bctx->_2GSn;
+	std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+	bool *OriginalPointsBSGScompressed = bctx->OriginalPointsBSGScompressed;
+	std::atomic<int> *bsgs_found = bctx->bsgs_found;
+	bloom_extended_t *bloom_bP = bctx->bloom_bP;
+	uint64_t bsgs_aux = bctx->bsgs_aux;
+	uint32_t bsgs_point_number = bctx->bsgs_point_number;
+	uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
 
 	FILE *filekey;
-	struct tothread *tt;
 	uint8_t xpoint_raw[16];
 	char *aux_c,*hextemp;
 	Int base_key,keyfound,n_range_random;
 	Point base_point,point_aux,point_found,offset_point;
-	uint32_t l,k,r,salir,thread_number;
+	uint32_t l,k,r,salir;
 	uint64_t cycles;
 
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
@@ -549,16 +561,13 @@ void *thread_process_bsgs_random(void *vargp)	{
 	// Batch context for optimized operations
 	bsgs_batch_ctx_t batch_ctx;
 
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-	free(tt);
 	profile_set_thread((int)thread_number);
 
-	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
-	if (validate_bsgs_nm_values(thread_number) != 0) {
+	/* Validate BSGS N/M values */
+	if (validate_bsgs_nm_values(thread_number, bctx, config->bsgs.k_factor) != 0) {
 		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	// Initialize batch context
@@ -580,12 +589,6 @@ void *thread_process_bsgs_random(void *vargp)	{
 
 	do	{
 
-
-	/*          | Start Range	| End Range     |
-		None	| 1             | EC.N          |
-		-b	bit | Min bit value | Max bit value |
-		-r	A:B | A             | B             |
-	*/
 platform_mutex_lock(&bsgs_thread);
 
 		base_key.Rand(&n_range_start,&n_range_end);
@@ -598,7 +601,7 @@ platform_mutex_unlock(&bsgs_thread);
 				free(aux_c);
 		}
 		else{
-			if(FLAGQUIET == 0){
+			if(!FLAGQUIET){
 				aux_c = base_key.GetBase16();
 				printf("\r[+] Thread 0x%s  \r",aux_c);
 				fflush(stdout);
@@ -625,7 +628,7 @@ platform_mutex_unlock(&bsgs_thread);
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
-							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
+							r = bsgs_secondcheck(bctx,&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
 								output_success("Thread Key found privkey %s    \n",hextemp);
@@ -694,11 +697,28 @@ platform_mutex_unlock(&write_keys);
  * thread_bPload - Baby step table loading (3 bloom levels)
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_bPload(LPVOID vargp) {
-#else
-void *thread_bPload(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp) {
+	/* bPload threads run during initialization before config bridge is fully
+	 * populated. They use struct bPload (not thread_args) and need local externs
+	 * for the BSGS globals they access. */
+	extern Secp256K1 *secp;
+	extern std::vector<Point> Gn;
+	extern Point _2Gn;
+	extern bloom_extended_t *bloom_bP;
+	extern bloom_extended_t *bloom_bPx2nd;
+	extern bloom_extended_t *bloom_bPx3rd;
+	extern platform_mutex_t *bloom_bP_mutex;
+	extern platform_mutex_t *bloom_bPx2nd_mutex;
+	extern platform_mutex_t *bloom_bPx3rd_mutex;
+	extern platform_mutex_t *bPload_mutex;
+	extern struct bsgs_xvalue *bPtable;
+	extern uint64_t bsgs_m2;
+	extern uint64_t bsgs_m3;
+	extern uint64_t BSGS_BUFFERXPOINTLENGTH;
+	extern int FLAGREADEDFILE1;
+	extern int FLAGREADEDFILE2;
+	extern int FLAGREADEDFILE3;
+	extern int FLAGREADEDFILE4;
 
 	char rawvalue[32];
 	struct bPload *tt;
@@ -848,11 +868,25 @@ bloom_ext_add(&bloom_bP[bloom_bP_index], rawvalue ,BSGS_BUFFERXPOINTLENGTH);
  * thread_bPload_2blooms - Baby step table loading (2 bloom levels)
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_bPload_2blooms(LPVOID vargp) {
-#else
-void *thread_bPload_2blooms(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp) {
+	/* bPload threads run during initialization before config bridge is fully
+	 * populated. They use struct bPload (not thread_args) and need local externs. */
+	extern Secp256K1 *secp;
+	extern std::vector<Point> Gn;
+	extern Point _2Gn;
+	extern bloom_extended_t *bloom_bPx2nd;
+	extern bloom_extended_t *bloom_bPx3rd;
+	extern platform_mutex_t *bloom_bPx2nd_mutex;
+	extern platform_mutex_t *bloom_bPx3rd_mutex;
+	extern platform_mutex_t *bPload_mutex;
+	extern struct bsgs_xvalue *bPtable;
+	extern uint64_t bsgs_m2;
+	extern uint64_t bsgs_m3;
+	extern uint64_t BSGS_BUFFERXPOINTLENGTH;
+	extern int FLAGREADEDFILE2;
+	extern int FLAGREADEDFILE3;
+	extern int FLAGREADEDFILE4;
+
 	char rawvalue[32];
 	struct bPload *tt;
 	uint64_t i_counter,j,nbStep; //,to;
@@ -987,23 +1021,52 @@ bloom_ext_add(&bloom_bPx2nd[bloom_bP_index], rawvalue, BSGS_BUFFERXPOINTLENGTH);
  * thread_process_bsgs_dance - Interleaved top/bottom/random BSGS search
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_bsgs_dance(LPVOID vargp) {
-#else
-void *thread_process_bsgs_dance(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_dance(void *vargp) {
+	/* Extract config and thread ID from thread_args */
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	uint32_t thread_number = (uint32_t)args->thread_id;
+	delete args;
+
+	/* BSGS context from config */
+	bsgs_context_t *bctx = (bsgs_context_t *)config->runtime.bsgs_context;
+
+	/* Config-derived local variables */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bool FLAGMATRIX = config->search.matrix_mode;
+	bool FLAGQUIET = config->search.quiet_mode;
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	std::atomic<int> &THREADOUTPUT = *(std::atomic<int> *)config->runtime.thread_output;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+	platform_mutex_t &bsgs_thread = *(platform_mutex_t *)config->runtime.bsgs_mutex;
+	platform_mutex_t &write_keys = *(platform_mutex_t *)config->runtime.write_mutex;
+
+	/* BSGS context reads */
+	Int &BSGS_CURRENT = *bctx->BSGS_CURRENT;
+	Int &BSGS_N_double = *bctx->BSGS_N_double;
+	Int &BSGS_M = *bctx->BSGS_M;
+	Int &BSGS_M_double = *bctx->BSGS_M_double;
+	std::vector<Point> &GSn = *bctx->GSn;
+	Point &_2GSn = *bctx->_2GSn;
+	std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+	bool *OriginalPointsBSGScompressed = bctx->OriginalPointsBSGScompressed;
+	std::atomic<int> *bsgs_found = bctx->bsgs_found;
+	bloom_extended_t *bloom_bP = bctx->bloom_bP;
+	uint64_t bsgs_aux = bctx->bsgs_aux;
+	uint32_t bsgs_point_number = bctx->bsgs_point_number;
+	uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
 
 	Point pts[CPU_GRP_SIZE];
 	Int dx[CPU_GRP_SIZE / 2 + 1];
 	Point pp,pn,startP,base_point,point_aux,point_found,offset_point;
 	FILE *filekey;
-	struct tothread *tt;
 	uint8_t xpoint_raw[16];
 	char *aux_c,*hextemp;
 	Int base_key,keyfound,dy,dyn,_s,_p,intaux;
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
 	struct thread_rand_state rand_state;
-	uint32_t k,l,r,salir,thread_number,entrar;
+	uint32_t k,l,r,salir,entrar;
 	uint64_t cycles;
 	int hLength = (CPU_GRP_SIZE / 2 - 1);
 
@@ -1012,16 +1075,13 @@ void *thread_process_bsgs_dance(void *vargp)	{
 	// Batch context for optimized operations
 	bsgs_batch_ctx_t batch_ctx;
 
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-	free(tt);
 	profile_set_thread((int)thread_number);
 
-	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
-	if (validate_bsgs_nm_values(thread_number) != 0) {
+	/* Validate BSGS N/M values */
+	if (validate_bsgs_nm_values(thread_number, bctx, config->bsgs.k_factor) != 0) {
 		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
@@ -1101,7 +1161,7 @@ platform_mutex_unlock(&bsgs_thread);
 			free(aux_c);
 		}
 		else	{
-			if(FLAGQUIET == 0){
+			if(!FLAGQUIET){
 				aux_c = base_key.GetBase16();
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
@@ -1127,7 +1187,7 @@ platform_mutex_unlock(&bsgs_thread);
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
-							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
+							r = bsgs_secondcheck(bctx,&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
 								output_success("Thread Key found privkey %s   \n",hextemp);
@@ -1194,18 +1254,48 @@ platform_mutex_unlock(&write_keys);
  * thread_process_bsgs_backward - Search from end towards start
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_bsgs_backward(LPVOID vargp) {
-#else
-void *thread_process_bsgs_backward(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_backward(void *vargp) {
+	/* Extract config and thread ID from thread_args */
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	uint32_t thread_number = (uint32_t)args->thread_id;
+	delete args;
+
+	/* BSGS context from config */
+	bsgs_context_t *bctx = (bsgs_context_t *)config->runtime.bsgs_context;
+
+	/* Config-derived local variables */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bool FLAGMATRIX = config->search.matrix_mode;
+	bool FLAGQUIET = config->search.quiet_mode;
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	std::atomic<int> &THREADOUTPUT = *(std::atomic<int> *)config->runtime.thread_output;
+	Int &n_range_start = *(Int *)config->runtime.range_start;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+	platform_mutex_t &bsgs_thread = *(platform_mutex_t *)config->runtime.bsgs_mutex;
+	platform_mutex_t &write_keys = *(platform_mutex_t *)config->runtime.write_mutex;
+
+	/* BSGS context reads */
+	Int &BSGS_N_double = *bctx->BSGS_N_double;
+	Int &BSGS_M = *bctx->BSGS_M;
+	Int &BSGS_M_double = *bctx->BSGS_M_double;
+	std::vector<Point> &GSn = *bctx->GSn;
+	Point &_2GSn = *bctx->_2GSn;
+	std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+	bool *OriginalPointsBSGScompressed = bctx->OriginalPointsBSGScompressed;
+	std::atomic<int> *bsgs_found = bctx->bsgs_found;
+	bloom_extended_t *bloom_bP = bctx->bloom_bP;
+	uint64_t bsgs_aux = bctx->bsgs_aux;
+	uint32_t bsgs_point_number = bctx->bsgs_point_number;
+	uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
+
 	FILE *filekey;
-	struct tothread *tt;
 	uint8_t xpoint_raw[16];
 	char *aux_c,*hextemp;
 	Int base_key,keyfound;
 	Point base_point,point_aux,point_found,offset_point;
-	uint32_t k,l,r,salir,thread_number,entrar;
+	uint32_t k,l,r,salir,entrar;
 	uint64_t cycles;
 
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
@@ -1227,16 +1317,13 @@ void *thread_process_bsgs_backward(void *vargp)	{
 	// Batch context for optimized operations
 	bsgs_batch_ctx_t batch_ctx;
 
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-	free(tt);
 	profile_set_thread((int)thread_number);
 
-	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
-	if (validate_bsgs_nm_values(thread_number) != 0) {
+	/* Validate BSGS N/M values */
+	if (validate_bsgs_nm_values(thread_number, bctx, config->bsgs.k_factor) != 0) {
 		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	// Initialize batch context
@@ -1286,7 +1373,7 @@ platform_mutex_unlock(&bsgs_thread);
 			free(aux_c);
 		}
 		else	{
-			if(FLAGQUIET == 0){
+			if(!FLAGQUIET){
 				aux_c = base_key.GetBase16();
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
@@ -1312,7 +1399,7 @@ platform_mutex_unlock(&bsgs_thread);
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
-							r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
+							r = bsgs_secondcheck(bctx,&base_key,((j*1024) + i),k,&keyfound);
 							if(r)	{
 								hextemp = keyfound.GetBase16();
 								output_success("Thread Key found privkey %s   \n",hextemp);
@@ -1378,18 +1465,48 @@ platform_mutex_unlock(&write_keys);
  * thread_process_bsgs_both - Bidirectional BSGS search
  * ============================================================================ */
 
-#if defined(_WIN64) && !defined(__CYGWIN__)
-DWORD WINAPI thread_process_bsgs_both(LPVOID vargp) {
-#else
-void *thread_process_bsgs_both(void *vargp)	{
-#endif
+platform_thread_return_t PLATFORM_THREAD_CALL thread_process_bsgs_both(void *vargp) {
+	/* Extract config and thread ID from thread_args */
+	thread_args *args = (thread_args *)vargp;
+	keyhunt_config_t *config = args->config;
+	uint32_t thread_number = (uint32_t)args->thread_id;
+	delete args;
+
+	/* BSGS context from config */
+	bsgs_context_t *bctx = (bsgs_context_t *)config->runtime.bsgs_context;
+
+	/* Config-derived local variables */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	bool FLAGMATRIX = config->search.matrix_mode;
+	bool FLAGQUIET = config->search.quiet_mode;
+	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
+	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
+	std::atomic<int> &THREADOUTPUT = *(std::atomic<int> *)config->runtime.thread_output;
+	Int &n_range_end = *(Int *)config->runtime.range_end;
+	platform_mutex_t &bsgs_thread = *(platform_mutex_t *)config->runtime.bsgs_mutex;
+	platform_mutex_t &write_keys = *(platform_mutex_t *)config->runtime.write_mutex;
+
+	/* BSGS context reads */
+	Int &BSGS_CURRENT = *bctx->BSGS_CURRENT;
+	Int &BSGS_N_double = *bctx->BSGS_N_double;
+	Int &BSGS_M = *bctx->BSGS_M;
+	Int &BSGS_M_double = *bctx->BSGS_M_double;
+	std::vector<Point> &GSn = *bctx->GSn;
+	Point &_2GSn = *bctx->_2GSn;
+	std::vector<Point> &OriginalPointsBSGS = *bctx->OriginalPointsBSGS;
+	bool *OriginalPointsBSGScompressed = bctx->OriginalPointsBSGScompressed;
+	std::atomic<int> *bsgs_found = bctx->bsgs_found;
+	bloom_extended_t *bloom_bP = bctx->bloom_bP;
+	uint64_t bsgs_aux = bctx->bsgs_aux;
+	uint32_t bsgs_point_number = bctx->bsgs_point_number;
+	uint64_t BSGS_BUFFERXPOINTLENGTH = bctx->BSGS_BUFFERXPOINTLENGTH;
+
 	FILE *filekey;
-	struct tothread *tt;
 	uint8_t xpoint_raw[16];
 	char *aux_c,*hextemp;
 	Int base_key,keyfound;
 	Point base_point,point_aux,point_found,offset_point;
-	uint32_t k,l,r,salir,thread_number,entrar;
+	uint32_t k,l,r,salir,entrar;
 	uint64_t cycles;
 
 	IntGroup *grp = new IntGroup(CPU_GRP_SIZE / 2 + 1);
@@ -1412,16 +1529,13 @@ void *thread_process_bsgs_both(void *vargp)	{
 	// Batch context for optimized operations
 	bsgs_batch_ctx_t batch_ctx;
 
-	tt = (struct tothread *)vargp;
-	thread_number = tt->nt;
-	free(tt);
 	profile_set_thread((int)thread_number);
 
-	/* Validate BSGS N/M values (converted from config->bsgs.n_value_int/m_value_int) */
-	if (validate_bsgs_nm_values(thread_number) != 0) {
+	/* Validate BSGS N/M values */
+	if (validate_bsgs_nm_values(thread_number, bctx, config->bsgs.k_factor) != 0) {
 		output_error("[Thread %u] Aborting due to impractical BSGS parameters\n", thread_number);
 		delete grp;
-		return NULL;
+		return (platform_thread_return_t)0;
 	}
 
 	thread_rand_init(&rand_state, (uint64_t)thread_number ^ (uint64_t)time(NULL));
@@ -1499,7 +1613,7 @@ platform_mutex_unlock(&bsgs_thread);
 			free(aux_c);
 		}
 		else	{
-			if(FLAGQUIET == 0){
+			if(!FLAGQUIET){
 				aux_c = base_key.GetBase16();
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
@@ -1525,7 +1639,7 @@ platform_mutex_unlock(&bsgs_thread);
 							batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 							r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 							if(r) {
-								r = bsgs_secondcheck(&base_key,((j*1024) + i),k,&keyfound);
+								r = bsgs_secondcheck(bctx,&base_key,((j*1024) + i),k,&keyfound);
 								if(r)	{
 									hextemp = keyfound.GetBase16();
 									output_success("Thread Key found privkey %s   \n",hextemp);
