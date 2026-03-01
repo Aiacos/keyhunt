@@ -177,7 +177,7 @@ void *thread_process_vanity(void *vargp)	{
 					printf("\rBase key: %s     \r",hextemp);
 					fflush(stdout);
 					free(hextemp);
-					THREADOUTPUT = 1;
+					THREADOUTPUT.store(1, std::memory_order_release);
 				}
 			}
 				do {

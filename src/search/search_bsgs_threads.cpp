@@ -38,7 +38,6 @@
 
 extern uint64_t bsgs_aux;
 extern uint32_t bsgs_point_number;
-extern volatile int *bsgs_found;
 extern bool *OriginalPointsBSGScompressed;
 
 extern std::vector<Point> GSn;
@@ -53,7 +52,6 @@ extern Int n_range_end;
 
 extern int FLAGMATRIX;
 extern int FLAGQUIET;
-extern volatile int THREADOUTPUT;
 
 extern int FLAGREADEDFILE1;
 extern int FLAGREADEDFILE2;
@@ -435,22 +433,22 @@ platform_mutex_unlock(&bsgs_thread);
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
 				free(aux_c);
-				THREADOUTPUT = 1;
+				THREADOUTPUT.store(1, std::memory_order_release);
 			}
 		}
 		base_point = secp->ComputePublicKey(&base_key);
 		point_aux = secp->AddDirect(base_point, offset_point);
 		point_aux = secp->Negation(point_aux);
 		for(k = 0; k < bsgs_point_number ; k++)	{
-			if(bsgs_found[k] == 0)	{
+			if(bsgs_found[k].load(std::memory_order_relaxed) == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint64_t j = 0;
-				while( j < cycles && bsgs_found[k]== 0 )	{
+				while( j < cycles && bsgs_found[k].load(std::memory_order_relaxed) == 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
 					// Check all computed points against bloom filter
-					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k].load(std::memory_order_relaxed) == 0; i++) {
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
@@ -473,10 +471,10 @@ platform_mutex_lock(&write_keys);
 								free(hextemp);
 								free(aux_c);
 platform_mutex_unlock(&write_keys);
-								bsgs_found[k] = 1;
+								bsgs_found[k].store(1, std::memory_order_release);
 								salir = 1;
 								for(l = 0; l < bsgs_point_number && salir; l++)	{
-									salir &= bsgs_found[l];
+									salir &= bsgs_found[l].load(std::memory_order_acquire);
 								}
 								if(salir)	{
 									printf("All points were found\n");
@@ -605,7 +603,7 @@ platform_mutex_unlock(&bsgs_thread);
 				printf("\r[+] Thread 0x%s  \r",aux_c);
 				fflush(stdout);
 				free(aux_c);
-				THREADOUTPUT = 1;
+				THREADOUTPUT.store(1, std::memory_order_release);
 			}
 		}
 		base_point = secp->ComputePublicKey(&base_key);
@@ -615,15 +613,15 @@ platform_mutex_unlock(&bsgs_thread);
 
 		/* We need to test individually every point in BSGS_Q */
 		for(k = 0; k < bsgs_point_number ; k++)	{
-			if(bsgs_found[k] == 0)	{
+			if(bsgs_found[k].load(std::memory_order_relaxed) == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint64_t j = 0;
-				while( j < cycles && bsgs_found[k]== 0 )	{
+				while( j < cycles && bsgs_found[k].load(std::memory_order_relaxed) == 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
 					// Check all computed points against bloom filter
-					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k].load(std::memory_order_relaxed) == 0; i++) {
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
@@ -647,10 +645,10 @@ platform_mutex_lock(&write_keys);
 								free(aux_c);
 platform_mutex_unlock(&write_keys);
 
-								bsgs_found[k] = 1;
+								bsgs_found[k].store(1, std::memory_order_release);
 								salir = 1;
 								for(l = 0; l < bsgs_point_number && salir; l++)	{
-									salir &= bsgs_found[l];
+									salir &= bsgs_found[l].load(std::memory_order_acquire);
 								}
 								if(salir)	{
 									printf("All points were found\n");
@@ -1108,7 +1106,7 @@ platform_mutex_unlock(&bsgs_thread);
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
 				free(aux_c);
-				THREADOUTPUT = 1;
+				THREADOUTPUT.store(1, std::memory_order_release);
 			}
 		}
 
@@ -1117,15 +1115,15 @@ platform_mutex_unlock(&bsgs_thread);
 		point_aux = secp->Negation(point_aux);
 
 		for(k = 0; k < bsgs_point_number ; k++)	{
-			if(bsgs_found[k] == 0)	{
+			if(bsgs_found[k].load(std::memory_order_relaxed) == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint64_t j = 0;
-				while( j < cycles && bsgs_found[k]== 0 )	{
+				while( j < cycles && bsgs_found[k].load(std::memory_order_relaxed) == 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
 					// Check all computed points against bloom filter
-					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k].load(std::memory_order_relaxed) == 0; i++) {
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
@@ -1149,10 +1147,10 @@ platform_mutex_lock(&write_keys);
 								free(aux_c);
 platform_mutex_unlock(&write_keys);
 
-								bsgs_found[k] = 1;
+								bsgs_found[k].store(1, std::memory_order_release);
 								salir = 1;
 								for(l = 0; l < bsgs_point_number && salir; l++)	{
-									salir &= bsgs_found[l];
+									salir &= bsgs_found[l].load(std::memory_order_acquire);
 								}
 								if(salir)	{
 									printf("All points were found\n");
@@ -1293,7 +1291,7 @@ platform_mutex_unlock(&bsgs_thread);
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
 				free(aux_c);
-				THREADOUTPUT = 1;
+				THREADOUTPUT.store(1, std::memory_order_release);
 			}
 		}
 
@@ -1302,15 +1300,15 @@ platform_mutex_unlock(&bsgs_thread);
 		point_aux = secp->Negation(point_aux);
 
 		for(k = 0; k < bsgs_point_number ; k++)	{
-			if(bsgs_found[k] == 0)	{
+			if(bsgs_found[k].load(std::memory_order_relaxed) == 0)	{
 				startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 				uint64_t j = 0;
-				while( j < cycles && bsgs_found[k]== 0 )	{
+				while( j < cycles && bsgs_found[k].load(std::memory_order_relaxed) == 0 )	{
 					// Use optimized batch point computation
 					bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
 					// Check all computed points against bloom filter
-					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+					for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k].load(std::memory_order_relaxed) == 0; i++) {
 						batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 						r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 						if(r) {
@@ -1334,10 +1332,10 @@ platform_mutex_lock(&write_keys);
 								free(aux_c);
 platform_mutex_unlock(&write_keys);
 
-								bsgs_found[k] = 1;
+								bsgs_found[k].store(1, std::memory_order_release);
 								salir = 1;
 								for(l = 0; l < bsgs_point_number && salir; l++)	{
-									salir &= bsgs_found[l];
+									salir &= bsgs_found[l].load(std::memory_order_acquire);
 								}
 								if(salir)	{
 									printf("All points were found\n");
@@ -1506,7 +1504,7 @@ platform_mutex_unlock(&bsgs_thread);
 				printf("\r[+] Thread 0x%s   \r",aux_c);
 				fflush(stdout);
 				free(aux_c);
-				THREADOUTPUT = 1;
+				THREADOUTPUT.store(1, std::memory_order_release);
 			}
 		}
 
@@ -1515,15 +1513,15 @@ platform_mutex_unlock(&bsgs_thread);
 		point_aux = secp->Negation(point_aux);
 
 		for(k = 0; k < bsgs_point_number ; k++)	{
-			if(bsgs_found[k] == 0)	{
+			if(bsgs_found[k].load(std::memory_order_relaxed) == 0)	{
 					startP  = secp->AddDirect(OriginalPointsBSGS[k],point_aux);
 					uint64_t j = 0;
-					while( j < cycles && bsgs_found[k]== 0 )	{
+					while( j < cycles && bsgs_found[k].load(std::memory_order_relaxed) == 0 )	{
 						// Use optimized batch point computation
 						bsgs_batch_compute_points(&batch_ctx, &startP, GSn.data(), &_2GSn, hLength);
 
 						// Check all computed points against bloom filter
-						for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k]== 0; i++) {
+						for(size_t i = 0; i<CPU_GRP_SIZE && bsgs_found[k].load(std::memory_order_relaxed) == 0; i++) {
 							batch_ctx.pts[i].x.GetHi16Bytes(xpoint_raw);
 							r = bloom_ext_check(&bloom_bP[((unsigned char)xpoint_raw[0])], xpoint_raw, (int)BSGS_BUFFERXPOINTLENGTH);
 							if(r) {
@@ -1547,10 +1545,10 @@ platform_mutex_lock(&write_keys);
 									free(aux_c);
 platform_mutex_unlock(&write_keys);
 
-									bsgs_found[k] = 1;
+									bsgs_found[k].store(1, std::memory_order_release);
 									salir = 1;
 									for(l = 0; l < bsgs_point_number && salir; l++)	{
-										salir &= bsgs_found[l];
+										salir &= bsgs_found[l].load(std::memory_order_acquire);
 									}
 									if(salir)	{
 										printf("All points were found\n");

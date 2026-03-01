@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <atomic>
 #include <vector>
 
 #include "secp256k1/SECP256k1.h"
@@ -152,7 +153,7 @@ extern platform_mutex_t *bPload_mutex;
 /* --- Thread progress counters --- */
 extern struct thread_counter *steps;
 extern struct thread_flag *ends;
-extern volatile int THREADOUTPUT;
+extern std::atomic<int> THREADOUTPUT;
 
 /* --- Search flags (used by search modules and/or io.cpp) --- */
 extern int FLAGMODE;
@@ -219,7 +220,7 @@ extern int minikey_n_limit;
 
 extern uint64_t BSGS_BUFFERXPOINTLENGTH;
 
-extern volatile int *bsgs_found;
+extern std::atomic<int> *bsgs_found;
 extern std::vector<Point> OriginalPointsBSGS;
 extern bool *OriginalPointsBSGScompressed;
 

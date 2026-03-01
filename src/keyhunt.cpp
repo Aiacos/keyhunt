@@ -604,7 +604,7 @@ void calcualteindex(int i,Int *key);
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp);
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp);
 
-volatile int THREADOUTPUT = 0;
+std::atomic<int> THREADOUTPUT{0};
 char *bit_range_str_min;
 char *bit_range_str_max;
 
@@ -833,7 +833,7 @@ have been migrated to bsgs_config_t and runtime_state_t.
 Runtime algorithm state (bPtable, bloom_bP*, addressTable, checksums, mutexes)
 remain as module-scoped until BSGS algorithm is fully encapsulated.
 */
-volatile int *bsgs_found;
+std::atomic<int> *bsgs_found;
 std::vector<Point> OriginalPointsBSGS;
 bool *OriginalPointsBSGScompressed;
 
@@ -2790,8 +2790,7 @@ int main(int argc, char **argv)	{
 			output_error("There is no valid data in the file\n");
 			exit(EXIT_FAILURE);
 		}
-		bsgs_found = (int*) calloc(N,sizeof(int));
-		checkpointer((void *)bsgs_found,__FILE__,"calloc","bsgs_found" ,__LINE__ -1 );
+		bsgs_found = new std::atomic<int>[N]{};  // Zero-initialized atomic array
 		OriginalPointsBSGS.resize(N);
 		OriginalPointsBSGScompressed = (bool*) malloc(N*sizeof(bool));
 		checkpointer((void *)OriginalPointsBSGScompressed,__FILE__,"malloc","OriginalPointsBSGScompressed" ,__LINE__ -1 );
@@ -4557,7 +4556,7 @@ int main(int argc, char **argv)	{
 						append_adaptive_info(buffer, sizeof(buffer));
 						printf("%s", buffer);
 						fflush(stdout);
-						THREADOUTPUT = 0;
+						THREADOUTPUT.store(0, std::memory_order_release);
 
 						// Display per-GPU statistics if multi-GPU mode is active
 						if (g_multi_gpu_workers != NULL) {
@@ -4717,7 +4716,7 @@ int main(int argc, char **argv)	{
 									snprintf(buffer,sizeof(buffer),"[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
 								}
 								else	{
-									if(THREADOUTPUT == 1)	{
+									if(THREADOUTPUT.load(std::memory_order_acquire) == 1)	{
 										snprintf(buffer,sizeof(buffer),"\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",str_total,str_seconds,str_divpretotal,str_limits_prefixs[salir ? i : i-1],str_pretotal);
 								}
 								else	{
@@ -4733,7 +4732,7 @@ int main(int argc, char **argv)	{
 						append_adaptive_info(buffer, sizeof(buffer));
 						printf("%s",buffer);
 						fflush(stdout);
-						THREADOUTPUT = 0;
+						THREADOUTPUT.store(0, std::memory_order_release);
 
 						// Display per-GPU statistics if multi-GPU mode is active
 						if (g_multi_gpu_workers != NULL) {

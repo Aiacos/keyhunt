@@ -564,7 +564,7 @@ void *thread_process(void *vargp)	{
 	extern Int n_range_end;
 	extern struct address_value *addressTable;
 	extern Int beta, beta2, lambda, lambda2;
-	extern volatile int THREADOUTPUT;
+	/* THREADOUTPUT declared in search_context.h as std::atomic<int> */
 
 	/* Extract thread_number and config (if available) */
 	tt = (struct tothread *)vargp;
@@ -625,7 +625,7 @@ void *thread_process(void *vargp)	{
 					printf("\rBase key: %s     \r",hextemp);
 					fflush(stdout);
 					free(hextemp);
-					THREADOUTPUT = 1;
+					THREADOUTPUT.store(1, std::memory_order_release);
 				}
 			}
 				do {
