@@ -38,7 +38,7 @@ Plans:
 - [x] 01-02-PLAN.md — Add NIST/IETF/bitcoin-core reference crypto test vectors
 - [x] 01-03-PLAN.md — E2E tests for ADDRESS, BSGS, XPOINT modes
 - [x] 01-04-PLAN.md — E2E tests for RMD160, VANITY, MINIKEYS modes + coverage gate
-- [ ] 01-05-PLAN.md — Gap closure: Int.cpp and SECP256K1.cpp coverage tests
+- [x] 01-05-PLAN.md — Gap closure: Int.cpp and SECP256K1.cpp coverage tests
 - [ ] 01-06-PLAN.md — Gap closure: sha256_sse tests + raise coverage gate to 80%
 
 ### Phase 2: Sanitizer Coverage
