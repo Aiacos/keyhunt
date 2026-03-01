@@ -12,7 +12,7 @@ Six phases harden an existing, feature-complete codebase to production quality. 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Test Baseline** - Fix all 19 pre-existing test failures and verify all 6 search modes against known answers
+- [x] **Phase 1: Test Baseline** - Fix all 19 pre-existing test failures and verify all 6 search modes against known answers
 - [ ] **Phase 2: Sanitizer Coverage** - Achieve ASan, UBSan, and TSan clean builds with zero findings
 - [ ] **Phase 3: Config Migration** - Eliminate all extern globals by wiring keyhunt_config_t into every search module
 - [ ] **Phase 4: Monolith Decomposition** - Reduce keyhunt.cpp from ~5300 lines to a ~600-line orchestrator
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Baseline | 4/6 | In progress (gap closure) | - |
+| 1. Test Baseline | 6/6 | Complete | - |
 | 2. Sanitizer Coverage | 0/TBD | Not started | - |
 | 3. Config Migration | 0/TBD | Not started | - |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |
