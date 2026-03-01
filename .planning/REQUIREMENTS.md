@@ -27,8 +27,8 @@ Requirements for production-ready release. Each maps to roadmap phases.
 
 - [ ] **MEM-01**: ASan + UBSan clean build with zero findings on full test suite
 - [ ] **MEM-02**: TSan clean build with zero findings on multi-threaded search tests
-- [ ] **MEM-03**: Replace volatile with std::atomic for GPU counters in config.h (lines 154-157)
-- [ ] **MEM-04**: Fix duplicate g_avx2_available in bsgs_fast.cpp (unified SIMD dispatch)
+- [x] **MEM-03**: Replace volatile with std::atomic for GPU counters in config.h (lines 154-157)
+- [x] **MEM-04**: Fix duplicate g_avx2_available in bsgs_fast.cpp (unified SIMD dispatch)
 - [ ] **MEM-05**: libFuzzer harness for secp256k1 point operations
 - [ ] **MEM-06**: libFuzzer harness for RIPEMD160 and SHA256 hash functions
 - [ ] **MEM-07**: libFuzzer harness for bloom filter deserialization (untrusted file input)
@@ -122,8 +122,8 @@ Deferred to future release. Tracked but not in current roadmap.
 | TEST-13 | Phase 1 | Complete |
 | MEM-01 | Phase 2 | Pending |
 | MEM-02 | Phase 2 | Pending |
-| MEM-03 | Phase 2 | Pending |
-| MEM-04 | Phase 2 | Pending |
+| MEM-03 | Phase 2 | Complete |
+| MEM-04 | Phase 2 | Complete |
 | MEM-05 | Phase 6 | Pending |
 | MEM-06 | Phase 6 | Pending |
 | MEM-07 | Phase 6 | Pending |
