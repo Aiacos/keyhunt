@@ -53,8 +53,8 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Install sanitizer packages, MEM-03 (volatile->atomic in gpu_config_t), MEM-04 (eliminate bsgs_fast.cpp duplicate detection), add make asan alias
-- [ ] 02-02-PLAN.md — Convert all remaining volatile cross-thread variables to atomics (THREADOUTPUT, bsgs_found, gpu_multi_worker, opencl, adaptive_scheduler)
+- [x] 02-01-PLAN.md — Install sanitizer packages, MEM-03 (volatile->atomic in gpu_config_t), MEM-04 (eliminate bsgs_fast.cpp duplicate detection), add make asan alias
+- [x] 02-02-PLAN.md — Convert all remaining volatile cross-thread variables to atomics (THREADOUTPUT, bsgs_found, gpu_multi_worker, opencl, adaptive_scheduler)
 - [ ] 02-03-PLAN.md — ASan+UBSan clean build: run, catalog findings, fix to zero (MEM-01)
 - [ ] 02-04-PLAN.md — TSan clean build: create multi-threaded tests, run, fix to zero (MEM-02)
 
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Test Baseline | 6/6 | Complete | - |
-| 2. Sanitizer Coverage | 0/4 | In progress | - |
+| 2. Sanitizer Coverage | 2/4 | In progress | - |
 | 3. Config Migration | 0/TBD | Not started | - |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |
 | 5. CI Pipeline | 0/TBD | Not started | - |

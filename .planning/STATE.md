@@ -8,7 +8,7 @@ progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -23,28 +23,28 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 2 of 6 (Sanitizer Coverage)
-Plan: 1 of 4 in current phase -- COMPLETE
+Plan: 2 of 4 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-01 -- Plan 02-01 complete: Sanitizer foundation (MEM-03 atomic, MEM-04 unified detection, make asan alias)
+Last activity: 2026-03-01 -- Plan 02-02 complete: Volatile-to-atomic conversion (THREADOUTPUT, bsgs_found, GPU fields, scheduler)
 
-Progress: [████░░░░░░] 27% (7/26 estimated total plans)
+Progress: [████░░░░░░] 31% (8/26 estimated total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: ~16 min
-- Total execution time: ~1.9 hours
+- Total plans completed: 8
+- Average duration: ~15 min
+- Total execution time: ~2.0 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
-| 2 - Sanitizer Coverage | 1/4 | ~15 min | ~15 min |
+| 2 - Sanitizer Coverage | 2/4 | ~21 min | ~10 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-04 (~15 min), 01-05 (~7 min), 01-06 (~5 min), 02-01 (~15 min)
+- Last 5 plans: 01-05 (~7 min), 01-06 (~5 min), 02-01 (~15 min), 02-02 (~6 min)
 - Trend: stable velocity
 
 *Updated after each plan completion*
@@ -80,6 +80,9 @@ Recent decisions affecting current work:
 - [02-01]: bsgs_fast variables renamed to g_bsgs_avx2/g_bsgs_avx512 to avoid shadowing keyhunt.cpp global
 - [02-01]: AVX-512 passed as false to bsgs_fast_set_cpu_features() since sysinfo does not yet expose it
 - [02-01]: C11 _Atomic fallback in config.h for future C file compatibility
+- [02-02]: bsgs_found tight-loop reads use memory_order_relaxed for performance (delayed visibility acceptable)
+- [02-02]: __atomic builtins (not _Atomic) in C files for consistency with adaptive_scheduler.c and ABI safety
+- [02-02]: bsgs_found allocated with new std::atomic<int>[N]{} instead of calloc for proper zero-init
 
 ### Pending Todos
 
@@ -94,5 +97,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-01-PLAN.md (Sanitizer foundation -- MEM-03 atomic, MEM-04 unified detection)
+Stopped at: Completed 02-02-PLAN.md (Volatile-to-atomic conversion -- THREADOUTPUT, bsgs_found, GPU fields, scheduler)
 Resume file: None
