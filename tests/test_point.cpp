@@ -12,6 +12,8 @@
 #include "test_framework.h"
 #include "secp256k1/Point.h"
 #include "secp256k1/SECP256k1.h"
+#include <cstdlib>  /* free, malloc */
+#include <cstring>  /* memset, memcmp, strlen */
 
 /* ============================================================================
  * Basic Construction Tests
@@ -716,6 +718,625 @@ TEST(secp256k1_compute_vs_scalar_mult) {
 }
 
 /* ============================================================================
+ * ParsePublicKeyHex Tests
+ * ============================================================================ */
+
+TEST(secp256k1_parse_pubkey_compressed_02) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute G (privkey=1) -- has even y, so prefix is 02 */
+    Int privkey;
+    privkey.SetInt32(1);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    /* Get hex representation */
+    char *hex = secp.GetPublicKeyHex(true, pubKey);
+    ASSERT_NOT_NULL(hex);
+    ASSERT_EQ(66, (int)strlen(hex));
+    ASSERT_TRUE(hex[0] == '0' && hex[1] == '2');
+
+    /* Parse it back */
+    Point parsed;
+    bool isCompressed = false;
+    bool ok = secp.ParsePublicKeyHex(hex, parsed, isCompressed);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(isCompressed);
+
+    /* Verify parsed point matches original */
+    ASSERT_TRUE(parsed.x.IsEqual(&pubKey.x));
+    ASSERT_TRUE(parsed.y.IsEqual(&pubKey.y));
+
+    free(hex);
+}
+
+TEST(secp256k1_parse_pubkey_compressed_03) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute 2G (privkey=2) -- check if we get 03 prefix */
+    Int privkey;
+    privkey.SetInt32(2);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    char *hex = secp.GetPublicKeyHex(true, pubKey);
+    ASSERT_NOT_NULL(hex);
+    ASSERT_EQ(66, (int)strlen(hex));
+    /* Prefix should be 02 or 03 depending on y parity */
+
+    /* Parse back and verify roundtrip */
+    Point parsed;
+    bool isCompressed = false;
+    bool ok = secp.ParsePublicKeyHex(hex, parsed, isCompressed);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(isCompressed);
+    ASSERT_TRUE(parsed.x.IsEqual(&pubKey.x));
+    ASSERT_TRUE(parsed.y.IsEqual(&pubKey.y));
+
+    free(hex);
+}
+
+TEST(secp256k1_parse_pubkey_uncompressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    /* Get uncompressed hex (prefix 04) */
+    char *hex = secp.GetPublicKeyHex(false, pubKey);
+    ASSERT_NOT_NULL(hex);
+    ASSERT_EQ(130, (int)strlen(hex));
+    ASSERT_TRUE(hex[0] == '0' && hex[1] == '4');
+
+    /* Parse back */
+    Point parsed;
+    bool isCompressed = true;  /* Should be set to false by parse */
+    bool ok = secp.ParsePublicKeyHex(hex, parsed, isCompressed);
+    ASSERT_TRUE(ok);
+    ASSERT_FALSE(isCompressed);
+    ASSERT_TRUE(parsed.x.IsEqual(&pubKey.x));
+    ASSERT_TRUE(parsed.y.IsEqual(&pubKey.y));
+
+    free(hex);
+}
+
+TEST(secp256k1_parse_pubkey_invalid_short) {
+    Secp256K1 secp;
+    secp.Init();
+
+    char shortStr[] = "0";
+    Point p;
+    bool isComp;
+    bool ok = secp.ParsePublicKeyHex(shortStr, p, isComp);
+    ASSERT_FALSE(ok);
+}
+
+TEST(secp256k1_parse_pubkey_invalid_prefix) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* 05 prefix with 64 hex chars (66 total) */
+    char badPrefix[67];
+    memset(badPrefix, '0', 66);
+    badPrefix[0] = '0';
+    badPrefix[1] = '5';
+    badPrefix[66] = '\0';
+    Point p;
+    bool isComp;
+    bool ok = secp.ParsePublicKeyHex(badPrefix, p, isComp);
+    ASSERT_FALSE(ok);
+}
+
+TEST(secp256k1_parse_pubkey_wrong_length_02) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* 02 prefix but wrong length (only 60 chars instead of 66) */
+    char wrongLen[61];
+    memset(wrongLen, '0', 60);
+    wrongLen[0] = '0';
+    wrongLen[1] = '2';
+    wrongLen[60] = '\0';
+    Point p;
+    bool isComp;
+    bool ok = secp.ParsePublicKeyHex(wrongLen, p, isComp);
+    ASSERT_FALSE(ok);
+}
+
+/* ============================================================================
+ * GetPublicKeyHex and GetPublicKeyRaw Tests
+ * ============================================================================ */
+
+TEST(secp256k1_get_pubkey_hex_compressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char *hex = secp.GetPublicKeyHex(true, G);
+    ASSERT_NOT_NULL(hex);
+    ASSERT_EQ(66, (int)strlen(hex));
+    /* Must start with 02 or 03 */
+    ASSERT_TRUE(hex[0] == '0' && (hex[1] == '2' || hex[1] == '3'));
+    free(hex);
+}
+
+TEST(secp256k1_get_pubkey_hex_uncompressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char *hex = secp.GetPublicKeyHex(false, G);
+    ASSERT_NOT_NULL(hex);
+    ASSERT_EQ(130, (int)strlen(hex));
+    ASSERT_TRUE(hex[0] == '0' && hex[1] == '4');
+    free(hex);
+}
+
+TEST(secp256k1_get_pubkey_hex_dst_compressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char dst[131];
+    memset(dst, 0, sizeof(dst));
+    secp.GetPublicKeyHex(true, G, dst);
+    ASSERT_EQ(66, (int)strlen(dst));
+    ASSERT_TRUE(dst[0] == '0' && (dst[1] == '2' || dst[1] == '3'));
+}
+
+TEST(secp256k1_get_pubkey_hex_dst_uncomp) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char dst[131];
+    memset(dst, 0, sizeof(dst));
+    secp.GetPublicKeyHex(false, G, dst);
+    ASSERT_EQ(130, (int)strlen(dst));
+    ASSERT_TRUE(dst[0] == '0' && dst[1] == '4');
+}
+
+TEST(secp256k1_get_pubkey_raw_compressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char *raw = secp.GetPublicKeyRaw(true, G);
+    ASSERT_NOT_NULL(raw);
+    /* First byte should be 0x02 or 0x03 */
+    ASSERT_TRUE((unsigned char)raw[0] == 0x02 || (unsigned char)raw[0] == 0x03);
+    free(raw);
+}
+
+TEST(secp256k1_get_pubkey_raw_uncompressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char *raw = secp.GetPublicKeyRaw(false, G);
+    ASSERT_NOT_NULL(raw);
+    ASSERT_EQ(0x04, (unsigned char)raw[0]);
+    free(raw);
+}
+
+TEST(secp256k1_get_pubkey_raw_dst_comp) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char dst[65];
+    memset(dst, 0, sizeof(dst));
+    secp.GetPublicKeyRaw(true, G, dst);
+    ASSERT_TRUE((unsigned char)dst[0] == 0x02 || (unsigned char)dst[0] == 0x03);
+}
+
+TEST(secp256k1_get_pubkey_raw_dst_uncomp) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point G = secp.ComputePublicKey(&privkey);
+
+    char dst[65];
+    memset(dst, 0, sizeof(dst));
+    secp.GetPublicKeyRaw(false, G, dst);
+    ASSERT_EQ(0x04, (unsigned char)dst[0]);
+}
+
+/* ============================================================================
+ * Negation, NextKey, ExportGTable Tests
+ * ============================================================================ */
+
+TEST(secp256k1_negation_properties) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Point neg = secp.Negation(secp.G);
+    /* x should be equal */
+    ASSERT_TRUE(neg.x.IsEqual(&secp.G.x));
+    /* y should differ (negated) */
+    ASSERT_FALSE(neg.y.IsEqual(&secp.G.y));
+    /* Negated point should be on the curve */
+    ASSERT_TRUE(secp.EC(neg));
+}
+
+TEST(secp256k1_next_key) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* NextKey(5G) should equal 6G */
+    Int priv5;
+    priv5.SetInt32(5);
+    Point key5 = secp.ComputePublicKey(&priv5);
+
+    Point next = secp.NextKey(key5);
+    next.Reduce();
+
+    Int priv6;
+    priv6.SetInt32(6);
+    Point expected = secp.ComputePublicKey(&priv6);
+
+    ASSERT_TRUE(next.x.IsEqual(&expected.x));
+    ASSERT_TRUE(next.y.IsEqual(&expected.y));
+}
+
+TEST(secp256k1_export_gtable) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Allocate full GTable buffer: 256*32 points, each 64 bytes */
+    size_t bufsize = 256 * 32 * 64;
+    uint8_t *buf = (uint8_t *)malloc(bufsize);
+    ASSERT_NOT_NULL(buf);
+
+    secp.ExportGTable(buf);
+
+    /* First entry (GTable[0]) should be G's coordinates */
+    unsigned char gx_bytes[32];
+    secp.G.x.Get32Bytes(gx_bytes);
+    ASSERT_MEM_EQ(gx_bytes, buf, 32);
+
+    unsigned char gy_bytes[32];
+    secp.G.y.Get32Bytes(gy_bytes);
+    ASSERT_MEM_EQ(gy_bytes, buf + 32, 32);
+
+    free(buf);
+}
+
+TEST(secp256k1_export_gtable_null) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Should not crash with NULL */
+    secp.ExportGTable(NULL);
+}
+
+/* ============================================================================
+ * GetHash160 Tests (Single-point and 4-point SSE)
+ * ============================================================================ */
+
+TEST(secp256k1_gethash160_single_compressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    unsigned char hash[20];
+    memset(hash, 0, 20);
+    secp.GetHash160(P2PKH, true, pubKey, hash);
+
+    /* Hash should be non-zero */
+    bool all_zero = true;
+    for (int i = 0; i < 20; i++) {
+        if (hash[i] != 0) { all_zero = false; break; }
+    }
+    ASSERT_FALSE(all_zero);
+}
+
+TEST(secp256k1_gethash160_single_uncompressed) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    unsigned char hash[20];
+    memset(hash, 0, 20);
+    secp.GetHash160(P2PKH, false, pubKey, hash);
+
+    /* Hash should be non-zero */
+    bool all_zero = true;
+    for (int i = 0; i < 20; i++) {
+        if (hash[i] != 0) { all_zero = false; break; }
+    }
+    ASSERT_FALSE(all_zero);
+}
+
+TEST(secp256k1_gethash160_comp_vs_uncomp_differ) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    unsigned char hash_comp[20], hash_uncomp[20];
+    secp.GetHash160(P2PKH, true, pubKey, hash_comp);
+    secp.GetHash160(P2PKH, false, pubKey, hash_uncomp);
+
+    /* Compressed and uncompressed hashes should differ */
+    ASSERT_TRUE(memcmp(hash_comp, hash_uncomp, 20) != 0);
+}
+
+TEST(secp256k1_gethash160_single_p2sh) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(1);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    unsigned char hash_p2pkh[20], hash_p2sh[20];
+    secp.GetHash160(P2PKH, true, pubKey, hash_p2pkh);
+    secp.GetHash160(P2SH, true, pubKey, hash_p2sh);
+
+    /* P2SH hash should differ from P2PKH hash */
+    ASSERT_TRUE(memcmp(hash_p2pkh, hash_p2sh, 20) != 0);
+}
+
+TEST(secp256k1_gethash160_4point_vs_single) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute 4 public keys */
+    Point keys[4];
+    for (int i = 0; i < 4; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* 4-point SSE version */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    secp.GetHash160(P2PKH, true, keys[0], keys[1], keys[2], keys[3],
+                    h0, h1, h2, h3);
+
+    /* Single-point versions */
+    unsigned char s0[20], s1[20], s2[20], s3[20];
+    secp.GetHash160(P2PKH, true, keys[0], s0);
+    secp.GetHash160(P2PKH, true, keys[1], s1);
+    secp.GetHash160(P2PKH, true, keys[2], s2);
+    secp.GetHash160(P2PKH, true, keys[3], s3);
+
+    /* Results must match */
+    ASSERT_MEM_EQ(s0, h0, 20);
+    ASSERT_MEM_EQ(s1, h1, 20);
+    ASSERT_MEM_EQ(s2, h2, 20);
+    ASSERT_MEM_EQ(s3, h3, 20);
+}
+
+TEST(secp256k1_gethash160_4point_uncomp) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Point keys[4];
+    for (int i = 0; i < 4; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* 4-point uncompressed */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    secp.GetHash160(P2PKH, false, keys[0], keys[1], keys[2], keys[3],
+                    h0, h1, h2, h3);
+
+    /* Single-point uncompressed */
+    unsigned char s0[20], s1[20], s2[20], s3[20];
+    secp.GetHash160(P2PKH, false, keys[0], s0);
+    secp.GetHash160(P2PKH, false, keys[1], s1);
+    secp.GetHash160(P2PKH, false, keys[2], s2);
+    secp.GetHash160(P2PKH, false, keys[3], s3);
+
+    ASSERT_MEM_EQ(s0, h0, 20);
+    ASSERT_MEM_EQ(s1, h1, 20);
+    ASSERT_MEM_EQ(s2, h2, 20);
+    ASSERT_MEM_EQ(s3, h3, 20);
+}
+
+TEST(secp256k1_gethash160_4point_p2sh) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Point keys[4];
+    for (int i = 0; i < 4; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* 4-point P2SH compressed */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    secp.GetHash160(P2SH, true, keys[0], keys[1], keys[2], keys[3],
+                    h0, h1, h2, h3);
+
+    /* Single-point P2SH compressed */
+    unsigned char s0[20], s1[20], s2[20], s3[20];
+    secp.GetHash160(P2SH, true, keys[0], s0);
+    secp.GetHash160(P2SH, true, keys[1], s1);
+    secp.GetHash160(P2SH, true, keys[2], s2);
+    secp.GetHash160(P2SH, true, keys[3], s3);
+
+    ASSERT_MEM_EQ(s0, h0, 20);
+    ASSERT_MEM_EQ(s1, h1, 20);
+    ASSERT_MEM_EQ(s2, h2, 20);
+    ASSERT_MEM_EQ(s3, h3, 20);
+}
+
+TEST(secp256k1_gethash160_fromX) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Compute 4 pubkeys with even y (02 prefix) */
+    Point keys[4];
+    Int privkeys[4];
+    int found = 0;
+    for (int i = 1; found < 4; i++) {
+        Int priv;
+        priv.SetInt32(i);
+        Point p = secp.ComputePublicKey(&priv);
+        if (p.y.IsEven()) {
+            keys[found] = p;
+            privkeys[found] = priv;
+            found++;
+        }
+    }
+
+    /* GetHash160_fromX with prefix 0x02 */
+    uint8_t h0[20], h1[20], h2[20], h3[20];
+    secp.GetHash160_fromX(P2PKH, 0x02,
+                          &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+                          h0, h1, h2, h3);
+
+    /* Cross-validate against single-point with compressed=true */
+    unsigned char s0[20], s1[20], s2[20], s3[20];
+    secp.GetHash160(P2PKH, true, keys[0], s0);
+    secp.GetHash160(P2PKH, true, keys[1], s1);
+    secp.GetHash160(P2PKH, true, keys[2], s2);
+    secp.GetHash160(P2PKH, true, keys[3], s3);
+
+    ASSERT_MEM_EQ(s0, h0, 20);
+    ASSERT_MEM_EQ(s1, h1, 20);
+    ASSERT_MEM_EQ(s2, h2, 20);
+    ASSERT_MEM_EQ(s3, h3, 20);
+}
+
+TEST(secp256k1_gethash160_fromX_02_03) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Get 4 x-coordinates from computed pubkeys */
+    Point keys[4];
+    for (int i = 0; i < 4; i++) {
+        Int priv;
+        priv.SetInt32(i + 1);
+        keys[i] = secp.ComputePublicKey(&priv);
+    }
+
+    /* Call GetHash160_fromX_02_03 */
+    uint8_t h02_0[20], h02_1[20], h02_2[20], h02_3[20];
+    uint8_t h03_0[20], h03_1[20], h03_2[20], h03_3[20];
+    secp.GetHash160_fromX_02_03(P2PKH,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        h02_0, h02_1, h02_2, h02_3,
+        h03_0, h03_1, h03_2, h03_3);
+
+    /* Verify against single-point GetHash160_fromX with prefix 0x02 */
+    uint8_t ref02_0[20], ref02_1[20], ref02_2[20], ref02_3[20];
+    secp.GetHash160_fromX(P2PKH, 0x02,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        ref02_0, ref02_1, ref02_2, ref02_3);
+
+    ASSERT_MEM_EQ(ref02_0, h02_0, 20);
+    ASSERT_MEM_EQ(ref02_1, h02_1, 20);
+    ASSERT_MEM_EQ(ref02_2, h02_2, 20);
+    ASSERT_MEM_EQ(ref02_3, h02_3, 20);
+
+    /* Verify against single-point GetHash160_fromX with prefix 0x03 */
+    uint8_t ref03_0[20], ref03_1[20], ref03_2[20], ref03_3[20];
+    secp.GetHash160_fromX(P2PKH, 0x03,
+        &keys[0].x, &keys[1].x, &keys[2].x, &keys[3].x,
+        ref03_0, ref03_1, ref03_2, ref03_3);
+
+    ASSERT_MEM_EQ(ref03_0, h03_0, 20);
+    ASSERT_MEM_EQ(ref03_1, h03_1, 20);
+    ASSERT_MEM_EQ(ref03_2, h03_2, 20);
+    ASSERT_MEM_EQ(ref03_3, h03_3, 20);
+}
+
+TEST(secp256k1_gethash160_deterministic) {
+    Secp256K1 secp;
+    secp.Init();
+
+    Int privkey;
+    privkey.SetInt32(42);
+    Point pubKey = secp.ComputePublicKey(&privkey);
+
+    unsigned char hash1[20], hash2[20];
+    secp.GetHash160(P2PKH, true, pubKey, hash1);
+    secp.GetHash160(P2PKH, true, pubKey, hash2);
+
+    /* Same input should produce same output */
+    ASSERT_MEM_EQ(hash1, hash2, 20);
+}
+
+/* ============================================================================
+ * Pubkey Hex/Raw Roundtrip Tests
+ * ============================================================================ */
+
+TEST(secp256k1_pubkey_hex_roundtrip_multiple) {
+    Secp256K1 secp;
+    secp.Init();
+
+    /* Test roundtrip for several private keys */
+    for (int k = 1; k <= 10; k++) {
+        Int priv;
+        priv.SetInt32(k);
+        Point pub = secp.ComputePublicKey(&priv);
+
+        /* Compressed roundtrip */
+        char *hex_c = secp.GetPublicKeyHex(true, pub);
+        ASSERT_NOT_NULL(hex_c);
+        Point parsed_c;
+        bool isComp;
+        bool ok = secp.ParsePublicKeyHex(hex_c, parsed_c, isComp);
+        ASSERT_TRUE(ok);
+        ASSERT_TRUE(isComp);
+        ASSERT_TRUE(parsed_c.x.IsEqual(&pub.x));
+        ASSERT_TRUE(parsed_c.y.IsEqual(&pub.y));
+        free(hex_c);
+
+        /* Uncompressed roundtrip */
+        char *hex_u = secp.GetPublicKeyHex(false, pub);
+        ASSERT_NOT_NULL(hex_u);
+        Point parsed_u;
+        ok = secp.ParsePublicKeyHex(hex_u, parsed_u, isComp);
+        ASSERT_TRUE(ok);
+        ASSERT_FALSE(isComp);
+        ASSERT_TRUE(parsed_u.x.IsEqual(&pub.x));
+        ASSERT_TRUE(parsed_u.y.IsEqual(&pub.y));
+        free(hex_u);
+    }
+}
+
+/* ============================================================================
  * Main Entry Point
  * ============================================================================ */
 
@@ -784,6 +1405,51 @@ int run_point_tests(void) {
     RUN_TEST(secp256k1_reference_20G);
     RUN_TEST(secp256k1_scalar_mult_identity);
     RUN_TEST(secp256k1_compute_vs_scalar_mult);
+
+    TEST_SECTION("ParsePublicKeyHex");
+    RUN_TEST(secp256k1_parse_pubkey_compressed_02);
+    RUN_TEST(secp256k1_parse_pubkey_compressed_03);
+    RUN_TEST(secp256k1_parse_pubkey_uncompressed);
+    RUN_TEST(secp256k1_parse_pubkey_invalid_short);
+    RUN_TEST(secp256k1_parse_pubkey_invalid_prefix);
+    RUN_TEST(secp256k1_parse_pubkey_wrong_length_02);
+
+    TEST_SECTION("GetPublicKeyHex");
+    RUN_TEST(secp256k1_get_pubkey_hex_compressed);
+    RUN_TEST(secp256k1_get_pubkey_hex_uncompressed);
+    RUN_TEST(secp256k1_get_pubkey_hex_dst_compressed);
+    RUN_TEST(secp256k1_get_pubkey_hex_dst_uncomp);
+
+    TEST_SECTION("GetPublicKeyRaw");
+    RUN_TEST(secp256k1_get_pubkey_raw_compressed);
+    RUN_TEST(secp256k1_get_pubkey_raw_uncompressed);
+    RUN_TEST(secp256k1_get_pubkey_raw_dst_comp);
+    RUN_TEST(secp256k1_get_pubkey_raw_dst_uncomp);
+
+    TEST_SECTION("Negation, NextKey, ExportGTable");
+    RUN_TEST(secp256k1_negation_properties);
+    RUN_TEST(secp256k1_next_key);
+    RUN_TEST(secp256k1_export_gtable);
+    RUN_TEST(secp256k1_export_gtable_null);
+
+    TEST_SECTION("GetHash160 (Single-Point)");
+    RUN_TEST(secp256k1_gethash160_single_compressed);
+    RUN_TEST(secp256k1_gethash160_single_uncompressed);
+    RUN_TEST(secp256k1_gethash160_comp_vs_uncomp_differ);
+    RUN_TEST(secp256k1_gethash160_single_p2sh);
+    RUN_TEST(secp256k1_gethash160_deterministic);
+
+    TEST_SECTION("GetHash160 (4-Point SSE vs Single)");
+    RUN_TEST(secp256k1_gethash160_4point_vs_single);
+    RUN_TEST(secp256k1_gethash160_4point_uncomp);
+    RUN_TEST(secp256k1_gethash160_4point_p2sh);
+
+    TEST_SECTION("GetHash160_fromX Variants");
+    RUN_TEST(secp256k1_gethash160_fromX);
+    RUN_TEST(secp256k1_gethash160_fromX_02_03);
+
+    TEST_SECTION("Public Key Hex Roundtrip");
+    RUN_TEST(secp256k1_pubkey_hex_roundtrip_multiple);
 
     return TEST_RESULTS();
 }
