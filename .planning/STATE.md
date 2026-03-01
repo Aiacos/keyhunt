@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-01T11:57:00Z"
+last_updated: "2026-03-01T12:18:06Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 15
-  completed_plans: 11
+  completed_plans: 12
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 3 of 6 (Config Migration)
-Plan: 1 of 5 in current phase -- COMPLETE
+Plan: 2 of 5 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-01 -- Plan 03-01 complete: Config schema freeze + write-site bridge + xpoint/rmd160 migration
+Last activity: 2026-03-01 -- Plan 03-02 complete: Minikeys + vanity config migration via thread_args
 
-Progress: [████░░░░░░] 42% (11/26 estimated total plans)
+Progress: [████░░░░░░] 46% (12/26 estimated total plans)
 
 ## Performance Metrics
 
@@ -42,10 +42,10 @@ Progress: [████░░░░░░] 42% (11/26 estimated total plans)
 |-------|-------|-------|----------|
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
-| 3 - Config Migration | 1/5 | ~10 min | ~10 min |
+| 3 - Config Migration | 2/5 | ~35 min | ~17 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-01 (~15 min), 02-02 (~6 min), 02-03 (~16 min), 02-04 (~16 min), 03-01 (~10 min)
+- Last 5 plans: 02-02 (~6 min), 02-03 (~16 min), 02-04 (~16 min), 03-01 (~10 min), 03-02 (~25 min)
 - Trend: stable velocity
 
 *Updated after each plan completion*
@@ -98,6 +98,10 @@ Recent decisions affecting current work:
 - [03-01]: All runtime_state_t new fields are void* for C compatibility with comments documenting actual C++ types
 - [03-01]: sequential_max default 0x100000000ULL; max_address_length default 20
 - [03-01]: Schema freeze comment block prevents field removal during Phase 3
+- [03-02]: Helper functions receive globals as explicit parameters rather than keeping extern declarations
+- [03-02]: addvanity() uses local extern declarations inside function body for pre-thread global mutation
+- [03-02]: Legacy FLAGSEARCH/FLAGCRYPTO/FLAGENDOMORPHISM ints derived from config enums at thread entry to minimize code churn
+- [03-02]: CPU_GRP_SIZE defined locally when search_context.h removed; should move to search_common.h later
 
 ### Pending Todos
 
@@ -112,5 +116,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 03-01-PLAN.md
+Stopped at: Completed 03-02-PLAN.md
 Resume file: None
