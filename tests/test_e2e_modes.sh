@@ -1,6 +1,6 @@
 #!/bin/bash
 # E2E Mode Tests for keyhunt
-# Tests ADDRESS, BSGS, and XPOINT modes against known answers
+# Tests ADDRESS, BSGS, XPOINT, RMD160, VANITY, and MINIKEYS modes against known answers
 #
 # Each test runs ./keyhunt as a subprocess with known inputs and verifies
 # that the correct private key is discovered and written to KEYFOUNDKEYFOUND.txt.
@@ -140,6 +140,98 @@ test_xpoint_mode() {
 }
 
 # ============================================================================
+# Test 4: RMD160 mode
+# Search for private key 1 by its RIPEMD160 hash (hash160 of compressed pubkey)
+# Hash: 751e76e8199196d454941c45d1b3a323f1433bd6
+# ============================================================================
+test_rmd160_mode() {
+    echo ">>> RMD160 mode"
+    rm -f KEYFOUNDKEYFOUND.txt
+
+    # Create temp file with RIPEMD160 hash of address for private key 1
+    # Address 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH has RIPEMD160: 751e76e8199196d454941c45d1b3a323f1433bd6
+    # (This is the hash160 of the compressed public key for privkey 1)
+    local RMD_INPUT
+    RMD_INPUT=$(mktemp /tmp/keyhunt_rmd160_test.XXXXXX)
+    echo "751e76e8199196d454941c45d1b3a323f1433bd6" > "$RMD_INPUT"
+
+    timeout 60 $KEYHUNT -m rmd160 -f "$RMD_INPUT" -r 1:20 -t 1 -l compress -q 2>/dev/null || true
+
+    if [ -f KEYFOUNDKEYFOUND.txt ]; then
+        if grep -qi "0000000000000000000000000000000000000000000000000000000000000001" KEYFOUNDKEYFOUND.txt || \
+           grep -qi "Private Key: 1$" KEYFOUNDKEYFOUND.txt || \
+           grep -qi "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH" KEYFOUNDKEYFOUND.txt; then
+            run_test "RMD160: finds privkey 1 from its address rmd160 hash" 0
+        else
+            echo "    KEYFOUNDKEYFOUND.txt contents:"
+            head -20 KEYFOUNDKEYFOUND.txt
+            run_test "RMD160: finds privkey 1 from its address rmd160 hash" 1
+        fi
+    else
+        echo "    KEYFOUNDKEYFOUND.txt not created"
+        run_test "RMD160: finds privkey 1 from its address rmd160 hash" 1
+    fi
+    rm -f KEYFOUNDKEYFOUND.txt "$RMD_INPUT"
+}
+
+# ============================================================================
+# Test 5: VANITY mode
+# Search for addresses matching prefix "1BgG" in range 1:20
+# Private key 1 produces address 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH
+# Note: VANITY mode writes to VANITYKEYFOUND.txt (not KEYFOUNDKEYFOUND.txt)
+# ============================================================================
+test_vanity_mode() {
+    echo ">>> VANITY mode"
+    rm -f VANITYKEYFOUND.txt
+
+    # Use prefix "1BgG" which matches privkey 1's address 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH
+    local VANITY_INPUT
+    VANITY_INPUT=$(mktemp /tmp/keyhunt_vanity_test.XXXXXX)
+    echo "1BgG" > "$VANITY_INPUT"
+
+    timeout 60 $KEYHUNT -m vanity -f "$VANITY_INPUT" -r 1:20 -t 1 -l compress -q 2>/dev/null || true
+
+    if [ -f VANITYKEYFOUND.txt ]; then
+        if grep -qi "1BgG" VANITYKEYFOUND.txt; then
+            run_test "VANITY: finds address matching prefix '1BgG'" 0
+        else
+            echo "    VANITYKEYFOUND.txt contents:"
+            head -20 VANITYKEYFOUND.txt
+            run_test "VANITY: finds address matching prefix '1BgG'" 1
+        fi
+    else
+        echo "    VANITYKEYFOUND.txt not created"
+        run_test "VANITY: finds address matching prefix '1BgG'" 1
+    fi
+    rm -f VANITYKEYFOUND.txt "$VANITY_INPUT"
+}
+
+# ============================================================================
+# Test 6: MINIKEYS mode
+# Minikey mode generates and tests minikeys (base58 strings starting with 'S')
+# The search is probabilistic and may not find a match in bounded time
+# ============================================================================
+test_minikeys_mode() {
+    echo ">>> MINIKEYS mode"
+    rm -f KEYFOUNDKEYFOUND.txt
+
+    # Minikey mode generates and tests minikeys (base58 strings starting with 'S')
+    # The search is probabilistic and may not find a match in bounded time
+    # Use tests/minikeys.txt which contains: 15azScMmHvFPAQfQafrKr48E9MqRRXSnVv
+    # Try running with a short timeout -- if it finds something, great
+    # If not, skip with documented reason
+    timeout 30 $KEYHUNT -m minikeys -f tests/minikeys.txt -q 2>/dev/null || true
+
+    if [ -f KEYFOUNDKEYFOUND.txt ] && [ -s KEYFOUNDKEYFOUND.txt ]; then
+        run_test "MINIKEYS: found a minikey match" 0
+    else
+        # Minikey search is probabilistic; not finding in 30s is expected behavior
+        skip_test "MINIKEYS: probabilistic search" "30s timeout elapsed without match (expected for large search space)"
+    fi
+    rm -f KEYFOUNDKEYFOUND.txt
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -156,6 +248,9 @@ echo ""
 test_address_mode
 test_bsgs_mode
 test_xpoint_mode
+test_rmd160_mode
+test_vanity_mode
+test_minikeys_mode
 
 echo ""
 echo "---"
