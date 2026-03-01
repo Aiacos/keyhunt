@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-01T08:10:27Z"
+last_updated: "2026-03-01T08:40:51Z"
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 10
 ---
 
 # Project State
@@ -23,28 +23,28 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 2 of 6 (Sanitizer Coverage)
-Plan: 2 of 4 in current phase -- COMPLETE
+Plan: 4 of 4 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-01 -- Plan 02-02 complete: Volatile-to-atomic conversion (THREADOUTPUT, bsgs_found, GPU fields, scheduler)
+Last activity: 2026-03-01 -- Plan 02-04 complete: TSan threading tests with zero data-race findings
 
-Progress: [████░░░░░░] 31% (8/26 estimated total plans)
+Progress: [████░░░░░░] 38% (10/26 estimated total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: ~15 min
-- Total execution time: ~2.0 hours
+- Total plans completed: 10
+- Average duration: ~14 min
+- Total execution time: ~2.3 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
-| 2 - Sanitizer Coverage | 2/4 | ~21 min | ~10 min |
+| 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-05 (~7 min), 01-06 (~5 min), 02-01 (~15 min), 02-02 (~6 min)
+- Last 5 plans: 01-06 (~5 min), 02-01 (~15 min), 02-02 (~6 min), 02-04 (~16 min)
 - Trend: stable velocity
 
 *Updated after each plan completion*
@@ -83,6 +83,9 @@ Recent decisions affecting current work:
 - [02-02]: bsgs_found tight-loop reads use memory_order_relaxed for performance (delayed visibility acceptable)
 - [02-02]: __atomic builtins (not _Atomic) in C files for consistency with adaptive_scheduler.c and ABI safety
 - [02-02]: bsgs_found allocated with new std::atomic<int>[N]{} instead of calloc for proper zero-init
+- [02-04]: Thread tests use nanosleep(10ms) not volatile spin -- volatile contradicts MEM-03 and TSan flags it
+- [02-04]: GPU none-backend returns -1 from init to signal no GPU (tests SKIP properly on headless machines)
+- [02-04]: XPoint endomorphism test InitK1/SetupField args must be static (store raw pointers)
 
 ### Pending Todos
 
@@ -97,5 +100,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-02-PLAN.md (Volatile-to-atomic conversion -- THREADOUTPUT, bsgs_found, GPU fields, scheduler)
+Stopped at: Completed 02-04-PLAN.md (TSan threading tests with zero data-race findings -- Phase 02 complete)
 Resume file: None
