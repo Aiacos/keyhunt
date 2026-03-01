@@ -1,21 +1,20 @@
 /*
  * io.cpp - File I/O operations for keyhunt
  *
- * MIGRATION STATUS: Partial (Phase 3)
+ * MIGRATION STATUS: Partial (Phase 3, CFG-08 complete)
  *
- * io.cpp still reads globals through search_context.h.
- * The writekey/writekeyeth functions would need a config parameter,
- * but that requires updating all call sites in search modules.
+ * search_context.h externs have been removed (CFG-08). io.cpp now uses
+ * local extern declarations for the globals it still needs. These are
+ * Phase 4 cleanup targets -- writekey/writekeyeth will receive a config
+ * parameter when their 10+ call sites are updated.
  *
- * Remaining externs via search_context.h:
+ * Local externs (all Phase 4 cleanup targets):
  *   secp, FLAGMODE, FLAGCRYPTO, FLAGSAVEREADFILE, FLAGSKIPCHECKSUM,
- *   FLAGVANITY, MAXLENGTHADDRESS, addressTable, N, bloom, write_keys
- *
- * Local externs (Phase 4 cleanup targets):
- *   g_rangeProgressStart, g_rangeProgressEnd
- *
- * These will be resolved when search_context.h is emptied (Plan 03-05)
- * and when writekey receives a config parameter (Phase 4).
+ *   FLAGVANITY, FLAGREADEDFILE1, FLAGDEBUG, MAXLENGTHADDRESS,
+ *   addressTable, N, bloom, write_keys,
+ *   vanity_rmd_targets, vanity_rmd_total, vanity_rmd_limits,
+ *   vanity_rmd_limit_values_A, vanity_rmd_minimun_bytes_check_length,
+ *   vanity_bloom, g_rangeProgressStart, g_rangeProgressEnd
  */
 
 #include "io.h"
@@ -43,9 +42,49 @@
 #include <sys/mman.h>
 #endif
 
-/* Forward declarations for functions defined in keyhunt.cpp */
+/* ============================================================================
+ * Local extern declarations -- Phase 4 cleanup targets
+ *
+ * These globals are defined in keyhunt.cpp. They will be replaced by config
+ * parameters when writekey/writekeyeth signatures are updated (Phase 4).
+ * ============================================================================ */
+
+/* Core secp256k1 instance */
+extern Secp256K1 *secp;
+
+/* Synchronisation */
+extern platform_mutex_t write_keys;
+
+/* Search flags */
+extern int FLAGMODE;
+extern int FLAGCRYPTO;
+extern int FLAGSAVEREADFILE;
+extern int FLAGSKIPCHECKSUM;
+extern int FLAGVANITY;
+extern int FLAGREADEDFILE1;
+extern int FLAGDEBUG;
+extern int MAXLENGTHADDRESS;
+
+/* Target data */
+extern uint64_t N;
+extern bloom_extended_t bloom;
+extern struct address_value *addressTable;
+
+/* Vanity mode state */
+extern int vanity_rmd_targets;
+extern int vanity_rmd_total;
+extern int *vanity_rmd_limits;
+extern uint8_t ***vanity_rmd_limit_values_A;
+extern int vanity_rmd_minimun_bytes_check_length;
+extern struct bloom *vanity_bloom;
+
+/* Range bounds */
+extern Int n_range_start;
+extern Int n_range_end;
 extern Int g_rangeProgressStart;
 extern Int g_rangeProgressEnd;
+
+/* Forward declarations for functions defined in keyhunt.cpp */
 int addvanity(char *target);
 
 void checkpointer(void *ptr, const char *file, const char *function, const char *name, int line) {

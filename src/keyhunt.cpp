@@ -579,8 +579,8 @@ void sleep_ms(int milliseconds);
 /* bsgs_sort, bsgs_myheapsort, bsgs_insertionsort, bsgs_introsort, bsgs_swap,
    bsgs_heapify, bsgs_partition, and bsgs_searchbinary now declared in bsgs/bsgs_sort.h */
 
-int bsgs_secondcheck(Int *start_range,uint64_t a,uint32_t k_index,Int *privatekey);
-int bsgs_thirdcheck(Int *start_range,uint64_t a,uint32_t k_index,Int *privatekey);
+/* bsgs_secondcheck, bsgs_thirdcheck now take bsgs_context_t* parameter
+ * and are declared in search/search_common.h and search/search_context.h */
 
 /* Vanity functions (defined in search/search_vanity.cpp) */
 bool vanityrmdmatch(unsigned char *rmdhash);
@@ -612,7 +612,7 @@ static platform_thread_return_t PLATFORM_THREAD_CALL gpu_hybrid_thread(void *arg
 /* readFileAddress, readFileVanity, forceReadFileAddress, forceReadFileAddressEth,
    forceReadFileXPoint, processOneVanity, writeFileIfNeeded moved to io/io.cpp */
 
-void calcualteindex(int i,Int *key);
+/* calcualteindex now takes bsgs_context_t* parameter, declared in search/search_common.h */
 /* Thread entry points declared in search/search_common.h */
 /* BSGS loading threads (defined in search/search_bsgs_threads.cpp) */
 /* BSGS loading thread declarations (defined in search/search_bsgs_threads.cpp) */

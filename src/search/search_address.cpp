@@ -563,6 +563,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 	struct thread_counter *steps = (struct thread_counter *)config->runtime.thread_counters;
 	struct thread_flag *ends = (struct thread_flag *)config->runtime.thread_flags;
 	int MAXLENGTHADDRESS = config->runtime.max_address_length;
+	std::atomic<int> &THREADOUTPUT = *(std::atomic<int> *)config->runtime.thread_output;
 
 	/* Generator points */
 	std::vector<Point> &Gn = *(std::vector<Point> *)config->runtime.generator_points;
