@@ -30,11 +30,12 @@
 static void init_secp256k1_field(void) {
     static int initialized = 0;
     if (!initialized) {
-        Int P;
+        /* P and order must be static: InitK1/SetupField store raw pointers */
+        static Int P;
         P.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
         Int::SetupField(&P);
 
-        Int order;
+        static Int order;
         order.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141");
         Int::InitK1(&order);
 
