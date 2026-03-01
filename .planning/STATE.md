@@ -83,6 +83,12 @@ Recent decisions affecting current work:
 - [02-02]: bsgs_found tight-loop reads use memory_order_relaxed for performance (delayed visibility acceptable)
 - [02-02]: __atomic builtins (not _Atomic) in C files for consistency with adaptive_scheduler.c and ABI safety
 - [02-02]: bsgs_found allocated with new std::atomic<int>[N]{} instead of calloc for proper zero-init
+- [02-03]: getBits/setBits bounds check returns 0 for out-of-range (Knuth convention for implicit zero digits)
+- [02-03]: Newton iteration uses uint64_t (only low 64 bits matter for Montgomery constant)
+- [02-03]: SWAP_ADD/SWAP_SUB use unsigned casts: bit-level result identical but avoids signed overflow UB
+- [02-03]: ripemd160_32 uses aligned state[5] buffer then memcpy to digest (avoids misaligned uint32_t)
+- [02-03]: sqlite3 did not produce UBSan findings, no exemption needed
+- [02-03]: searchbinary mock uses 20-byte comparison matching production cmp_hash20 behavior
 - [02-04]: Thread tests use nanosleep(10ms) not volatile spin -- volatile contradicts MEM-03 and TSan flags it
 - [02-04]: GPU none-backend returns -1 from init to signal no GPU (tests SKIP properly on headless machines)
 - [02-04]: XPoint endomorphism test InitK1/SetupField args must be static (store raw pointers)
@@ -100,5 +106,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-01
-Stopped at: Completed 02-04-PLAN.md (TSan threading tests with zero data-race findings -- Phase 02 complete)
+Stopped at: Completed 02-03-PLAN.md (ASan+UBSan zero findings -- all production+test bugs fixed)
 Resume file: None
