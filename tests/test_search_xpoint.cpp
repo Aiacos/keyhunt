@@ -26,6 +26,22 @@
  * Test Fixtures and Helpers
  * ============================================================================ */
 
+/* Initialize secp256k1 field and order for tests that call ModMulK1order */
+static void init_secp256k1_field(void) {
+    static int initialized = 0;
+    if (!initialized) {
+        Int P;
+        P.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+        Int::SetupField(&P);
+
+        Int order;
+        order.SetBase16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141");
+        Int::InitK1(&order);
+
+        initialized = 1;
+    }
+}
+
 /* Mock address_value structure for testing */
 struct address_value {
     char address[64];
@@ -51,6 +67,9 @@ extern int searchbinary(struct address_value *buffer, char *data, int64_t array_
 
 /* Setup function to initialize test bloom filter */
 static void setup_test_bloom(void) {
+    /* Ensure secp256k1 field/order are initialized (needed for ModMulK1order) */
+    init_secp256k1_field();
+
     if (!test_bloom_initialized) {
         bloom_ext_init(&test_bloom, 1000, 0.01);
         test_bloom_initialized = 1;

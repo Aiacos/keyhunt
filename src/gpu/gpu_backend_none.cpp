@@ -9,7 +9,7 @@ int gpu_backend_init(gpu_backend_info_t *info) {
         info->name[0] = '\0';
     }
     g_available = 0;
-    return 0;
+    return -1;  /* No GPU hardware available in stub backend */
 }
 
 int gpu_backend_available(void) {

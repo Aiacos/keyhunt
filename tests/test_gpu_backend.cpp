@@ -37,7 +37,7 @@ TEST(gpu_backend_init_basic) {
     int result = gpu_backend_init(&info);
 
     /* Init returns 0 if GPU found, -1 if no GPU found */
-    if (result != 0) {
+    if (result != 0 || info.gpu_count == 0) {
         SKIP_TEST("No GPU hardware available");
     }
 
