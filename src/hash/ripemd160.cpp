@@ -293,7 +293,8 @@ static const uint32_t sizedesc_32_low = 32 << 3;
 
 void ripemd160_32(const unsigned char *input, unsigned char *digest) {
   alignas(16) uint32_t block[16];
-  uint32_t *state = reinterpret_cast<uint32_t *>(digest);
+  // Use aligned state buffer to avoid UBSan misaligned access on digest pointer
+  alignas(16) uint32_t state[5];
 
   // Copy the 32-byte message (already little endian) into the first eight words.
   memcpy(block, input, 32);
@@ -310,6 +311,7 @@ void ripemd160_32(const unsigned char *input, unsigned char *digest) {
 
   _ripemd160::Initialize(state);
   _ripemd160::Transform(state, reinterpret_cast<unsigned char *>(block));
+  memcpy(digest, state, 20);
 }
 
 void ripemd160(unsigned char *input,int length,unsigned char *digest) {

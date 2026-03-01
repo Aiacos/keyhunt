@@ -77,7 +77,7 @@ void bsgs_batch_free(bsgs_batch_ctx_t *ctx);
  *
  * @param ctx       Batch context
  * @param startP    Starting point
- * @param GSn       Pre-computed G*n table
+ * @param GSn       Pre-computed G*n table (must have at least hLength+1 elements)
  * @param _2GSn     Pre-computed 2*G*step point
  * @param hLength   Half length (CPU_GRP_SIZE/2 - 1)
  */

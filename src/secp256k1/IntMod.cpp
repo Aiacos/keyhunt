@@ -383,8 +383,9 @@ void Int::ModInv() {
 
   // Delayed right shift 62bits
 
-  #define SWAP_ADD(x,y) x+=y;y-=x;
-  #define SWAP_SUB(x,y) x-=y;y+=x;
+  // Use unsigned cast to avoid signed overflow UB (bit-level result is identical)
+  #define SWAP_ADD(x,y) x=(int64_t)((uint64_t)(x)+(uint64_t)(y));y=(int64_t)((uint64_t)(y)-(uint64_t)(x));
+  #define SWAP_SUB(x,y) x=(int64_t)((uint64_t)(x)-(uint64_t)(y));y=(int64_t)((uint64_t)(y)+(uint64_t)(x));
   #define IS_EVEN(x) ((x&1)==0)
 
   Int r0_P;
@@ -424,15 +425,15 @@ void Int::ModInv() {
 
         bitCount++;
         u0 >>= 1;
-        vu <<= 1;
-        vv <<= 1;
+        vu = (int64_t)((uint64_t)vu << 1);
+        vv = (int64_t)((uint64_t)vv << 1);
 
       }
 
       if (bitCount == 62)
         break;
 
-      nb0 = (v0 + u0) & 0x3;
+      nb0 = (int64_t)(((uint64_t)v0 + (uint64_t)u0) & 0x3);
       if (nb0 == 0) {
         SWAP_ADD(uv, vv);
         SWAP_ADD(uu, vu);
@@ -690,15 +691,16 @@ void Int::SetupField(Int *n, Int *R, Int *R2, Int *R3, Int *R4) {
   int nSize = n->GetSize();
 
   // Last digit inversions (Newton's iteration)
+  // Uses unsigned arithmetic: only low 64 bits matter for Montgomery constant
   {
-    int64_t x, t;
-    x = t = (int64_t)n->bits64[0];
+    uint64_t x, t;
+    x = t = n->bits64[0];
     x = x * (2 - t * x);
     x = x * (2 - t * x);
     x = x * (2 - t * x);
     x = x * (2 - t * x);
     x = x * (2 - t * x);
-    MM64 = (uint64_t)(-x);
+    MM64 = (uint64_t)(0 - x);
     MM32 = (uint32_t)MM64;
   }
   _P.Set(n);

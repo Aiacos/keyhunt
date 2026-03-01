@@ -173,10 +173,13 @@ public:
   uint64_t bits64[NB64BLOCK];
 
   // Accessors replacing old union .bits[] member (avoids strict aliasing UB)
+  // Bounds-checked: Knuth Algorithm D accesses digits beyond number size as 0
   inline uint32_t getBits(int i) const {
+      if (i < 0 || i >= NB32BLOCK) return 0;
       return static_cast<uint32_t>(bits64[i >> 1] >> ((i & 1) << 5));
   }
   inline void setBits(int i, uint32_t val) {
+      if (i < 0 || i >= NB32BLOCK) return;
       int idx = i >> 1;
       int shift = (i & 1) << 5;
       bits64[idx] = (bits64[idx] & ~(0xFFFFFFFFULL << shift)) | (static_cast<uint64_t>(val) << shift);
