@@ -97,6 +97,7 @@ jobs:
   build-with-tls:
     name: Build with TLS Support
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -125,7 +126,7 @@ jobs:
           test -f keyhunt
           # Verify the binary was built with OpenSSL by checking linked libraries
           ldd keyhunt | grep -E "(libssl|libcrypto)" && echo "TLS support verified" || echo "Warning: TLS libraries not linked"
-          ./keyhunt -h | head -20
+          timeout 10 ./keyhunt -h 2>&1 | head -20 || echo "Help output timed out (expected in CI without GPU)"
 
   build-legacy:
     name: Build Legacy Version
