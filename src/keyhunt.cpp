@@ -64,6 +64,7 @@
 #include "io/io.h"
 #include "search/search_common.h"
 #include "modes/modes.h"
+#include "gpu/gpu_dispatch.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -332,27 +333,12 @@ int minimum_same_bytes(unsigned char* A,unsigned char* B, int length);
 /* writekey, writekeyeth, checkpointer declared in io/io.h */
 
 /* File-scope pointer to keyhunt_config_t, set by main() before any GPU launch.
- * Used by gpu_found_callback to pass config to writekey(). */
-static keyhunt_config_t *g_kh_config_ptr = nullptr;
+ * Used by gpu_dispatch_found_callback to pass config to writekey().
+ * Non-static so gpu_dispatch.cpp can access it via extern. */
+keyhunt_config_t *g_kh_config_ptr = nullptr;
 
-// GPU Full Search helper functions (forward declarations)
-static int gpu_upload_gtable_from_secp();
-static int gpu_upload_targets_from_addressTable(int64_t count);
-static int gpu_build_and_upload_bloom_from_addressTable(int64_t count);
-static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *userdata);
-static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count);
-
-// Hybrid mode: GPU thread wrapper
-typedef struct {
-	Int start_key;
-	Int end_key;
-	Int stride;
-	int64_t target_count;
-	std::atomic<int> result{0};
-	std::atomic<int> completed{0};
-} gpu_hybrid_args_t;
-
-static platform_thread_return_t PLATFORM_THREAD_CALL gpu_hybrid_thread(void *arg);
+/* GPU functions extracted to src/gpu/gpu_dispatch.cpp (Phase 4, Plan 05).
+ * gpu_hybrid_args_t defined in gpu/gpu_dispatch.h. */
 
 /* readFileAddress, readFileVanity, forceReadFileAddress, forceReadFileAddressEth,
    forceReadFileXPoint, processOneVanity, writeFileIfNeeded moved to io/io.cpp */
@@ -450,7 +436,6 @@ int DEBUGCOUNT = 0;
 std::atomic<uint64_t> g_gpu_keys_checked{0};
 std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
 std::atomic<int> g_gpu_should_stop{0};
-static int g_gpu_bloom_uploaded = 0;
 int g_gpu_range_percent = 0;
 
 // Multi-GPU worker instance (for signal handler access)
@@ -469,7 +454,7 @@ static void sigint_handler(int sig) {
 #endif
 
 /* Call from main loop to handle deferred SIGINT cleanup */
-static void check_sigint_cleanup(void) {
+void check_sigint_cleanup(void) {
 	if (g_sigint_received && g_multi_gpu_workers != NULL) {
 		output_info("\nReceived Ctrl+C, stopping multi-GPU workers...\n");
 		gpu_worker_stop(g_multi_gpu_workers, 10000);
@@ -2523,7 +2508,7 @@ int main(int argc, char **argv)	{
 				output_success("Initializing GPU full search...\n");
 
 				// Upload precomputed G table to GPU
-				if (gpu_upload_gtable_from_secp() == 0) {
+				if (gpu_dispatch_upload_gtable() == 0) {
 					output_success("G table uploaded to GPU (8192 points)\n");
 				} else {
 					error_report_t report;
@@ -2537,13 +2522,11 @@ int main(int argc, char **argv)	{
 				}
 
 				// Upload targets to GPU
-				if (FLAGGPU_FULL && gpu_upload_targets_from_addressTable(N) == 0) {
+				if (FLAGGPU_FULL && gpu_dispatch_upload_targets((void *)addressTable, N) == 0) {
 					output_success("Targets uploaded to GPU (%" PRIu64 " hashes)\n", N);
 					// Optional: build a GPU-specific bloom filter to reduce target searches for large N.
-					g_gpu_bloom_uploaded = 0;
 					if (N > 32) {
-						if (gpu_build_and_upload_bloom_from_addressTable(N) == 0) {
-							g_gpu_bloom_uploaded = 1;
+						if (gpu_dispatch_upload_bloom((void *)addressTable, N) == 0) {
 							output_success("GPU bloom uploaded (accelerates matching for large target sets)\n");
 						} else {
 							output_warning("GPU bloom upload failed; continuing without GPU bloom\n");
@@ -2747,7 +2730,7 @@ int main(int argc, char **argv)	{
 					if (config.gpu.multi_gpu_enabled && config.gpu.device_count == 1) {
 						output_info("Multi-GPU enabled but only 1 device specified, using single GPU mode\n");
 					}
-					gpu_result = gpu_run_full_search(&n_range_start, &n_range_end, &stride, N);
+					gpu_result = gpu_dispatch_run_full_search(&config, &n_range_start, &n_range_end, &stride, N);
 				}
 
 #ifndef _WIN64
@@ -2850,7 +2833,7 @@ int main(int argc, char **argv)	{
 								g_gpu_keys_checked_cur.store(0, std::memory_order_release);
 								g_gpu_should_stop.store(0, std::memory_order_release);
 
-							int err = platform_thread_create(&gpu_thread_id, gpu_hybrid_thread, &gpu_hybrid_args);
+							int err = platform_thread_create(&gpu_thread_id, gpu_dispatch_hybrid_thread, &gpu_hybrid_args);
 							if (err != 0) {
 								output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 								g_work_pool.disable();
@@ -2927,7 +2910,7 @@ int main(int argc, char **argv)	{
 				g_gpu_should_stop.store(0, std::memory_order_release);
 
 			// Start GPU thread (with its fixed range)
-			int err = platform_thread_create(&gpu_thread_id, gpu_hybrid_thread, &gpu_hybrid_args);
+			int err = platform_thread_create(&gpu_thread_id, gpu_dispatch_hybrid_thread, &gpu_hybrid_args);
 			if (err != 0) {
 				output_warning("Failed to start GPU thread, falling back to CPU-only\n");
 				FLAGGPU_HYBRID.store(0, std::memory_order_release);
@@ -3079,7 +3062,7 @@ int main(int argc, char **argv)	{
 							// Report GPU throughput from atomic counter so the
 							// adaptive scheduler tracks GPU speed in real time.
 							// Only in static-split mode — in work-stealing mode the
-							// gpu_hybrid_thread reports its own work periodically.
+							// gpu_dispatch_hybrid_thread reports its own work periodically.
 							if (gpu_delta_u64 > 0 && !g_work_pool.enabled) {
 								adaptive_report_work(WORKER_GPU, gpu_delta_u64, period_ms);
 							}
@@ -3617,263 +3600,13 @@ void menu() {
 /* vanityrmdmatch, writevanitykey, addvanity, minimum_same_bytes moved to search/search_vanity.cpp */
 
 
-// ============================================================================
-// GPU Full Search Helper Functions
-// ============================================================================
-
-// Upload precomputed G table to GPU (256*32 points)
-static int gpu_upload_gtable_from_secp() {
-	if (!gpu_backend_available()) return 1;
-
-	// GTable has 256*32 = 8192 points
-	// Each point needs X and Y (64 bytes total, big-endian)
-	const size_t GTABLE_POINTS = 256 * 32;
-	uint8_t *gtable_data = (uint8_t*)malloc(GTABLE_POINTS * 64);
-	if (!gtable_data) return 1;
-
-	// Export the precomputed table directly (avoids 8192 scalar computations).
-	extern Secp256K1 *secp;
-	secp->ExportGTable(gtable_data);
-
-	int result = gpu_upload_gtable(gtable_data, GTABLE_POINTS);
-	free(gtable_data);
-	return result;
-}
-
-// Upload targets from addressTable to GPU
-static int gpu_upload_targets_from_addressTable(int64_t count) {
-	if (!gpu_backend_available() || count <= 0) return 1;
-
-	// addressTable is struct address_value* with 20-byte values
-	extern struct address_value *addressTable;
-
-	// Targets are already stored as contiguous 20-byte entries, upload directly.
-	return gpu_upload_targets((const uint8_t*)addressTable, (size_t)count);
-}
-
-// Build a GPU-side bloom filter that matches the CUDA bloom_check() logic and upload it.
-// This reduces expensive target searches when target_count is large.
-static int gpu_build_and_upload_bloom_from_addressTable(int64_t count) {
-	if (!gpu_backend_available() || count <= 32) return 1;  // Not beneficial for very small N
-
-	extern struct address_value *addressTable;
-
-	// 4 hashes are unrolled in the CUDA bloom_check and are the fastest choice.
-	const int num_hashes = 4;
-	const uint32_t GOLDEN = 0x9E3779B9u;
-
-	// Target bits-per-element tuned for low false-positive rate without excessive VRAM.
-	const uint64_t bits_per_element = 12;
-	uint64_t desired_bits = (uint64_t)count * bits_per_element;
-
-	// Minimum size to keep indexing efficient and word-aligned.
-	if (desired_bits < (1ULL << 16)) desired_bits = (1ULL << 16);  // 64K bits = 8 KB
-
-	// Round up to power-of-two bits (allows fast masking on GPU).
-	auto next_pow2_u64 = [](uint64_t v) -> uint64_t {
-		if (v <= 1) return 1;
-		v--;
-		v |= v >> 1;
-		v |= v >> 2;
-		v |= v >> 4;
-		v |= v >> 8;
-		v |= v >> 16;
-		v |= v >> 32;
-		return v + 1;
-	};
-
-	uint64_t bloom_bits = next_pow2_u64(desired_bits);
-	// CUDA bloom_check uses 32-bit indices; cap to 2^32 bits (512 MB) for safety.
-	if (bloom_bits > (1ULL << 32)) bloom_bits = (1ULL << 32);
-	if (bloom_bits < 64) bloom_bits = 64;
-
-	size_t bloom_bytes = (size_t)(bloom_bits / 8);
-	// Ensure 64-bit word access is safe.
-	if ((bloom_bytes & 7) != 0) {
-		bloom_bytes = (bloom_bytes + 7) & ~(size_t)7;
-		bloom_bits = (uint64_t)bloom_bytes * 8;
-	}
-
-	uint8_t *bloom = (uint8_t*)calloc(bloom_bytes, 1);
-	if (!bloom) return 1;
-
-	uint64_t *bloom64 = (uint64_t*)bloom;
-	uint32_t mask = (uint32_t)(bloom_bits - 1);
-
-	for (int64_t i = 0; i < count; i++) {
-		const uint8_t *h = addressTable[i].value;
-
-		uint32_t h0 = ((uint32_t)h[0] << 8) | (uint32_t)h[1];
-		uint32_t h1 = ((uint32_t)h[2] << 8) | (uint32_t)h[3];
-		uint32_t h2 = ((uint32_t)h[4] << 8) | (uint32_t)h[5];
-		uint32_t h3 = ((uint32_t)h[6] << 8) | (uint32_t)h[7];
-
-		uint32_t idx0 = (h0 * GOLDEN) & mask;
-		uint32_t idx1 = (h1 * GOLDEN) & mask;
-		uint32_t idx2 = (h2 * GOLDEN) & mask;
-		uint32_t idx3 = (h3 * GOLDEN) & mask;
-
-		bloom64[idx0 >> 6] |= (1ULL << (idx0 & 63));
-		bloom64[idx1 >> 6] |= (1ULL << (idx1 & 63));
-		bloom64[idx2 >> 6] |= (1ULL << (idx2 & 63));
-		bloom64[idx3 >> 6] |= (1ULL << (idx3 & 63));
-	}
-
-	int rc = gpu_upload_bloom(bloom, bloom_bytes, num_hashes);
-	free(bloom);
-	return rc;
-}
-
-// Callback for found keys from GPU search
-static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *userdata) {
-	(void)userdata;
-
-	// Convert big-endian privkey to Int
-	Int key;
-	key.Set32Bytes((unsigned char*)privkey_be);
-
-	// Use writekey with config parameter
-	writekey(g_kh_config_ptr, compressed ? true : false, &key);
-}
-
-// GPU hybrid thread function with work-stealing
-static platform_thread_return_t PLATFORM_THREAD_CALL gpu_hybrid_thread(void *arg) {
-	gpu_hybrid_args_t *args = (gpu_hybrid_args_t *)arg;
-	int total_found = 0;
-	uint64_t blocks_processed = 0;
-	uint64_t last_report_time = adaptive_time_ms();
-	uint64_t keys_since_last_report = 0;
-
-	// Two modes:
-	// 1) Work-stealing: GPU pulls blocks from shared pool (g_work_pool.enabled=true)
-	// 2) Static split: GPU scans the fixed [start_key, end_key] range once
-	if (!g_work_pool.enabled) {
-		printf("[GPU] Static-range thread started\n");
-		uint64_t start_time = adaptive_time_ms();
-		int found = gpu_run_full_search(&args->start_key, &args->end_key, &args->stride, args->target_count);
-		if (found > 0) total_found = found;
-		(void)(adaptive_time_ms() - start_time);
-		// GPU throughput is reported incrementally by the main output
-		// loop (guarded by !g_work_pool.enabled).  Do NOT report here
-		// to avoid double-counting the same keys.
-		args->result.store(total_found, std::memory_order_release);
-		args->completed.store(1, std::memory_order_release);
-		printf("[GPU] Static-range thread completed: %d keys found\n", total_found);
-		return (platform_thread_return_t)0;
-	}
-
-	printf("[GPU] Work-stealing thread started\n");
-
-	// Loop: pull work blocks from shared pool until exhausted
-	while (!g_gpu_should_stop.load(std::memory_order_acquire) && g_work_pool.enabled) {
-		check_sigint_cleanup();
-		Int block_start, block_end;
-
-		// Try to get a work block
-		if (!g_work_pool.get_block(block_start, block_end)) {
-			// No more work available
-			break;
-		}
-
-		(void)adaptive_time_ms();  // Could track block timing in future
-
-		// Run GPU search on this block
-		int found = gpu_run_full_search(&block_start, &block_end, &args->stride, args->target_count);
-		if (found > 0) {
-			total_found += found;
-		}
-		blocks_processed++;
-
-		// Track keys for adaptive scheduler
-		uint64_t block_keys = g_work_pool.block_size;
-		keys_since_last_report += block_keys;
-
-		// Report to adaptive scheduler periodically (every ~500ms or 5 blocks)
-		uint64_t now = adaptive_time_ms();
-		if ((now - last_report_time >= 500) || (blocks_processed % 5 == 0)) {
-			uint64_t elapsed = now - last_report_time;
-			if (elapsed > 0 && keys_since_last_report > 0) {
-				adaptive_report_work(WORKER_GPU, keys_since_last_report, elapsed);
-				keys_since_last_report = 0;
-				last_report_time = now;
-			}
-		}
-
-		// Brief status every 10 blocks
-		if (blocks_processed % 10 == 0) {
-			printf("[GPU] Processed %lu blocks, total found: %d\n",
-				   (unsigned long)blocks_processed, total_found);
-		}
-	}
-
-	printf("[GPU] Work-stealing thread completed: %lu blocks, %d keys found\n",
-		   (unsigned long)blocks_processed, total_found);
-
-	args->result.store(total_found, std::memory_order_release);
-	args->completed.store(1, std::memory_order_release);
-
-	return (platform_thread_return_t)0;
-}
-
-	// Run full GPU search with CPU fallback
-	static int gpu_run_full_search(Int *start_key, Int *end_key, Int *stride_val, int64_t target_count) {
-	if (!gpu_backend_available()) {
-		output_warning("GPU not available, cannot run full GPU search\n");
-		return -1;
-	}
-
-	// Prepare search configuration
-	gpu_search_config_t config;
-	memset(&config, 0, sizeof(config));
-
-	// Convert start key to big-endian bytes
-	start_key->Get32Bytes(config.start_key);
-	end_key->Get32Bytes(config.end_key);
-		stride_val->Get32Bytes(config.stride);
-
-		config.target_count = target_count;
-		config.search_compressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH) ? 1 : 0;
-		config.search_uncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH) ? 1 : 0;
-			// Use GPU-side bloom only when it was uploaded and the target set is large enough to benefit.
-			config.use_bloom = (g_gpu_bloom_uploaded && target_count > 32) ? 1 : 0;
-
-	config.callback = gpu_found_callback;
-	config.callback_userdata = NULL;
-
-			if (g_work_pool.enabled) {
-				g_gpu_keys_checked_cur.store(0, std::memory_order_release);
-				config.keys_checked = &g_gpu_keys_checked_cur;
-			} else {
-				config.keys_checked = &g_gpu_keys_checked;
-			}
-		config.should_stop = &g_gpu_should_stop;
-		config.quiet = (FLAGQUIET != 0) || (FLAGGPU_HYBRID != 0) || OUTPUTSECONDS.IsGreater(&ZERO);
-
-		output_success("Starting GPU full search (ECC + hash160 + matching on GPU)\n");
-		output_success("Target count: %" PRId64 ", using %s\n",
-			target_count,
-			target_count == 1 ? "direct comparison" :
-				(config.use_bloom ? "GPU bloom + binary search" : "binary search"));
-		output_success("Search mode: %s\n",
-			(config.search_compressed && config.search_uncompressed) ? "compressed + uncompressed" :
-			(config.search_compressed ? "compressed only" :
-				(config.search_uncompressed ? "uncompressed only" : "none")));
-
-					int found = gpu_full_search(&config);
-				if (g_work_pool.enabled) {
-					uint64_t done = g_gpu_keys_checked_cur.load(std::memory_order_acquire);
-					g_gpu_keys_checked.fetch_add(done, std::memory_order_release);
-					g_gpu_keys_checked_cur.store(0, std::memory_order_release);
-				}
-				return found;
-		}
+/* GPU functions extracted to src/gpu/gpu_dispatch.cpp (Phase 4, Plan 05) */
 
 /* checkpointer moved to io/io.cpp */
 
 /* writekey, writekeyeth, processOneVanity moved to io/io.cpp */
 
 /* isBase58, isValidBase58String moved to crypto/address_util.cpp */
-
 
 /* readFileVanity moved to io/io.cpp */
 

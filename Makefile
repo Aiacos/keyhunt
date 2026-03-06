@@ -78,7 +78,7 @@ HAVE_OPENCL := $(shell pkg-config --exists OpenCL 2>/dev/null && echo 1 || \
 
 # Common GPU objects (always included regardless of backend)
 # Note: gpu_autotune is now provided by gpu_backend_unified.c
-GPU_COMMON_OBJS := $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o
+GPU_COMMON_OBJS := $(OBJDIR)/gpu/multi_gpu_scheduler.o $(OBJDIR)/gpu/gpu_multi_worker.o $(OBJDIR)/gpu/async_pipeline.o $(OBJDIR)/gpu/gpu_dispatch.o
 
 # Initialize backend objects
 GPU_BACKEND_OBJS :=
@@ -518,7 +518,7 @@ sanitize: clean-sanitize
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(ASAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(ASAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(ASAN_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(SANITIZE_OBJDIR)/gpu/gpu_backend_none.o $(SANITIZE_OBJDIR)/gpu/multi_gpu_scheduler.o $(SANITIZE_OBJDIR)/gpu/gpu_multi_worker.o $(SANITIZE_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(SANITIZE_OBJDIR)/gpu/gpu_backend_none.o $(SANITIZE_OBJDIR)/gpu/multi_gpu_scheduler.o $(SANITIZE_OBJDIR)/gpu/gpu_multi_worker.o $(SANITIZE_OBJDIR)/gpu/async_pipeline.o $(SANITIZE_OBJDIR)/gpu/gpu_dispatch.o"
 	@echo ""
 	@echo "Running tests with AddressSanitizer..."
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:print_stats=1 ./run_tests_asan$(EXE_EXT)
@@ -541,7 +541,7 @@ tsan: clean-tsan
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(TSAN_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(TSAN_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(TSAN_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(TSAN_OBJDIR)/gpu/gpu_backend_none.o $(TSAN_OBJDIR)/gpu/multi_gpu_scheduler.o $(TSAN_OBJDIR)/gpu/gpu_multi_worker.o $(TSAN_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(TSAN_OBJDIR)/gpu/gpu_backend_none.o $(TSAN_OBJDIR)/gpu/multi_gpu_scheduler.o $(TSAN_OBJDIR)/gpu/gpu_multi_worker.o $(TSAN_OBJDIR)/gpu/async_pipeline.o $(TSAN_OBJDIR)/gpu/gpu_dispatch.o"
 	@echo ""
 	@echo "Running tests with ThreadSanitizer..."
 	TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 ./run_tests_tsan$(EXE_EXT)
@@ -576,7 +576,7 @@ coverage: clean-coverage
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(COVERAGE_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(COVERAGE_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(COVERAGE_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/gpu_multi_worker.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/gpu_multi_worker.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o $(COVERAGE_OBJDIR)/gpu/gpu_dispatch.o"
 	@echo ""
 	@echo ">>> Running tests with coverage instrumentation..."
 	-./run_tests_cov$(EXE_EXT)
@@ -608,7 +608,7 @@ coverage-report: clean-coverage
 		CXXFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 -fno-exceptions $(INCLUDES) $(COVERAGE_FLAGS)" \
 		CFLAGS="$(COMMON_FLAGS) $(WARN_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(COVERAGE_FLAGS)" \
 		LDFLAGS="$(COMMON_FLAGS) $(COVERAGE_LDFLAGS) -Wl,--as-needed" \
-		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/gpu_multi_worker.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o"
+		LTO_FLAGS="" GPU_CXXFLAGS="" GPU_OBJS="$(COVERAGE_OBJDIR)/gpu/gpu_backend_none.o $(COVERAGE_OBJDIR)/gpu/multi_gpu_scheduler.o $(COVERAGE_OBJDIR)/gpu/gpu_multi_worker.o $(COVERAGE_OBJDIR)/gpu/async_pipeline.o $(COVERAGE_OBJDIR)/gpu/gpu_dispatch.o"
 	@echo ""
 	@echo ">>> Running tests with coverage instrumentation..."
 	-./run_tests_cov$(EXE_EXT)
