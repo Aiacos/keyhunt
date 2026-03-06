@@ -135,6 +135,7 @@ char *pubkeytopubaddress(char *pkey, int length)	{
 	size_t pubaddress_size = MAXLENGTHADDRESS+10;
 	checkpointer((void *)pubaddress,__FILE__,"malloc","pubaddress" ,__LINE__ -1 );
 	checkpointer((void *)digest,__FILE__,"malloc","digest" ,__LINE__ -1 );
+	if (!pubaddress || !digest) return NULL; // unreachable: checkpointer exits on NULL
 	//digest [000...0]
 	sha256((uint8_t*)pkey, length,(uint8_t*) digest);
 	//digest [SHA256 32 bytes+000....0]

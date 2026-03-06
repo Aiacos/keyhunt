@@ -612,6 +612,8 @@ bool forceReadFileAddressEth(char *fileName) {
 						validAddress = true;
 					}
 				break;
+				default:
+				break;
 			}
 		}
 		if(!validAddress) {

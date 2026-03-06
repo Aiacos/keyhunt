@@ -313,7 +313,7 @@ static inline void bloom_ext_print(bloom_extended_t *be) {
         printf("  bits = %" PRIu64 " (2^%d)\n", be->fast.bits, be->fast.log2_bits);
         printf("  bytes = %" PRIu64 " (%.2f MB)\n",
                be->fast.bits / 8,
-               (double)(be->fast.bits / 8) / (1024 * 1024));
+               (double)be->fast.bits / 8.0 / (1024.0 * 1024.0));
         printf("  hashes = %d\n", be->fast.hashes);
         printf("  optimization = XXH3_128bits + bitmask\n");
         return;

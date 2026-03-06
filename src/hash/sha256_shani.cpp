@@ -890,7 +890,7 @@ void sha256_shani_test(void) {
 
     // Test vector: "Test message for SHA-NI" with compressed key format
     memset(test_input, 0, 33);
-    memcpy(test_input, "Test message for SHA-NI implem", 30);
+    memcpy(test_input, "Test message for SHA-NI implem", 30); // NOLINT(bugprone-not-null-terminated-result) binary data, not a string
     test_input[30] = 0x02;  // Compressed key prefix (0x02 or 0x03 in Bitcoin)
     test_input[31] = 0xAB;
     test_input[32] = 0xCD;

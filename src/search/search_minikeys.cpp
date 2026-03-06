@@ -174,7 +174,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process_minikeys(void *varg
 	minikey2check[22] = '?';
 	minikey2check[23] = 0x00;
 
-	do {
+	do { // NOLINT(bugprone-infinite-loop) continue_flag is modified by signal handler
 		if (is_random) {
 			counter.Rand(256);
 			for (k = 0; k < 21; k++) {

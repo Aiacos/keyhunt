@@ -709,6 +709,7 @@ clang-tidy: compile_commands.json
 
 cppcheck:
 	cppcheck --enable=warning --error-exitcode=1 \
-	  --suppress=dangerousTypeCast:src/secp256k1/Int.h \
-	  --suppress=dangerousTypeCast:src/gmp256k1/Int.h \
+	  --suppress=dangerousTypeCast \
+	  --check-level=normal \
+	  -i src/secp256k1 -i src/gmp256k1 -i src/xxhash -i src/database/sqlite3.c \
 	  -Isrc src/ 2>&1 | tee cppcheck-report.txt

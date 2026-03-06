@@ -23,7 +23,7 @@ static unsigned int simple_hash(const char *str) {
     if (!str) return 0;
     unsigned int hash = 5381;
     int c;
-    while ((c = *str++)) {
+    while ((c = (unsigned char)*str++)) {
         hash = ((hash << 5) + hash) + c;
     }
     return hash;

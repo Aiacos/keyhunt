@@ -511,7 +511,7 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	if (sms > 0) {
 		const double ratio = ((double)sms * 5.0) / (double)cpu_threads;  // empirical scale
 		const double pct = (ratio / (ratio + 1.0)) * 100.0;
-		int v = (int)(pct + 0.5);
+		int v = (int)lround(pct);
 		if (v < 50) v = 50;
 		if (v > 99) v = 99;
 		return v;

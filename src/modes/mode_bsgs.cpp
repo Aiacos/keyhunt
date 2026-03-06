@@ -671,7 +671,7 @@ bsgs_recalculate_with_new_params:
 
     /* ---- Step 6: Allocate bP table ---- */
     bytes = (uint64_t)bsgs_m3 * (uint64_t)sizeof(bsgs_xvalue);
-    output_success("Allocating %.2f MB for %" PRIu64 " bP Points\n", (double)(bytes / 1048576), bsgs_m3);
+    output_success("Allocating %.2f MB for %" PRIu64 " bP Points\n", (double)bytes / 1048576.0, bsgs_m3);
 
     bPtable = (bsgs_xvalue *)malloc(bytes);
     checkpointer((void *)bPtable, __FILE__, "malloc", "bPtable", __LINE__ - 1);

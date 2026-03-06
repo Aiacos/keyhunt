@@ -3,6 +3,7 @@
 #include "platform/platform.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include <cmath>
 #if !PLATFORM_WINDOWS
 #include <unistd.h>
 #endif
@@ -298,7 +299,7 @@ void output_speed_graph(double *values, int count, int height) {
     for (int i = 0; i < count; i++) {
         // Normalize value to 0-8 range
         double normalized = ((values[i] - min_val) / range) * 8.0;
-        int level = (int)(normalized + 0.5);  // Round to nearest
+        int level = (int)lround(normalized);  // Round to nearest
         if (level < 0) level = 0;
         if (level > 8) level = 8;
 

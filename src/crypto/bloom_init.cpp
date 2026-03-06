@@ -57,7 +57,7 @@ bool initBloomFilter(struct bloom *bloom_arg, uint64_t items_bloom) {
 			output_warning("--------------------------------------------------------\n");
 
 			/* Calculate optimal multiplier that fits */
-			int suggested_multiplier = (int)(safe_limit_mb * 1024 * 1024 / items_bloom / 3.59);
+			int suggested_multiplier = (int)((double)safe_limit_mb * 1024.0 * 1024.0 / (double)items_bloom / 3.59);
 			if (suggested_multiplier < 1) suggested_multiplier = 1;
 
 			output_warning("Try reducing -z parameter to: %d\n", suggested_multiplier);

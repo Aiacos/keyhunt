@@ -358,8 +358,8 @@ uint64_t kh_bsgs_calc_memory(uint64_t n, int k, uint64_t *bloom_out, uint64_t *t
     /* bP table size (16 bytes per entry, M/32 entries per K) */
     double table = (m / 32.0) * (double)k * 16.0;
 
-    uint64_t bloom_bytes = (uint64_t)(total_bloom + 0.5);
-    uint64_t table_bytes = (uint64_t)(table + 0.5);
+    uint64_t bloom_bytes = (uint64_t)lround(total_bloom);
+    uint64_t table_bytes = (uint64_t)lround(table);
 
     if (bloom_out) *bloom_out = bloom_bytes;
     if (table_out) *table_out = table_bytes;
