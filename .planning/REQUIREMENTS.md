@@ -50,7 +50,7 @@ Requirements for production-ready release. Each maps to roadmap phases.
 ### Code Structure
 
 - [x] **STR-01**: Extract ADDRESS mode dispatcher from keyhunt.cpp to src/modes/
-- [ ] **STR-02**: Extract BSGS mode dispatcher from keyhunt.cpp to src/modes/
+- [x] **STR-02**: Extract BSGS mode dispatcher from keyhunt.cpp to src/modes/
 - [x] **STR-03**: Extract XPOINT and RMD160 mode dispatchers from keyhunt.cpp to src/modes/
 - [x] **STR-04**: Extract VANITY and MINIKEYS mode dispatchers from keyhunt.cpp to src/modes/
 - [x] **STR-05**: keyhunt.cpp reduced to thin dispatcher (~600 lines or less)
@@ -139,7 +139,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | CFG-08 | Phase 3 | Complete |
 | CFG-09 | Phase 3 | Complete |
 | STR-01 | Phase 4 | Complete |
-| STR-02 | Phase 4 | Pending |
+| STR-02 | Phase 4 | Complete |
 | STR-03 | Phase 4 | Complete |
 | STR-04 | Phase 4 | Complete |
 | STR-05 | Phase 4 | Complete |

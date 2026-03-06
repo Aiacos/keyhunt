@@ -3,14 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-03-06T07:25:49Z"
-last_activity: "2026-03-06 -- Plan 04-03 complete: VANITY + MINIKEYS mode extraction to src/modes/"
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-03-06T07:51:54Z"
+last_activity: "2026-03-06 -- Plan 04-04 complete: BSGS mode extraction to src/modes/mode_bsgs.cpp"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 22
-  completed_plans: 19
+  completed_plans: 20
+  percent: 91
 ---
 
 # Project State
@@ -25,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 4 of 6 (Monolith Decomposition)
-Plan: 3 of 6 in current phase -- COMPLETE
+Plan: 4 of 6 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-06 -- Plan 04-03 complete: VANITY + MINIKEYS mode extraction to src/modes/
+Last activity: 2026-03-06 -- Plan 04-04 complete: BSGS mode extraction to src/modes/mode_bsgs.cpp
 
-Progress: [███████░░░] 73% (19/26 estimated total plans)
+Progress: [█████████░] 91% (20/22 total plans)
 
 ## Performance Metrics
 
@@ -45,11 +46,11 @@ Progress: [███████░░░] 73% (19/26 estimated total plans)
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 | 3 - Config Migration | 6/6 | ~76 min | ~13 min |
-| 4 - Monolith Decomposition | 3/6 | ~31 min | ~10 min |
+| 4 - Monolith Decomposition | 4/6 | ~48 min | ~12 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-06 (~5 min), 04-01 (~16 min), 04-02 (~11 min), 04-03 (~4 min)
-- Trend: Mode extraction accelerating; dispatch table pattern well-established
+- Last 5 plans: 04-01 (~16 min), 04-02 (~11 min), 04-03 (~4 min), 04-04 (~17 min)
+- Trend: BSGS extraction was the largest block (1334 lines); all 6 modes now dispatched
 
 *Updated after each plan completion*
 
@@ -130,6 +131,10 @@ Recent decisions affecting current work:
 - [04-02]: MINIKEYS/VANITY remain inline in keyhunt.cpp until future extraction plans
 - [04-03]: Vanity/minikey mode init stubs are no-ops; state setup in CLI parsing before config bridge
 - [04-03]: Inline fallback switch eliminated; mode_dispatch() now unconditional for all non-BSGS modes
+- [04-04]: BSGS globals remain in keyhunt.cpp with extern access from mode_bsgs.cpp (move first, clean later)
+- [04-04]: mode_bsgs_run ignores tids/thread_count parameters since init allocates its own global arrays
+- [04-04]: shutdown_work_queue made non-static for mode_bsgs.cpp cross-file access
+- [04-04]: config.search.target_file wired in config bridge to pass fileName to mode init functions
 
 ### Pending Todos
 
@@ -143,6 +148,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T07:25:49Z
-Stopped at: Completed 04-03-PLAN.md
-Resume file: .planning/phases/04-monolith-decomposition/04-04-PLAN.md
+Last session: 2026-03-06T07:51:54Z
+Stopped at: Completed 04-04-PLAN.md
+Resume file: .planning/phases/04-monolith-decomposition/04-05-PLAN.md
