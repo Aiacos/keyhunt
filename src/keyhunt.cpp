@@ -63,6 +63,7 @@
 #include "crypto/bloom_init.h"
 #include "io/io.h"
 #include "search/search_common.h"
+#include "modes/modes.h"
 
 #include "secp256k1/SECP256k1.h"
 #include "secp256k1/Point.h"
@@ -4317,39 +4318,37 @@ int main(int argc, char **argv)	{
 			config.runtime.minikey_n_limit = minikey_n_limit;
 
 			profile_init_threads((int)NTHREADS);
-			for(j= 0;j < NTHREADS; j++)	{
-				tt = (tothread*) malloc(sizeof(struct tothread));
-				checkpointer((void *)tt,__FILE__,"malloc","tt" ,__LINE__ -1 );
-				tt->nt = j;
-			steps[j].value = 0;
-			s = 0;
-			switch(FLAGMODE)	{
-				case MODE_ADDRESS:
-				case MODE_XPOINT:
-				case MODE_RMD160: {
-					thread_args *aargs = new thread_args{ &config, (int)j };
-					s = platform_thread_create(&tid[j], thread_process, (void *)aargs);
-					free(tt);  /* tt not used for address modes (uses thread_args) */
-					break;
+
+			/* Dispatch thread creation through mode ops table for registered modes */
+			if (mode_get_ops(FLAGMODE) != nullptr) {
+				int rc = mode_dispatch(&config, tid, (int)NTHREADS);
+				if (rc != 0) {
+					output_error("mode_dispatch failed for mode %d\n", FLAGMODE);
+					exit(EXIT_FAILURE);
 				}
-				case MODE_MINIKEYS: {
-					thread_args *margs = new thread_args{ &config, (int)j };
-					s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)margs);
-					free(tt);  /* tt not used for minikeys (uses thread_args) */
-					break;
-				}
-				case MODE_VANITY: {
-					thread_args *vargs = new thread_args{ &config, (int)j };
-					s = platform_thread_create(&tid[j], thread_process_vanity, (void *)vargs);
-					free(tt);  /* tt not used for vanity (uses thread_args) */
-					break;
+			} else {
+				/* Modes not yet in dispatch table (MINIKEYS, VANITY) */
+				for(j= 0;j < NTHREADS; j++)	{
+					steps[j].value = 0;
+					s = 0;
+					switch(FLAGMODE)	{
+						case MODE_MINIKEYS: {
+							thread_args *margs = new thread_args{ &config, (int)j };
+							s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)margs);
+							break;
+						}
+						case MODE_VANITY: {
+							thread_args *vargs = new thread_args{ &config, (int)j };
+							s = platform_thread_create(&tid[j], thread_process_vanity, (void *)vargs);
+							break;
+						}
+					}
+					if(s != 0)	{
+						output_error("pthread_create thread_process\n");
+						exit(EXIT_FAILURE);
+					}
 				}
 			}
-			if(s != 0)	{
-				output_error("pthread_create thread_process\n");
-				exit(EXIT_FAILURE);
-			}
-		}
 	}
 	
 		initialize_rate_limits();
