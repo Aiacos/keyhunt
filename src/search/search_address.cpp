@@ -373,7 +373,7 @@ cpu_compress_only_hash:
 								if (memcmp(hashCompressed02[idx], single_target, 20) == 0) {
 									Int candidate;
 									computeKeyAtIndex(candidate, idx);
-									writekey(true, &candidate);
+									writekey(config, true, &candidate);
 								}
 							}
 						} else {
@@ -395,7 +395,7 @@ cpu_compress_only_hash:
 									KH_PROF_SCOPE(ns_write);
 									Int candidate;
 									computeKeyAtIndex(candidate, idx);
-									writekey(true, &candidate);
+									writekey(config, true, &candidate);
 								}
 							}
 						}
@@ -410,7 +410,7 @@ cpu_compress_only_hash:
 										candidate.Neg();
 										candidate.Add(&secp->order);
 									}
-									writekey(true, &candidate);
+									writekey(config, true, &candidate);
 								}
 								if (memcmp(hashCompressed03[idx], single_target, 20) == 0) {
 									Int candidate;
@@ -420,7 +420,7 @@ cpu_compress_only_hash:
 										candidate.Neg();
 										candidate.Add(&secp->order);
 									}
-									writekey(true, &candidate);
+									writekey(config, true, &candidate);
 								}
 							}
 						} else {
@@ -447,7 +447,7 @@ cpu_compress_only_hash:
 										candidate.Neg();
 										candidate.Add(&secp->order);
 									}
-									writekey(true, &candidate);
+									writekey(config, true, &candidate);
 								}
 							}
 							uint64_t hits03;
@@ -473,7 +473,7 @@ cpu_compress_only_hash:
 										candidate.Neg();
 										candidate.Add(&secp->order);
 									}
-									writekey(true, &candidate);
+									writekey(config, true, &candidate);
 								}
 							}
 						}
@@ -486,7 +486,7 @@ cpu_compress_only_hash:
 						if (memcmp(hashUncompressed[idx], single_target, 20) == 0) {
 						Int candidate;
 						computeKeyAtIndex(candidate, idx);
-						writekey(false, &candidate);
+						writekey(config, false, &candidate);
 					}
 				}
 			} else {
@@ -508,7 +508,7 @@ cpu_compress_only_hash:
 						KH_PROF_SCOPE(ns_write);
 						Int candidate;
 						computeKeyAtIndex(candidate, idx);
-						writekey(false, &candidate);
+						writekey(config, false, &candidate);
 					}
 				}
 			}
@@ -920,7 +920,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 																}
 															break;
 														}
-														writekey(true,&keyfound);
+														writekey(config, true,&keyfound);
 													}
 												}
 											}
@@ -941,7 +941,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 															keyfound.Neg();
 															keyfound.Add(&secp->order);
 														}
-														writekey(true,&keyfound);
+														writekey(config, true,&keyfound);
 													}
 												}
 											}
@@ -989,7 +989,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 																}
 															break;
 														}
-														writekey(false,&keyfound);
+														writekey(config, false,&keyfound);
 													}
 												}
 											}
@@ -1002,7 +1002,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 													keyfound.SetInt32(k);
 													keyfound.Mult(&stride);
 													keyfound.Add(&key_mpz);
-													writekey(false,&keyfound);
+													writekey(config, false,&keyfound);
 												}
 											}
 										}
@@ -1051,7 +1051,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 															}
 														break;
 													}
-													writekeyeth(&keyfound);
+													writekeyeth(config, &keyfound);
 												}
 											}
 										}
@@ -1066,7 +1066,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 												keyfound.SetInt32(k);
 												keyfound.Mult(&stride);
 												keyfound.Add(&key_mpz);
-												writekeyeth(&keyfound);
+												writekeyeth(config, &keyfound);
 											}
 										}
 									}
@@ -1085,7 +1085,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 											keyfound.Mult(&stride);
 											keyfound.Add(&key_mpz);
 
-											writekey(false,&keyfound);
+											writekey(config, false,&keyfound);
 										}
 									}
 									endomorphism_beta[(j*4)+k].x.Get32Bytes((unsigned char *)rawvalue);
@@ -1098,7 +1098,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 											keyfound.Add(&key_mpz);
 											keyfound.ModMulK1order(&lambda);
 
-											writekey(false,&keyfound);
+											writekey(config, false,&keyfound);
 										}
 									}
 
@@ -1111,7 +1111,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 											keyfound.Mult(&stride);
 											keyfound.Add(&key_mpz);
 											keyfound.ModMulK1order(&lambda2);
-											writekey(false,&keyfound);
+											writekey(config, false,&keyfound);
 										}
 									}
 								}
@@ -1125,7 +1125,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 											keyfound.Mult(&stride);
 											keyfound.Add(&key_mpz);
 
-											writekey(false,&keyfound);
+											writekey(config, false,&keyfound);
 										}
 									}
 								}

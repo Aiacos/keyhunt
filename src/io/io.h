@@ -1,8 +1,9 @@
 /*
  * io.h - File I/O operations for keyhunt
  *
- * MIGRATION STATUS: Partial (Phase 3)
- * See io.cpp header for migration plan and remaining extern dependencies.
+ * MIGRATION STATUS: Config-wired (Phase 4)
+ * writekey/writekeyeth receive keyhunt_config_t* parameter.
+ * File-reading functions still use global state (Phase 4 future work).
  *
  * Handles reading target files (addresses, vanity patterns, x-points),
  * writing found keys to output files, and checkpoint validation.
@@ -23,6 +24,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../config/config.h"
 
 /* Forward declarations */
 class Int;
@@ -114,18 +116,20 @@ void writeFileIfNeeded(const char *fileName);
  * Write a found Bitcoin private key and its corresponding address to output.
  *
  * Parameters:
+ *   config     - Pointer to the keyhunt configuration (provides secp, mutex, range bounds)
  *   compressed - true for compressed public key, false for uncompressed
  *   key        - Pointer to the found private key
  */
-void writekey(bool compressed, Int *key);
+void writekey(const keyhunt_config_t *config, bool compressed, Int *key);
 
 /*
  * Write a found Ethereum private key and its corresponding address to output.
  *
  * Parameters:
- *   key - Pointer to the found private key
+ *   config - Pointer to the keyhunt configuration (provides secp, mutex, range bounds)
+ *   key    - Pointer to the found private key
  */
-void writekeyeth(Int *key);
+void writekeyeth(const keyhunt_config_t *config, Int *key);
 
 /* ============================================================================
  * Utility Functions

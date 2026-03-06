@@ -280,7 +280,7 @@ void increment_minikey_N(char *rawbuffer, char *minikeyN_buf, int n_limit);
 void init_generator(void);
 
 /* Output utilities */
-void writekey(bool found, Int *key);
+void writekey(const keyhunt_config_t *config, bool found, Int *key);
 void checksumalidate(char *address, char *checksum, char *checksum_calculated);
 
 /* BSGS check function */

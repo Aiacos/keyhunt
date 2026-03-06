@@ -1,20 +1,13 @@
 /*
  * io.cpp - File I/O operations for keyhunt
  *
- * MIGRATION STATUS: Partial (Phase 3, CFG-08 complete)
+ * MIGRATION STATUS: Config-wired (Phase 4, CFG-07 complete)
  *
- * search_context.h externs have been removed (CFG-08). io.cpp now uses
- * local extern declarations for the globals it still needs. These are
- * Phase 4 cleanup targets -- writekey/writekeyeth will receive a config
- * parameter when their 10+ call sites are updated.
- *
- * Local externs (all Phase 4 cleanup targets):
- *   secp, FLAGMODE, FLAGCRYPTO, FLAGSAVEREADFILE, FLAGSKIPCHECKSUM,
- *   FLAGVANITY, FLAGREADEDFILE1, FLAGDEBUG, MAXLENGTHADDRESS,
- *   addressTable, N, bloom, write_keys,
- *   vanity_rmd_targets, vanity_rmd_total, vanity_rmd_limits,
- *   vanity_rmd_limit_values_A, vanity_rmd_minimun_bytes_check_length,
- *   vanity_bloom, g_rangeProgressStart, g_rangeProgressEnd
+ * writekey() and writekeyeth() receive keyhunt_config_t* parameter and use
+ * no extern globals. File-reading functions (readFileAddress, etc.) still
+ * use function-local extern declarations since they run at init time and
+ * mutate globals directly. These will be addressed when file-reading is
+ * refactored in a future plan.
  */
 
 #include "io.h"
@@ -42,51 +35,6 @@
 #include <sys/mman.h>
 #endif
 
-/* ============================================================================
- * Local extern declarations -- Phase 4 cleanup targets
- *
- * These globals are defined in keyhunt.cpp. They will be replaced by config
- * parameters when writekey/writekeyeth signatures are updated (Phase 4).
- * ============================================================================ */
-
-/* Core secp256k1 instance */
-extern Secp256K1 *secp;
-
-/* Synchronisation */
-extern platform_mutex_t write_keys;
-
-/* Search flags */
-extern int FLAGMODE;
-extern int FLAGCRYPTO;
-extern int FLAGSAVEREADFILE;
-extern int FLAGSKIPCHECKSUM;
-extern int FLAGVANITY;
-extern int FLAGREADEDFILE1;
-extern int FLAGDEBUG;
-extern int MAXLENGTHADDRESS;
-
-/* Target data */
-extern uint64_t N;
-extern bloom_extended_t bloom;
-extern struct address_value *addressTable;
-
-/* Vanity mode state */
-extern int vanity_rmd_targets;
-extern int vanity_rmd_total;
-extern int *vanity_rmd_limits;
-extern uint8_t ***vanity_rmd_limit_values_A;
-extern int vanity_rmd_minimun_bytes_check_length;
-extern struct bloom *vanity_bloom;
-
-/* Range bounds */
-extern Int n_range_start;
-extern Int n_range_end;
-extern Int g_rangeProgressStart;
-extern Int g_rangeProgressEnd;
-
-/* Forward declarations for functions defined in keyhunt.cpp */
-int addvanity(char *target);
-
 void checkpointer(void *ptr, const char *file, const char *function, const char *name, int line) {
 	if(ptr == NULL) {
 		// Get system info for available memory diagnostic
@@ -111,12 +59,19 @@ void checkpointer(void *ptr, const char *file, const char *function, const char 
 	}
 }
 
-void writekey(bool compressed, Int *key) {
+void writekey(const keyhunt_config_t *config, bool compressed, Int *key) {
+	/* Extract config-mapped state into local shadow variables */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	platform_mutex_t *write_mutex = (platform_mutex_t *)config->runtime.write_mutex;
+	Int *rangeStart = (Int *)config->runtime.range_progress_start;
+	Int *rangeEnd = (Int *)config->runtime.range_progress_end;
+
 	// Range validation: skip keys outside the original search range
 	// This prevents false positives from key negation producing out-of-range keys
-	// Use g_rangeProgressStart/End which store the original unchanged range bounds
-	if (key->IsLower(&g_rangeProgressStart) || key->IsGreaterOrEqual(&g_rangeProgressEnd)) {
-		return;
+	if (rangeStart && rangeEnd) {
+		if (key->IsLower(rangeStart) || key->IsGreaterOrEqual(rangeEnd)) {
+			return;
+		}
 	}
 
 	Point publickey;
@@ -143,7 +98,7 @@ void writekey(bool compressed, Int *key) {
 		strcpy(bech32_address, "[bech32 requires compressed]");
 	}
 
-	platform_mutex_lock(&write_keys);
+	platform_mutex_lock(write_mutex);
 	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys == NULL) {
 		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
@@ -161,15 +116,23 @@ void writekey(bool compressed, Int *key) {
 	// Show celebratory key found display
 	output_key_found(hextemp, address, public_key_hex);
 
-	platform_mutex_unlock(&write_keys);
+	platform_mutex_unlock(write_mutex);
 	free(hextemp);
 	free(hexrmd);
 }
 
-void writekeyeth(Int *key) {
+void writekeyeth(const keyhunt_config_t *config, Int *key) {
+	/* Extract config-mapped state into local shadow variables */
+	Secp256K1 *secp = (Secp256K1 *)config->runtime.secp;
+	platform_mutex_t *write_mutex = (platform_mutex_t *)config->runtime.write_mutex;
+	Int *rangeStart = (Int *)config->runtime.range_progress_start;
+	Int *rangeEnd = (Int *)config->runtime.range_progress_end;
+
 	// Range validation: skip keys outside the original search range
-	if (key->IsLower(&g_rangeProgressStart) || key->IsGreaterOrEqual(&g_rangeProgressEnd)) {
-		return;
+	if (rangeStart && rangeEnd) {
+		if (key->IsLower(rangeStart) || key->IsGreaterOrEqual(rangeEnd)) {
+			return;
+		}
 	}
 
 	Point publickey;
@@ -182,7 +145,7 @@ void writekeyeth(Int *key) {
 	address[1] = 'x';
 	tohex_dst(hash, 20, address+2);
 
-	platform_mutex_lock(&write_keys);
+	platform_mutex_lock(write_mutex);
 	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys == NULL) {
 		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
@@ -200,11 +163,18 @@ void writekeyeth(Int *key) {
 	// Show celebratory key found display
 	output_key_found(hextemp, address, NULL);
 
-	platform_mutex_unlock(&write_keys);
+	platform_mutex_unlock(write_mutex);
 	free(hextemp);
 }
 
 bool processOneVanity() {
+	extern int vanity_rmd_targets;
+	extern int vanity_rmd_total;
+	extern int *vanity_rmd_limits;
+	extern uint8_t ***vanity_rmd_limit_values_A;
+	extern int vanity_rmd_minimun_bytes_check_length;
+	extern struct bloom *vanity_bloom;
+
 	int i, k;
 	if(vanity_rmd_targets == 0) {
 		output_error("There aren't any vanity targets\n");
@@ -223,6 +193,17 @@ bool processOneVanity() {
 }
 
 bool readFileVanity(char *fileName) {
+	extern int vanity_rmd_targets;
+	extern int vanity_rmd_total;
+	extern int *vanity_rmd_limits;
+	extern uint8_t ***vanity_rmd_limit_values_A;
+	extern int vanity_rmd_minimun_bytes_check_length;
+	extern struct bloom *vanity_bloom;
+	extern uint64_t N;
+
+	/* Forward declaration for function defined in keyhunt.cpp */
+	int addvanity(char *target);
+
 	FILE *fileDescriptor;
 	int i, k, len;
 	char aux[100];
@@ -263,6 +244,17 @@ bool readFileVanity(char *fileName) {
 }
 
 bool readFileAddress(char *fileName) {
+	extern int FLAGMODE;
+	extern int FLAGCRYPTO;
+	extern int FLAGSAVEREADFILE;
+	extern int FLAGSKIPCHECKSUM;
+	extern int FLAGVANITY;
+	extern int FLAGREADEDFILE1;
+	extern int MAXLENGTHADDRESS;
+	extern uint64_t N;
+	extern bloom_extended_t bloom;
+	extern struct address_value *addressTable;
+
 	FILE *fileDescriptor;
 	char fileBloomName[30];
 	uint8_t checksum[32], hexPrefix[9];
@@ -435,6 +427,11 @@ bool readFileAddress(char *fileName) {
 }
 
 bool forceReadFileAddress(char *fileName) {
+	extern int MAXLENGTHADDRESS;
+	extern uint64_t N;
+	extern bloom_extended_t bloom;
+	extern struct address_value *addressTable;
+
 	FILE *fileDescriptor;
 	bool validAddress;
 	uint64_t numberItems, i;
@@ -541,6 +538,11 @@ bool forceReadFileAddress(char *fileName) {
 }
 
 bool forceReadFileAddressEth(char *fileName) {
+	extern int MAXLENGTHADDRESS;
+	extern uint64_t N;
+	extern bloom_extended_t bloom;
+	extern struct address_value *addressTable;
+
 	FILE *fileDescriptor;
 	bool validAddress;
 	uint64_t numberItems, i;
@@ -623,6 +625,11 @@ bool forceReadFileAddressEth(char *fileName) {
 }
 
 bool forceReadFileXPoint(char *fileName) {
+	extern int MAXLENGTHADDRESS;
+	extern uint64_t N;
+	extern bloom_extended_t bloom;
+	extern struct address_value *addressTable;
+
 	FILE *fileDescriptor;
 	uint64_t numberItems, i;
 	size_t r, lenaux;
@@ -735,6 +742,13 @@ bool forceReadFileXPoint(char *fileName) {
 }
 
 void writeFileIfNeeded(const char *fileName) {
+	extern int FLAGSAVEREADFILE;
+	extern int FLAGREADEDFILE1;
+	extern int FLAGDEBUG;
+	extern uint64_t N;
+	extern bloom_extended_t bloom;
+	extern struct address_value *addressTable;
+
 	if(FLAGSAVEREADFILE && !FLAGREADEDFILE1) {
 		FILE *fileDescriptor;
 		char fileBloomName[30];

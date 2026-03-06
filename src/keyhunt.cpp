@@ -585,11 +585,15 @@ void sleep_ms(int milliseconds);
 
 /* Vanity functions (defined in search/search_vanity.cpp) */
 bool vanityrmdmatch(unsigned char *rmdhash);
-void writevanitykey(bool compress,Int *key);
+void writevanitykey(bool compress,Int *key, keyhunt_config_t *config);
 int addvanity(char *target);
 int minimum_same_bytes(unsigned char* A,unsigned char* B, int length);
 
 /* writekey, writekeyeth, checkpointer declared in io/io.h */
+
+/* File-scope pointer to keyhunt_config_t, set by main() before any GPU launch.
+ * Used by gpu_found_callback to pass config to writekey(). */
+static keyhunt_config_t *g_kh_config_ptr = nullptr;
 
 // GPU Full Search helper functions (forward declarations)
 static int gpu_upload_gtable_from_secp();
@@ -1681,6 +1685,7 @@ int main(int argc, char **argv)	{
 	// -------------------------------------------------------------------------
 	keyhunt_config_t config;
 	kh_config_init(&config);
+	g_kh_config_ptr = &config;
 
 	// BSGS context lives at main() scope so it outlives all BSGS threads.
 	// Populated later (line ~4101) when BSGS mode initializes algorithm state.
@@ -2738,6 +2743,10 @@ int main(int argc, char **argv)	{
 		}
 
 			initialize_range_progress_tracker();
+
+			// Wire range progress bounds into config for writekey validation
+			config.runtime.range_progress_start = (void *)&g_rangeProgressStart;
+			config.runtime.range_progress_end = (void *)&g_rangeProgressEnd;
 
 			// Improve CPU thread utilization on small finite ranges when N wasn't explicitly specified.
 			// This avoids the common case where N_SEQUENTIAL_MAX is larger than the entire range and only 1 CPU thread gets work.
@@ -5348,8 +5357,8 @@ static void gpu_found_callback(const uint8_t *privkey_be, int compressed, void *
 	Int key;
 	key.Set32Bytes((unsigned char*)privkey_be);
 
-	// Use existing writekey function
-	writekey(compressed ? true : false, &key);
+	// Use writekey with config parameter
+	writekey(g_kh_config_ptr, compressed ? true : false, &key);
 }
 
 // GPU hybrid thread function with work-stealing

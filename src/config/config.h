@@ -268,6 +268,10 @@ typedef struct {
     void    *bsgs_generator_points;  /* std::vector<Point>* GSn */
     void    *bsgs_generator_point_2; /* Point* _2GSn */
 
+    /* Original range bounds (immutable after init, for writekey validation) */
+    void    *range_progress_start; /* Int* g_rangeProgressStart (original range start) */
+    void    *range_progress_end;   /* Int* g_rangeProgressEnd (original range end) */
+
     /* Max address/hash length for bloom checks */
     int      max_address_length;  /* MAXLENGTHADDRESS */
 
