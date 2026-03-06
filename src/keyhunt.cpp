@@ -603,20 +603,7 @@ int main(int argc, char **argv) {
     platform_mutex_destroy(&bsgs_thread);
 }
 
-void init_generator() {
-    Point G = secp->ComputePublicKey(&stride);
-    Point g;
-    g.Set(G);
-    Gn.resize(CPU_GRP_SIZE / 2);
-    Gn[0] = g;
-    g = secp->DoubleDirect(g);
-    Gn[1] = g;
-    for(size_t i = 2; i < CPU_GRP_SIZE / 2; i++) {
-        g = secp->AddDirect(g,G);
-        Gn[i] = g;
-    }
-    _2Gn = secp->DoubleDirect(Gn[CPU_GRP_SIZE / 2 - 1]);
-}
+// init_generator() moved to globals.cpp (shared across main and test builds)
 
 /* Functions extracted to other modules:
  * - menu() -> src/cli.cpp (Phase 4, Plan 08)

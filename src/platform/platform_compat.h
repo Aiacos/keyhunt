@@ -121,6 +121,27 @@ char platform_get_path_separator(void);
  */
 char* platform_normalize_path(char *path);
 
+/**
+ * @brief Thread-safe version of localtime.
+ *
+ * Converts a time_t value to a broken-down local time.
+ * On POSIX: wraps localtime_r directly.
+ * On Windows: wraps localtime_s (which has reversed parameter order).
+ *
+ * @param timep Pointer to time_t value to convert.
+ * @param result Pointer to struct tm to store the result.
+ * @return Pointer to result on success, NULL on error.
+ */
+#if PLATFORM_WINDOWS
+    #include <time.h>
+    static inline struct tm *platform_localtime_r(const time_t *timep, struct tm *result) {
+        return (localtime_s(result, timep) == 0) ? result : NULL;
+    }
+    #ifndef localtime_r
+        #define localtime_r platform_localtime_r
+    #endif
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -177,6 +177,22 @@ keyhunt_config_t *g_kh_config_ptr = nullptr;
 /* INI config state */
 keyhunt_ini_config_t g_ini_config;
 bool g_ini_config_loaded = false;
+
+/* Generator initialization - pre-compute Gn table for CPU group operations */
+void init_generator() {
+    Point G = secp->ComputePublicKey(&stride);
+    Point g;
+    g.Set(G);
+    Gn.resize(CPU_GRP_SIZE / 2);
+    Gn[0] = g;
+    g = secp->DoubleDirect(g);
+    Gn[1] = g;
+    for(size_t i = 2; i < CPU_GRP_SIZE / 2; i++) {
+        g = secp->AddDirect(g,G);
+        Gn[i] = g;
+    }
+    _2Gn = secp->DoubleDirect(Gn[CPU_GRP_SIZE / 2 - 1]);
+}
 const char *g_save_config_path = NULL;
 
 /* Parsed fileName pointer */

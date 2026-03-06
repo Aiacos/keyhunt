@@ -231,7 +231,7 @@ jobs:
             LDFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -fsanitize=address -fsanitize=undefined -Wl,--as-needed" \
             LTO_FLAGS="" \
             GPU_CXXFLAGS="" \
-            GPU_OBJS="obj_asan/gpu/gpu_backend_none.o obj_asan/gpu/gpu_autotune.o obj_asan/gpu/multi_gpu_scheduler.o obj_asan/gpu/async_pipeline.o"
+            GPU_OBJS="obj_asan/gpu/gpu_backend_none.o obj_asan/gpu/multi_gpu_scheduler.o obj_asan/gpu/gpu_multi_worker.o obj_asan/gpu/async_pipeline.o obj_asan/gpu/gpu_dispatch.o"
 
       - name: Run tests with AddressSanitizer
         timeout-minutes: 10
@@ -280,7 +280,7 @@ jobs:
             LDFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 -fsanitize=thread -Wl,--as-needed" \
             LTO_FLAGS="" \
             GPU_CXXFLAGS="" \
-            GPU_OBJS="obj_tsan/gpu/gpu_backend_none.o obj_tsan/gpu/gpu_autotune.o obj_tsan/gpu/multi_gpu_scheduler.o obj_tsan/gpu/async_pipeline.o"
+            GPU_OBJS="obj_tsan/gpu/gpu_backend_none.o obj_tsan/gpu/multi_gpu_scheduler.o obj_tsan/gpu/gpu_multi_worker.o obj_tsan/gpu/async_pipeline.o obj_tsan/gpu/gpu_dispatch.o"
 
       - name: Run tests with ThreadSanitizer
         timeout-minutes: 10
@@ -328,7 +328,7 @@ jobs:
             LDFLAGS="-m64 -march=x86-64 -mtune=generic -mssse3 --coverage -Wl,--as-needed" \
             LTO_FLAGS="" \
             GPU_CXXFLAGS="" \
-            GPU_OBJS="obj_coverage/gpu/gpu_backend_none.o obj_coverage/gpu/gpu_autotune.o obj_coverage/gpu/multi_gpu_scheduler.o obj_coverage/gpu/async_pipeline.o"
+            GPU_OBJS="obj_coverage/gpu/gpu_backend_none.o obj_coverage/gpu/multi_gpu_scheduler.o obj_coverage/gpu/gpu_multi_worker.o obj_coverage/gpu/async_pipeline.o obj_coverage/gpu/gpu_dispatch.o"
 
       - name: Run tests for coverage
         timeout-minutes: 10

@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include "platform/platform_compat.h"
 #include "database/sqlite3.h"
 
 // Helper function: Calculate mean

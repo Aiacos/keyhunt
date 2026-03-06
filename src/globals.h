@@ -268,7 +268,10 @@ extern void shutdown_work_queue();
 /* Base key acquisition (defined in keyhunt.cpp) */
 extern bool acquire_base_key(Int &key);
 
-/* Sleep utility (defined in keyhunt.cpp) */
+/* Sleep utility (defined in util/thread_util.cpp) */
 extern void sleep_ms(int milliseconds);
+
+/* Generator initialization (defined in globals.cpp) */
+extern void init_generator();
 
 #endif /* KEYHUNT_GLOBALS_H */

@@ -11,6 +11,7 @@
 #include <math.h>
 #include <time.h>
 #include <inttypes.h>
+#include "platform/platform_compat.h"
 #if PLATFORM_WINDOWS
 #include <windows.h>
 #define usleep(us) Sleep((us) / 1000)

@@ -4412,20 +4412,7 @@ int bsgs_thirdcheck(Int *start_range,uint32_t a,uint32_t k_index,Int *privatekey
 }
 
 
-void sleep_ms(int milliseconds)	{ // cross-platform sleep function
-#if defined(_WIN64) && !defined(__CYGWIN__)
-    Sleep(milliseconds);
-#elif _POSIX_C_SOURCE >= 199309L
-    struct timespec ts;
-    ts.tv_sec = milliseconds / 1000;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    nanosleep(&ts, NULL);
-#else
-    if (milliseconds >= 1000)
-      sleep(milliseconds / 1000);
-    usleep((milliseconds % 1000) * 1000);
-#endif
-}
+// sleep_ms() is provided by util/thread_util.cpp (linked via UTIL_OBJS)
 
 #if defined(_WIN64) && !defined(__CYGWIN__)
 DWORD WINAPI thread_pub2rmd(LPVOID vargp) {

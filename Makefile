@@ -245,20 +245,14 @@ TEST_SHA256_SIMD_OBJ := $(TEST_OBJDIR)/test_sha256_simd.o
 TEST_EXTENDED_RANGE_OBJ := $(TEST_OBJDIR)/test_extended_range.o
 TEST_BECH32_OBJ := $(TEST_OBJDIR)/test_bech32.o
 TEST_THREADING_OBJ := $(TEST_OBJDIR)/test_threading.o
+TEST_STUBS_OBJ := $(TEST_OBJDIR)/test_stubs.o
 TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 
 # Shared objects needed by tests
-# CORE_OBJS includes util.o which has tohex() needed by SECP256K1
-# ERROR_OBJS, OUTPUT_OBJS, PROGRESS_OBJS, BENCHMARK_OBJS, DATABASE_OBJS are
-# needed because WIZARD_OBJS and CLI_OBJS reference symbols from them.
-TEST_SHARED_OBJS := $(SECP256K1_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) \
-                    $(OBJDIR)/base58/base58.o $(BECH32_OBJS) $(OBJDIR)/rmd160/rmd160.o \
-                    $(OBJDIR)/xxhash/xxhash.o $(UTIL_OBJS) $(CORE_OBJS) \
-                    $(BSGS_OBJS) $(GPU_OBJS) $(DIST_OBJS) $(WIZARD_OBJS) \
-                    $(PLATFORM_OBJS) $(CLI_OBJS) $(CONFIG_OBJS) \
-                    $(ERROR_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) \
-                    $(BENCHMARK_OBJS) $(DATABASE_OBJS) \
-                    $(OBJDIR)/search/search_xpoint.o $(OBJDIR)/search/search_rmd160.o
+# Use COMMON_OBJS (all modules) + SECP256K1_OBJS + WIZARD_OBJS to match
+# the main build minus keyhunt.o. This ensures test builds link against
+# the same set of symbols as the main binary.
+TEST_SHARED_OBJS := $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OBJS)
 
 # Build test object files
 $(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | directories
@@ -324,11 +318,14 @@ $(TEST_BECH32_OBJ): tests/test_bech32.cpp tests/test_framework.h | directories
 $(TEST_THREADING_OBJ): tests/test_threading.cpp tests/test_framework.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TEST_STUBS_OBJ): tests/test_stubs.cpp | directories
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(TEST_RUNNER_OBJ): tests/run_tests.cpp | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # All test objects
-TEST_OBJS := $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
+TEST_OBJS := $(TEST_STUBS_OBJ) $(TEST_RUNNER_OBJ) $(TEST_INT_OBJ) $(TEST_BLOOM_OBJ) $(TEST_BSGS_OBJ) \
              $(TEST_BSGS_SORT_OBJ) $(TEST_GPU_OBJ) $(TEST_MULTI_GPU_OBJ) $(TEST_DISTRIBUTED_OBJ) $(TEST_WIZARD_OBJ) \
              $(TEST_HASH_OBJ) $(TEST_BSGS_OPS_OBJ) $(TEST_POINT_OBJ) $(TEST_INTGROUP_OBJ) \
              $(TEST_SHA512_SIMD_OBJ) $(TEST_SHA256_SIMD_OBJ) \
