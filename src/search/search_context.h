@@ -64,10 +64,13 @@
 /*  Struct definitions                                                */
 /* ------------------------------------------------------------------ */
 
+#ifndef CHECKSUMSHA256_DEFINED
+#define CHECKSUMSHA256_DEFINED
 struct checksumsha256 {
 	char data[32];
 	char backup[32];
 };
+#endif
 
 /* struct bsgs_xvalue defined in bsgs/bsgs_sort.h */
 #include "bsgs/bsgs_sort.h"

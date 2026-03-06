@@ -39,92 +39,99 @@
 #endif
 
 /* ============================================================================
- * Extern declarations for globals defined in keyhunt.cpp
+ * BSGS-owned global state DEFINITIONS
  *
- * These remain in keyhunt.cpp until Phase 4 completes full global absorption.
- * mode_bsgs.cpp references them via extern to avoid duplication.
+ * These variables are owned by mode_bsgs.cpp. Other translation units
+ * access them via extern declarations in bsgs_globals.h.
  * ============================================================================ */
+#include "bsgs_globals.h"
 
 /* BSGS Int parameters */
-extern Int BSGS_GROUP_SIZE;
-extern Int BSGS_CURRENT;
-extern Int BSGS_R;
-extern Int BSGS_AUX;
-extern Int BSGS_N;
-extern Int BSGS_N_double;
-extern Int BSGS_M;
-extern Int BSGS_M_double;
-extern Int BSGS_M2;
-extern Int BSGS_M2_double;
-extern Int BSGS_M3;
-extern Int BSGS_M3_double;
+Int BSGS_GROUP_SIZE;
+Int BSGS_CURRENT;
+Int BSGS_R;
+Int BSGS_AUX;
+Int BSGS_N;
+Int BSGS_N_double;
+Int BSGS_M;
+Int BSGS_M_double;
+Int BSGS_M2;
+Int BSGS_M2_double;
+Int BSGS_M3;
+Int BSGS_M3_double;
 
 /* BSGS Point parameters */
-extern Point BSGS_P;
-extern Point BSGS_MP;
-extern Point BSGS_MP2;
-extern Point BSGS_MP3;
-extern Point BSGS_MP_double;
-extern Point BSGS_MP2_double;
-extern Point BSGS_MP3_double;
+Point BSGS_P;
+Point BSGS_MP;
+Point BSGS_MP2;
+Point BSGS_MP3;
+Point BSGS_MP_double;
+Point BSGS_MP2_double;
+Point BSGS_MP3_double;
 
 /* BSGS vectors */
-extern std::vector<Point> BSGS_AMP2;
-extern std::vector<Point> BSGS_AMP3;
-extern std::vector<Point> GSn;
-extern Point _2GSn;
+std::vector<Point> BSGS_AMP2;
+std::vector<Point> BSGS_AMP3;
+std::vector<Point> GSn;
+Point _2GSn;
 
 /* Target points */
-extern std::vector<Point> OriginalPointsBSGS;
-extern bool *OriginalPointsBSGScompressed;
-extern std::atomic<int> *bsgs_found;
+std::vector<Point> OriginalPointsBSGS;
+bool *OriginalPointsBSGScompressed;
+std::atomic<int> *bsgs_found;
 
 /* BSGS bloom filters and tables */
-extern bloom_extended_t *bloom_bP;
-extern bloom_extended_t *bloom_bPx2nd;
-extern bloom_extended_t *bloom_bPx3rd;
-extern struct bsgs_xvalue *bPtable;
+bloom_extended_t *bloom_bP;
+bloom_extended_t *bloom_bPx2nd;
+bloom_extended_t *bloom_bPx3rd;
+struct bsgs_xvalue *bPtable;
 
 /* Bloom checksums */
-struct checksumsha256 {
-    char data[32];
-    char backup[32];
-};
-extern struct checksumsha256 *bloom_bP_checksums;
-extern struct checksumsha256 *bloom_bPx2nd_checksums;
-extern struct checksumsha256 *bloom_bPx3rd_checksums;
+struct checksumsha256 *bloom_bP_checksums;
+struct checksumsha256 *bloom_bPx2nd_checksums;
+struct checksumsha256 *bloom_bPx3rd_checksums;
 
 /* Bloom mutexes */
-extern platform_mutex_t *bloom_bP_mutex;
-extern platform_mutex_t *bloom_bPx2nd_mutex;
-extern platform_mutex_t *bloom_bPx3rd_mutex;
-extern platform_mutex_t *bPload_mutex;
-extern platform_mutex_t bsgs_thread;
+platform_mutex_t *bloom_bP_mutex;
+platform_mutex_t *bloom_bPx2nd_mutex;
+platform_mutex_t *bloom_bPx3rd_mutex;
 
 /* BSGS scalar parameters */
-extern uint64_t BSGS_XVALUE_RAM;
-extern uint64_t BSGS_BUFFERXPOINTLENGTH;
-extern uint64_t BSGS_BUFFERREGISTERLENGTH;
-extern uint64_t bloom_bP_totalbytes;
-extern uint64_t bloom_bP2_totalbytes;
-extern uint64_t bloom_bP3_totalbytes;
-extern uint64_t bsgs_m;
-extern uint64_t bsgs_m2;
-extern uint64_t bsgs_m3;
-extern uint64_t bsgs_aux;
-extern uint32_t bsgs_point_number;
-extern uint64_t bytes;
-extern char checksum[32], checksum_backup[32];
-extern char buffer_bloom_file[1024];
+uint64_t BSGS_XVALUE_RAM = 0;
+uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
+uint64_t BSGS_BUFFERREGISTERLENGTH = 0;
+uint64_t bloom_bP_totalbytes = 0;
+uint64_t bloom_bP2_totalbytes = 0;
+uint64_t bloom_bP3_totalbytes = 0;
+uint64_t bsgs_m = 0;
+uint64_t bsgs_m2 = 0;
+uint64_t bsgs_m3 = 0;
+uint64_t bsgs_aux = 0;
+uint32_t bsgs_point_number = 0;
 
-/* Range variables */
+/* BSGS file I/O state */
+uint64_t bytes;
+char checksum[32];
+char checksum_backup[32];
+char buffer_bloom_file[1024];
+
+/* BSGS mode names */
+const char *bsgs_modes[5] = {"sequential","backward","both","random","dance"};
+
+/* ============================================================================
+ * Extern declarations for SHARED state defined in keyhunt.cpp
+ *
+ * These are shared across all modes (secp, ranges, flags, counters, mutexes).
+ * They are NOT BSGS-specific and remain in keyhunt.cpp.
+ * ============================================================================ */
+
+/* Range variables (shared across modes) */
 extern Int n_range_start;
 extern Int n_range_end;
 extern Int n_range_diff;
 extern Int n_range_aux;
 
-/* Search config flags */
-extern int FLAGMODE;
+/* Search config flags (set by CLI parser in keyhunt.cpp) */
 extern int FLAGBSGSMODE;
 extern int FLAGSAVEREADFILE;
 extern int FLAGREADEDFILE1;
@@ -149,7 +156,7 @@ extern int bitrange;
 extern char *bit_range_str_min;
 extern char *bit_range_str_max;
 
-/* Thread runtime state */
+/* Thread runtime state (shared across modes) */
 extern uint64_t FINISHED_THREADS_COUNTER;
 extern uint64_t FINISHED_THREADS_BP;
 extern uint64_t THREADCYCLES;
@@ -157,29 +164,25 @@ extern uint64_t THREADCOUNTER;
 extern std::atomic<uint64_t> FINISHED_ITEMS;
 extern uint64_t OLDFINISHED_ITEMS;
 extern uint32_t THREADBPWORKLOAD;
-extern uint32_t CPU_GRP_SIZE;
 
-/* Misc globals */
+/* Shared globals (used by all modes) */
+extern uint32_t CPU_GRP_SIZE;
 extern uint64_t N;
 extern struct thread_counter *steps;
 extern struct thread_flag *ends;
 extern platform_thread_t *tid;
 extern Secp256K1 *secp;
 extern system_info_t g_sysinfo;
-extern Point point_temp;
 extern struct address_value *addressTable;
 extern platform_mutex_t write_keys;
 extern platform_mutex_t write_random;
+extern platform_mutex_t bsgs_thread;
+extern platform_mutex_t *bPload_mutex;
 extern std::atomic<int> THREADOUTPUT;
 extern uint64_t N_SEQUENTIAL_MAX;
 extern bloom_extended_t bloom;
-extern Int OUTPUTSECONDS;
-extern Int ONE;
-extern Int ZERO;
-extern bool g_avx2_available;
-extern const char *bsgs_modes[5];
 
-/* bPload struct (defined in keyhunt.cpp) */
+/* bPload struct (defined in search/search_context.h) */
 struct bPload {
     uint32_t threadid;
     uint64_t from;
@@ -190,7 +193,7 @@ struct bPload {
     uint32_t finished;
 };
 
-/* bPload thread declarations */
+/* bPload thread declarations (defined in search/search_bsgs_threads.cpp) */
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp);
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp);
 
@@ -221,6 +224,7 @@ static int mode_bsgs_init(keyhunt_config_t *config) {
     char *hextemp = NULL;
     char rawvalue[32];
     char *bPload_threads_available;
+    Point point_temp;
     FILE *fd, *fd_aux1, *fd_aux2, *fd_aux3;
     uint64_t i, BASE, PERTHREAD_R, itemsbloom, itemsbloom2, itemsbloom3;
     uint32_t finished;
@@ -1532,12 +1536,92 @@ static int mode_bsgs_run(keyhunt_config_t *config,
 }
 
 /* ============================================================================
- * mode_bsgs_cleanup - BSGS mode cleanup
+ * cleanup_bsgs_resources - Free all BSGS-owned state
  *
- * No-op: cleanup_bsgs_resources is already registered via atexit() in main().
+ * Called via atexit() from main(). Frees bloom filters, bP table, checksums,
+ * mutexes, and vectors. Safe to call multiple times (NULL checks).
+ * ============================================================================ */
+void cleanup_bsgs_resources(void) {
+    /* Free bPtable */
+    if (bPtable != NULL) {
+        free(bPtable);
+        bPtable = NULL;
+    }
+
+    /* Free bloom filters (256 elements each) */
+    if (bloom_bP != NULL) {
+        for (int i = 0; i < 256; i++) {
+            bloom_ext_free(&bloom_bP[i]);
+        }
+        free(bloom_bP);
+        bloom_bP = NULL;
+    }
+    if (bloom_bPx2nd != NULL) {
+        for (int i = 0; i < 256; i++) {
+            bloom_ext_free(&bloom_bPx2nd[i]);
+        }
+        free(bloom_bPx2nd);
+        bloom_bPx2nd = NULL;
+    }
+    if (bloom_bPx3rd != NULL) {
+        for (int i = 0; i < 256; i++) {
+            bloom_ext_free(&bloom_bPx3rd[i]);
+        }
+        free(bloom_bPx3rd);
+        bloom_bPx3rd = NULL;
+    }
+
+    /* Free checksums */
+    if (bloom_bP_checksums != NULL) {
+        free(bloom_bP_checksums);
+        bloom_bP_checksums = NULL;
+    }
+    if (bloom_bPx2nd_checksums != NULL) {
+        free(bloom_bPx2nd_checksums);
+        bloom_bPx2nd_checksums = NULL;
+    }
+    if (bloom_bPx3rd_checksums != NULL) {
+        free(bloom_bPx3rd_checksums);
+        bloom_bPx3rd_checksums = NULL;
+    }
+
+    /* Free mutexes */
+    if (bloom_bP_mutex != NULL) {
+        for (int i = 0; i < 256; i++) {
+            platform_mutex_destroy(&bloom_bP_mutex[i]);
+        }
+        free(bloom_bP_mutex);
+        bloom_bP_mutex = NULL;
+    }
+    if (bloom_bPx2nd_mutex != NULL) {
+        for (int i = 0; i < 256; i++) {
+            platform_mutex_destroy(&bloom_bPx2nd_mutex[i]);
+        }
+        free(bloom_bPx2nd_mutex);
+        bloom_bPx2nd_mutex = NULL;
+    }
+    if (bloom_bPx3rd_mutex != NULL) {
+        for (int i = 0; i < 256; i++) {
+            platform_mutex_destroy(&bloom_bPx3rd_mutex[i]);
+        }
+        free(bloom_bPx3rd_mutex);
+        bloom_bPx3rd_mutex = NULL;
+    }
+
+    /* Clear vectors */
+    BSGS_AMP2.clear();
+    BSGS_AMP2.shrink_to_fit();
+    BSGS_AMP3.clear();
+    BSGS_AMP3.shrink_to_fit();
+    GSn.clear();
+    GSn.shrink_to_fit();
+}
+
+/* ============================================================================
+ * mode_bsgs_cleanup - BSGS mode cleanup (called through dispatch table)
  * ============================================================================ */
 static void mode_bsgs_cleanup(keyhunt_config_t * /*config*/) {
-    /* No mode-specific cleanup needed - atexit handles it */
+    cleanup_bsgs_resources();
 }
 
 /* Registered operations for BSGS mode (extern linkage for dispatch table) */

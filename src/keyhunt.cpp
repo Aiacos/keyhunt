@@ -64,6 +64,7 @@
 #include "io/io.h"
 #include "search/search_common.h"
 #include "modes/modes.h"
+#include "modes/bsgs_globals.h"
 #include "gpu/gpu_dispatch.h"
 
 #include "secp256k1/SECP256k1.h"
@@ -196,10 +197,7 @@ static void append_adaptive_info(char *buffer, size_t bufferSize) {
 	}
 }
 
-struct checksumsha256	{
-	char data[32];
-	char backup[32];
-};
+/* struct checksumsha256 now declared in modes/bsgs_globals.h */
 
 struct address_value	{
 	uint8_t value[20];
@@ -262,8 +260,8 @@ int OPTIMAL_KFACTOR = 0;       // Auto-detected optimal K factor
 std::vector<Point> Gn;
 Point _2Gn;
 
-std::vector<Point> GSn;
-Point _2GSn;
+/* GSn and _2GSn moved to mode_bsgs.cpp (BSGS-owned state, Plan 07).
+ * Accessed via extern declarations in bsgs_globals.h. */
 
 void menu();
 /* init_generator() declared in search/search_common.h */
@@ -304,15 +302,13 @@ keyhunt_config_t *g_kh_config_ptr = nullptr;
 /* GPU functions extracted to src/gpu/gpu_dispatch.cpp (Phase 4, Plan 05).
  * gpu_hybrid_args_t defined in gpu/gpu_dispatch.h. */
 
-/* BSGS loading threads (defined in search/search_bsgs_threads.cpp) */
-platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp);
-platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp);
+/* BSGS loading threads moved to mode_bsgs.cpp (Plan 07) */
 
 std::atomic<int> THREADOUTPUT{0};
 char *bit_range_str_min;
 char *bit_range_str_max;
 
-const char *bsgs_modes[5] = {"sequential","backward","both","random","dance"};
+/* bsgs_modes moved to mode_bsgs.cpp (Plan 07). Accessed via bsgs_globals.h. */
 const char *modes[7] = {"xpoint","address","bsgs","rmd160","pub2rmd","minikeys","vanity"};
 const char *cryptos[3] = {"btc","eth","all"};
 const char *publicsearch[3] = {"uncompress","compress","both"};
@@ -486,18 +482,8 @@ uint64_t N_SEQUENTIAL_MAX = 4096;
 system_info_t g_sysinfo;
 gpu_backend_info_t g_gpu_backend_info;
 
-// BSGS configuration and buffers
-uint64_t BSGS_XVALUE_RAM = 0;
-uint64_t BSGS_BUFFERXPOINTLENGTH = 16;
-uint64_t BSGS_BUFFERREGISTERLENGTH = 0;
-uint64_t bloom_bP_totalbytes = 0;
-uint64_t bloom_bP2_totalbytes = 0;
-uint64_t bloom_bP3_totalbytes = 0;
-uint64_t bsgs_m = 0;
-uint64_t bsgs_m2 = 0;
-uint64_t bsgs_m3 = 0;
-uint64_t bsgs_aux = 0;
-uint32_t bsgs_point_number = 0;
+/* BSGS scalar parameters moved to mode_bsgs.cpp (Phase 4, Plan 07).
+ * Accessed via extern declarations in bsgs_globals.h. */
 
 static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	// Note: KEYHUNT_HYBRID_GPU_PERCENT env var is checked by the caller
@@ -519,29 +505,10 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	return 80;  // No GPU info available, default to 80%
 }
 
-/* BSGS runtime state (algorithm variables remain module-scoped) */
-std::atomic<int> *bsgs_found;
-std::vector<Point> OriginalPointsBSGS;
-bool *OriginalPointsBSGScompressed;
-
-uint64_t bytes;
-char checksum[32],checksum_backup[32];
-char buffer_bloom_file[1024];
-bsgs_xvalue *bPtable;  // From bsgs/bsgs_sort.h
+/* BSGS bloom filters, bPtable, checksums, mutexes, and target points
+ * moved to mode_bsgs.cpp (Phase 4, Plan 07).
+ * Accessed via extern declarations in bsgs_globals.h. */
 struct address_value *addressTable;
-
-// BSGS bloom filters use extended wrapper to enable fast bloom
-bloom_extended_t *bloom_bP;
-bloom_extended_t *bloom_bPx2nd; //2nd Bloom filter check
-bloom_extended_t *bloom_bPx3rd; //3rd Bloom filter check
-
-struct checksumsha256 *bloom_bP_checksums;
-struct checksumsha256 *bloom_bPx2nd_checksums;
-struct checksumsha256 *bloom_bPx3rd_checksums;
-
-platform_mutex_t *bloom_bP_mutex;
-platform_mutex_t *bloom_bPx2nd_mutex;
-platform_mutex_t *bloom_bPx3rd_mutex;
 
 const char *str_limits_prefixs[7] = {"Mkeys/s","Gkeys/s","Tkeys/s","Pkeys/s","Ekeys/s","Zkeys/s","Ykeys/s"};
 const char *str_limits[7] = {"1000000","1000000000","1000000000000","1000000000000000","1000000000000000000","1000000000000000000000","1000000000000000000000000"};
@@ -561,37 +528,13 @@ static void initialize_rate_limits() {
 
 
 
-Int BSGS_GROUP_SIZE;
-Int BSGS_CURRENT;
-Int BSGS_R;
-Int BSGS_AUX;
-Int BSGS_N;
-Int BSGS_N_double;
-Int BSGS_M;					//M is squareroot(N)
-Int BSGS_M_double;
-Int BSGS_M2;				//M2 is M/32
-Int BSGS_M2_double;			//M2_double is M2 * 2
-Int BSGS_M3;				//M3 is M2/32
-Int BSGS_M3_double;			//M3_double is M3 * 2
+/* BSGS Int/Point parameters moved to mode_bsgs.cpp (Plan 07).
+ * Accessed via extern declarations in bsgs_globals.h. */
 
+/* Utility Int values (used by monitoring loop, CLI parsing, GPU dispatch) */
 Int ONE;
 Int ZERO;
 Int MPZAUX;
-
-Point BSGS_P;			//Original P is actually G, but this P value change over time for calculations
-Point BSGS_MP;			//MP values this is m * P
-Point BSGS_MP2;			//MP2 values this is m2 * P
-Point BSGS_MP3;			//MP3 values this is m3 * P
-
-Point BSGS_MP_double;			//MP2 values this is m2 * P * 2
-Point BSGS_MP2_double;			//MP2 values this is m2 * P * 2
-Point BSGS_MP3_double;			//MP3 values this is m3 * P * 2
-
-
-std::vector<Point> BSGS_AMP2;
-std::vector<Point> BSGS_AMP3;
-
-Point point_temp,point_temp2;	//Temp value for some process
 
 Int n_range_start;
 Int n_range_end;
@@ -667,89 +610,13 @@ static void cleanup_general_resources(void) {
 	// Note: secp is cleaned up separately as it's declared after this function
 }
 
-// Cleanup function for BSGS resources to prevent memory leaks
-static void cleanup_bsgs_resources(void) {
-	// Cleanup general resources first
+/* cleanup_bsgs_resources() moved to mode_bsgs.cpp (Plan 07).
+ * Declared in bsgs_globals.h for atexit() registration. */
+
+/* Combined cleanup: general resources + BSGS resources */
+static void cleanup_all_resources(void) {
 	cleanup_general_resources();
-
-	// Only cleanup BSGS specific resources if BSGS mode was used
-	if (!FLAGBSGSMODE) return;
-
-	// Free bPtable
-	if (bPtable != NULL) {
-		free(bPtable);
-		bPtable = NULL;
-	}
-
-	// Free bloom filters (256 elements each)
-	if (bloom_bP != NULL) {
-		for (int i = 0; i < 256; i++) {
-			bloom_ext_free(&bloom_bP[i]);
-		}
-		free(bloom_bP);
-		bloom_bP = NULL;
-	}
-
-	if (bloom_bPx2nd != NULL) {
-		for (int i = 0; i < 256; i++) {
-			bloom_ext_free(&bloom_bPx2nd[i]);
-		}
-		free(bloom_bPx2nd);
-		bloom_bPx2nd = NULL;
-	}
-
-	if (bloom_bPx3rd != NULL) {
-		for (int i = 0; i < 256; i++) {
-			bloom_ext_free(&bloom_bPx3rd[i]);
-		}
-		free(bloom_bPx3rd);
-		bloom_bPx3rd = NULL;
-	}
-
-	// Free checksums
-	if (bloom_bP_checksums != NULL) {
-		free(bloom_bP_checksums);
-		bloom_bP_checksums = NULL;
-	}
-	if (bloom_bPx2nd_checksums != NULL) {
-		free(bloom_bPx2nd_checksums);
-		bloom_bPx2nd_checksums = NULL;
-	}
-	if (bloom_bPx3rd_checksums != NULL) {
-		free(bloom_bPx3rd_checksums);
-		bloom_bPx3rd_checksums = NULL;
-	}
-
-	// Free mutexes
-	if (bloom_bP_mutex != NULL) {
-		for (int i = 0; i < 256; i++) {
-			platform_mutex_destroy(&bloom_bP_mutex[i]);
-		}
-		free(bloom_bP_mutex);
-		bloom_bP_mutex = NULL;
-	}
-	if (bloom_bPx2nd_mutex != NULL) {
-		for (int i = 0; i < 256; i++) {
-			platform_mutex_destroy(&bloom_bPx2nd_mutex[i]);
-		}
-		free(bloom_bPx2nd_mutex);
-		bloom_bPx2nd_mutex = NULL;
-	}
-	if (bloom_bPx3rd_mutex != NULL) {
-		for (int i = 0; i < 256; i++) {
-			platform_mutex_destroy(&bloom_bPx3rd_mutex[i]);
-		}
-		free(bloom_bPx3rd_mutex);
-		bloom_bPx3rd_mutex = NULL;
-	}
-
-	// Clear vectors
-	BSGS_AMP2.clear();
-	BSGS_AMP2.shrink_to_fit();
-	BSGS_AMP3.clear();
-	BSGS_AMP3.shrink_to_fit();
-	GSn.clear();
-	GSn.shrink_to_fit();
+	cleanup_bsgs_resources();
 }
 
 Int lambda,lambda2,beta,beta2;
@@ -1279,7 +1146,7 @@ int main(int argc, char **argv)	{
 	srand(time(NULL));
 
 	// Register cleanup function for memory leak prevention
-	atexit(cleanup_bsgs_resources);
+	atexit(cleanup_all_resources);
 
 	secp = new Secp256K1();
 	secp->Init();
