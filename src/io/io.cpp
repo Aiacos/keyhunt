@@ -23,6 +23,7 @@
 #include "../base58/libbase58.h"
 #include "../bech32/bech32.h"
 #include "../secure_file.h"
+#include "../globals.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -216,16 +217,16 @@ bool readFileVanity(char *fileName, keyhunt_config_t *config) {
 		fclose(fileDescriptor);
 	}
 
-	/* Re-read vanity state from globals since addvanity() modifies them */
-	int vanity_rmd_total = config->runtime.vanity_total;
-	N = vanity_rmd_total;
+	/* Re-read vanity state from globals since addvanity() modifies them directly */
+	vanity_rmd_targets = ::vanity_rmd_targets;
+	vanity_rmd_limits = ::vanity_rmd_limits;
+	vanity_rmd_limit_values_A = ::vanity_rmd_limit_values_A;
+	vanity_rmd_minimun_bytes_check_length = ::vanity_rmd_minimun_bytes_check_length;
+	vanity_bloom = ::vanity_bloom;
+	N = ::vanity_rmd_total;
+
 	if(!initBloomFilter(vanity_bloom, N))
 		return false;
-
-	/* Re-read after possible addvanity changes */
-	vanity_rmd_targets = config->runtime.vanity_targets;
-	vanity_rmd_limits = (int *)config->runtime.vanity_limits;
-	vanity_rmd_limit_values_A = (uint8_t ***)config->runtime.vanity_values_a;
 
 	for(i = 0; i < vanity_rmd_targets; i++) {
 		for(k = 0; k < vanity_rmd_limits[i]; k++) {
@@ -233,7 +234,15 @@ bool readFileVanity(char *fileName, keyhunt_config_t *config) {
 		}
 	}
 
-	/* Write back N through config */
+	/* Write updated vanity state back to config */
+	config->runtime.vanity_targets = vanity_rmd_targets;
+	config->runtime.vanity_total = (int)N;
+	config->runtime.vanity_bloom = (void *)vanity_bloom;
+	config->runtime.vanity_limits = (void *)vanity_rmd_limits;
+	config->runtime.vanity_values_a = (void *)vanity_rmd_limit_values_A;
+	config->runtime.vanity_values_b = (void *)::vanity_rmd_limit_values_B;
+	config->runtime.vanity_min_check_len = vanity_rmd_minimun_bytes_check_length;
+	config->runtime.vanity_addresses = (void *)::vanity_address_targets;
 	config->runtime.address_count = (int64_t)N;
 
 	return true;
