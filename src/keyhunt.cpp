@@ -4319,29 +4319,12 @@ int main(int argc, char **argv)	{
 
 			profile_init_threads((int)NTHREADS);
 
-			/* Dispatch thread creation through mode ops table for registered modes */
-			if (mode_get_ops(FLAGMODE) != nullptr) {
+			/* Dispatch thread creation through mode ops table (all non-BSGS modes registered) */
+			{
 				int rc = mode_dispatch(&config, tid, (int)NTHREADS);
 				if (rc != 0) {
 					output_error("mode_dispatch failed for mode %d\n", FLAGMODE);
 					exit(EXIT_FAILURE);
-				}
-			} else {
-				/* Modes not yet in dispatch table (MINIKEYS) */
-				for(j= 0;j < NTHREADS; j++)	{
-					steps[j].value = 0;
-					s = 0;
-					switch(FLAGMODE)	{
-						case MODE_MINIKEYS: {
-							thread_args *margs = new thread_args{ &config, (int)j };
-							s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)margs);
-							break;
-						}
-					}
-					if(s != 0)	{
-						output_error("pthread_create thread_process\n");
-						exit(EXIT_FAILURE);
-					}
 				}
 			}
 	}
