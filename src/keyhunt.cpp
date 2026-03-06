@@ -4327,7 +4327,7 @@ int main(int argc, char **argv)	{
 					exit(EXIT_FAILURE);
 				}
 			} else {
-				/* Modes not yet in dispatch table (MINIKEYS, VANITY) */
+				/* Modes not yet in dispatch table (MINIKEYS) */
 				for(j= 0;j < NTHREADS; j++)	{
 					steps[j].value = 0;
 					s = 0;
@@ -4335,11 +4335,6 @@ int main(int argc, char **argv)	{
 						case MODE_MINIKEYS: {
 							thread_args *margs = new thread_args{ &config, (int)j };
 							s = platform_thread_create(&tid[j], thread_process_minikeys, (void *)margs);
-							break;
-						}
-						case MODE_VANITY: {
-							thread_args *vargs = new thread_args{ &config, (int)j };
-							s = platform_thread_create(&tid[j], thread_process_vanity, (void *)vargs);
 							break;
 						}
 					}
