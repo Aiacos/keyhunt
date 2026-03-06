@@ -1957,7 +1957,11 @@ int cuda_backend_init(gpu_backend_info_t *info) {
 }
 
 int cuda_backend_available(void) {
-    return g_available;
+    if (g_available) return 1;
+    /* Lightweight hardware check before init */
+    int count = 0;
+    cudaError_t err = cudaGetDeviceCount(&count);
+    return (err == cudaSuccess && count > 0) ? 1 : 0;
 }
 
 // Forward declarations for cleanup
