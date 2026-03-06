@@ -141,29 +141,7 @@ static WorkQueue<Int> g_workQueue;
 // Lightweight internal profiler (enabled via KEYHUNT_PROFILE=1)
 // ---------------------------------------------------------------------------
 
-/*
- * Environment variable overrides — official registry.
- *
- * These env vars allow runtime tuning without recompilation.  They are
- * intentionally separate from CLI flags (applied unconditionally before
- * any keyhunt_config_t values).  See docs/ENV_VARIABLES.md for full docs.
- *
- *  Variable                     Type      Default  Where consumed
- *  ─────────────────────────────────────────────────────────────────
- *  KEYHUNT_PROFILE              bool      0        profiler enable
- *  KEYHUNT_SKIP_SYSINFO         bool      0        bypass hw detection
- *  KEYHUNT_CPU_USE_Y            0|1       1        compute Y in address mode
- *  KEYHUNT_HYBRID_CPU_USE_Y     0|1       1        compute Y in hybrid+full
- *  KEYHUNT_GPU_SELFTEST         bool      0        GPU hash160 self-test
- *  KEYHUNT_HYBRID_GPU_PERCENT   int 1-99  auto     GPU/CPU range split %
- *  KEYHUNT_HYBRID_WORK_STEAL    bool      0        work-stealing mode
- *  KEYHUNT_HYBRID_BLOCK_SIZE    hex/int   0x100000000  work-steal block size
- *  KEYHUNT_CPU_N                int       auto     CPU sequential max keys
- *  KEYHUNT_HYBRID_CPU_N         int       auto     hybrid CPU sequential max
- *  KEYHUNT_DEBUG                bool      0        distributed debug log
- *  KEYHUNT_DEBUG_SUBPROCESS     bool      0        wizard subprocess debug
- *  KEYHUNT_AUTH_TOKEN           string    –        internal wizard auth token
- */
+/* Environment variable overrides -- see docs/ENV_VARIABLES.md for full docs */
 static inline bool env_truthy_kh(const char *name) {
 	const char *v = getenv(name);
 	if (!v || !*v) return false;
@@ -218,14 +196,10 @@ static void append_adaptive_info(char *buffer, size_t bufferSize) {
 	}
 }
 
-/* WorkPool and g_work_pool now defined in util/work_queue.h and util/work_queue.cpp */
-
 struct checksumsha256	{
 	char data[32];
 	char backup[32];
 };
-
-/* struct bsgs_xvalue now defined in bsgs/bsgs_sort.h */
 
 struct address_value	{
 	uint8_t value[20];
@@ -236,8 +210,6 @@ struct tothread {
 	char *rs;   //range start
 	char *rpt;  //rng per thread
 };
-
-/* thread_args now defined in search/search_common.h */
 
 struct bPload	{
 	uint32_t threadid;
@@ -318,19 +290,11 @@ bool acquire_base_key(Int &key);
 
 void sleep_ms(int milliseconds);
 
-/* bsgs_sort, bsgs_myheapsort, bsgs_insertionsort, bsgs_introsort, bsgs_swap,
-   bsgs_heapify, bsgs_partition, and bsgs_searchbinary now declared in bsgs/bsgs_sort.h */
-
-/* bsgs_secondcheck, bsgs_thirdcheck now take bsgs_context_t* parameter
- * and are declared in search/search_common.h and search/search_context.h */
-
 /* Vanity functions (defined in search/search_vanity.cpp) */
 bool vanityrmdmatch(unsigned char *rmdhash);
 void writevanitykey(bool compress,Int *key, keyhunt_config_t *config);
 int addvanity(char *target);
 int minimum_same_bytes(unsigned char* A,unsigned char* B, int length);
-
-/* writekey, writekeyeth, checkpointer declared in io/io.h */
 
 /* File-scope pointer to keyhunt_config_t, set by main() before any GPU launch.
  * Used by gpu_dispatch_found_callback to pass config to writekey().
@@ -340,14 +304,7 @@ keyhunt_config_t *g_kh_config_ptr = nullptr;
 /* GPU functions extracted to src/gpu/gpu_dispatch.cpp (Phase 4, Plan 05).
  * gpu_hybrid_args_t defined in gpu/gpu_dispatch.h. */
 
-/* readFileAddress, readFileVanity, forceReadFileAddress, forceReadFileAddressEth,
-   forceReadFileXPoint, processOneVanity, writeFileIfNeeded moved to io/io.cpp */
-
-/* calcualteindex now takes bsgs_context_t* parameter, declared in search/search_common.h */
-/* Thread entry points declared in search/search_common.h */
 /* BSGS loading threads (defined in search/search_bsgs_threads.cpp) */
-/* BSGS loading thread declarations (defined in search/search_bsgs_threads.cpp) */
-/* Use platform_thread_return_t and PLATFORM_THREAD_CALL for Windows compatibility */
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp);
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp);
 
@@ -367,7 +324,6 @@ platform_mutex_t write_random;
 platform_mutex_t bsgs_thread;
 platform_mutex_t *bPload_mutex = NULL;
 
-// Thread runtime state (mirrored to runtime_state_t; globals remain until Phase 4)
 uint64_t FINISHED_THREADS_COUNTER = 0;
 uint64_t FINISHED_THREADS_BP = 0;
 uint64_t THREADCYCLES = 0;
@@ -377,7 +333,6 @@ uint64_t OLDFINISHED_ITEMS = 0;
 
 uint8_t byte_encode_crypto = 0x00;		/* Bitcoin  */
 
-// Vanity and bloom variables (mirrored to runtime_state_t; globals remain until Phase 4)
 int vanity_rmd_targets = 0;
 int vanity_rmd_total = 0;
 int *vanity_rmd_limits = NULL;
@@ -388,13 +343,10 @@ char **vanity_address_targets = NULL;
 struct bloom *vanity_bloom = NULL;
 bloom_extended_t bloom;
 
-/* thread_counter and thread_flag now defined in search/search_common.h */
-
 struct thread_counter *steps = NULL;
 struct thread_flag *ends = NULL;
 uint64_t N = 0;
 
-// Search configuration flags (mirrored to search_config_t; globals remain until Phase 4)
 int FLAGSKIPCHECKSUM = 0;
 int FLAGENDOMORPHISM = 0;
 int FLAGBLOOMMULTIPLIER = 1;
@@ -567,17 +519,7 @@ static int hybrid_get_gpu_range_percent_default(int cpu_threads) {
 	return 80;  // No GPU info available, default to 80%
 }
 
-/*
-BSGS Variables
-NOTE: Many BSGS runtime state variables are kept as module-scoped for now.
-They will be migrated to runtime_state_t in a future refactoring phase.
-
-Configuration variables (bsgs_m, bloom_bP_totalbytes, bsgs_aux, bsgs_point_number)
-have been migrated to bsgs_config_t and runtime_state_t.
-
-Runtime algorithm state (bPtable, bloom_bP*, addressTable, checksums, mutexes)
-remain as module-scoped until BSGS algorithm is fully encapsulated.
-*/
+/* BSGS runtime state (algorithm variables remain module-scoped) */
 std::atomic<int> *bsgs_found;
 std::vector<Point> OriginalPointsBSGS;
 bool *OriginalPointsBSGScompressed;
@@ -600,11 +542,6 @@ struct checksumsha256 *bloom_bPx3rd_checksums;
 platform_mutex_t *bloom_bP_mutex;
 platform_mutex_t *bloom_bPx2nd_mutex;
 platform_mutex_t *bloom_bPx3rd_mutex;
-
-// NOTE: BSGS config variables migrated to bsgs_config_t:
-// bloom_bP_totalbytes->bsgs.bloom_bp_bytes, bsgs_m->bsgs.m_value
-// bsgs_m2->bsgs.m2_value, bsgs_m3->bsgs.m3_value
-// bsgs_aux->bsgs.aux_value, bsgs_point_number->bsgs.point_number
 
 const char *str_limits_prefixs[7] = {"Mkeys/s","Gkeys/s","Tkeys/s","Pkeys/s","Ekeys/s","Zkeys/s","Ykeys/s"};
 const char *str_limits[7] = {"1000000","1000000000","1000000000000","1000000000000000","1000000000000000000","1000000000000000000000","1000000000000000000000000"};
@@ -1248,8 +1185,6 @@ bool acquire_base_key(Int &key) {
 	platform_mutex_unlock(&write_random);
 	return hasWork;
 }
-
-/* process_rmd160_batch_btc_simple moved to search/search_address.cpp */
 
 static bool gpu_selftest_hash160_fromX() {
 	const size_t kCount = 16;
@@ -3439,60 +3374,6 @@ int main(int argc, char **argv)	{
 	platform_mutex_destroy(&bsgs_thread);
 }
 
-/* pubkeytopubaddress_dst, rmd160toaddress_dst, pubkeytopubaddress
- * moved to crypto/address_util.cpp */
-
-/* cmp_hash20, load_u64_be, load_u32_be moved to sort/sort.cpp */
-
-bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
-	// Compute (a - b) if it fits in uint64_t. Return false otherwise.
-	// Assumes Int represents non-negative values here.
-	if (!out) return false;
-	uint64_t d0 = a.bits64[0] - b.bits64[0];
-	uint64_t borrow = (a.bits64[0] < b.bits64[0]) ? 1ULL : 0ULL;
-	for (int i = 1; i < NB64BLOCK; i++) {
-		const uint64_t ai = a.bits64[i];
-		const uint64_t bi = b.bits64[i];
-		const uint64_t bi_borrow = bi + borrow;
-		const uint64_t di = ai - bi_borrow;
-		if (di != 0) return false;
-		borrow = (ai < bi_borrow) ? 1ULL : 0ULL;
-	}
-	if (borrow) return false;
-	*out = d0;
-	return true;
-}
-
-/* searchbinary moved to sort/sort.cpp */
-
-/* thread_process_minikeys moved to search/search_minikeys.cpp */
-
-/* thread_process moved to search/search_address.cpp */
-
-/* thread_process_vanity moved to search/search_vanity.cpp */
-
-
-/* Sorting functions (_swap, _sort, _introsort, _insertionsort, _partition,
- * _heapify, _myheapsort) moved to sort/sort.cpp */
-
-/* ============================================================================
- * BSGS Sorting and Searching Functions
- * ============================================================================
- * These functions have been migrated to src/bsgs/bsgs_sort.cpp
- * Implementations removed to avoid duplicate symbols during linking
- * See bsgs/bsgs_sort.h for function declarations
- * ============================================================================ */
-
-/* thread_process_bsgs, thread_process_bsgs_random, thread_process_bsgs_dance,
- * thread_process_bsgs_backward, thread_process_bsgs_both,
- * thread_bPload, thread_bPload_2blooms
- * moved to search/search_bsgs_threads.cpp */
-
-/* bsgs_secondcheck and bsgs_thirdcheck definitions moved to search/search_bsgs.cpp */
-
-/* sleep_ms now defined in util/thread_util.cpp */
-
-
 void init_generator()	{
 	Point G = secp->ComputePublicKey(&stride);
 	Point g;
@@ -3507,12 +3388,6 @@ void init_generator()	{
 	}
 	_2Gn = secp->DoubleDirect(Gn[CPU_GRP_SIZE / 2 - 1]);
 }
-
-/* set_minikey, increment_minikey_index, increment_minikey_N
- * moved to search/search_minikeys.cpp */
-
-/* BUFFMINIKEY, sha256sse_22, BUFFMINIKEYCHECK, sha256sse_23
- * moved to crypto/address_util.cpp */
 
 void menu() {
 	printf("\n");
@@ -3597,22 +3472,16 @@ void menu() {
 }
 
 
-/* vanityrmdmatch, writevanitykey, addvanity, minimum_same_bytes moved to search/search_vanity.cpp */
-
-
-/* GPU functions extracted to src/gpu/gpu_dispatch.cpp (Phase 4, Plan 05) */
-
-/* checkpointer moved to io/io.cpp */
-
-/* writekey, writekeyeth, processOneVanity moved to io/io.cpp */
-
-/* isBase58, isValidBase58String moved to crypto/address_util.cpp */
-
-/* readFileVanity moved to io/io.cpp */
-
-/* readFileAddress, forceReadFileAddress, forceReadFileAddressEth,
-   forceReadFileXPoint, writeFileIfNeeded moved to io/io.cpp */
-
-/* initBloomFilter, initBloomFilterExt moved to crypto/bloom_init.cpp */
-
-/* calcualteindex definition moved to search/search_bsgs.cpp */
+/* Functions extracted to other modules:
+ * - GPU dispatch functions -> src/gpu/gpu_dispatch.cpp (Phase 4, Plan 05)
+ * - writekey, writekeyeth, checkpointer -> io/io.cpp
+ * - readFileAddress, readFileVanity -> io/io.cpp
+ * - vanityrmdmatch, addvanity -> search/search_vanity.cpp
+ * - sort functions -> sort/sort.cpp
+ * - BSGS sort/search -> bsgs/bsgs_sort.cpp
+ * - BSGS threads -> search/search_bsgs_threads.cpp
+ * - address_util functions -> crypto/address_util.cpp
+ * - bloom init -> crypto/bloom_init.cpp
+ * - calcualteindex -> search/search_bsgs.cpp
+ * - sleep_ms -> util/thread_util.cpp
+ */
