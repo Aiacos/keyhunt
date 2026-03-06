@@ -1028,4 +1028,55 @@ uint64_t int_to_uint64_safe(Int* value, bool* overflow) {
     return value->GetInt64();
 }
 
+/* ============================================================================
+ * kh_config_bridge_from_globals - Copy legacy globals into config struct
+ *
+ * Extracted from keyhunt.cpp main() (Phase 4, Plan 10) to reduce monolith.
+ * ============================================================================ */
+
+#include "../globals.h"
+
+static key_format_t bridge_flagsearch_to_key_format(int flagsearch) {
+    switch (flagsearch) {
+        case 0: return KEYTYPE_UNCOMPRESSED;
+        case 1: return KEYTYPE_COMPRESSED;
+        case 2: return KEYTYPE_BOTH;
+        default: return KEYTYPE_BOTH;
+    }
+}
+
+void kh_config_bridge_from_globals(keyhunt_config_t *cfg, const char *fileName) {
+    cfg->search.mode = (search_mode_t)FLAGMODE;
+    cfg->search.key_format = bridge_flagsearch_to_key_format(FLAGSEARCH);
+    cfg->search.crypto_type = (crypto_type_t)FLAGCRYPTO;
+    cfg->search.endomorphism = (FLAGENDOMORPHISM != 0);
+    cfg->search.random_mode = (FLAGRANDOM != 0);
+    cfg->search.quiet_mode = (FLAGQUIET != 0);
+    cfg->search.debug_mode = (FLAGDEBUG != 0);
+    cfg->search.matrix_mode = (FLAGMATRIX != 0);
+    cfg->search.skip_checksum = (FLAGSKIPCHECKSUM != 0);
+    if (fileName != NULL) snprintf(cfg->search.target_file, sizeof(cfg->search.target_file), "%s", fileName);
+    cfg->bsgs.k_factor = KFACTOR;
+    cfg->bsgs.bsgs_mode = (bsgs_mode_t)FLAGBSGSMODE;
+    cfg->bsgs.save_progress = (FLAGSAVEREADFILE != 0);
+    cfg->runtime.num_threads = NTHREADS;
+    cfg->runtime.secp = (void *)secp;
+    cfg->runtime.max_address_length = MAXLENGTHADDRESS;
+    cfg->runtime.sequential_max = N_SEQUENTIAL_MAX;
+    cfg->runtime.endo_lambda = (void *)&lambda;
+    cfg->runtime.endo_lambda2 = (void *)&lambda2;
+    cfg->runtime.endo_beta = (void *)&beta;
+    cfg->runtime.endo_beta2 = (void *)&beta2;
+    cfg->runtime.range_start = (void *)&n_range_start;
+    cfg->runtime.range_end = (void *)&n_range_end;
+    cfg->runtime.stride = (void *)&stride;
+    cfg->runtime.generator_points = (void *)&Gn;
+    cfg->runtime.generator_point_2 = (void *)&_2Gn;
+    cfg->runtime.minikey_coinbuffer = (void *)Ccoinbuffer;
+    cfg->runtime.minikey_raw_base = (void *)raw_baseminikey;
+    cfg->runtime.minikey_n = (void *)minikeyN;
+    cfg->runtime.minikey_n_limit = minikey_n_limit;
+    kh_config_validate(cfg);
+}
+
 #endif /* __cplusplus */

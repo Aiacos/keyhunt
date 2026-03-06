@@ -1271,3 +1271,46 @@ void parse_cli_args(int argc, char **argv) {
         FLAGCRYPTO = CRYPTO_BTC; output_success("Setting search for btc rmd160\n");
     }
 }
+
+/* ============================================================================
+ * setup_search_range - Resolve range start/end from CLI flags
+ *
+ * Extracted from keyhunt.cpp main() (Phase 4, Plan 10) to reduce monolith.
+ * Sets n_range_start, n_range_end, n_range_diff from FLAGRANGE/FLAGBITRANGE.
+ * ============================================================================ */
+
+void setup_search_range(void) {
+    extern Secp256K1 *secp;
+
+    if(FLAGRANGE) {
+        n_range_start.SetBase16(range_start);
+        n_range_end.SetBase16(range_end);
+        if(n_range_start.IsZero()) n_range_start.AddOne();
+        if(n_range_end.IsZero()) { output_error("End range can't be zero\nFallback to random mode!\n"); FLAGRANGE = 0; }
+        if(FLAGRANGE) {
+            if(n_range_start.IsGreater(&n_range_end)) {
+                output_warning("Opps, start range can't be great than end range. Swapping them\n");
+                n_range_aux.Set(&n_range_start); n_range_start.Set(&n_range_end); n_range_end.Set(&n_range_aux);
+                if(n_range_start.IsZero()) n_range_start.AddOne();
+            }
+            if(n_range_start.IsLower(&secp->order) && n_range_end.IsLowerOrEqual(&secp->order)) {
+                if (n_range_end.IsLower(&secp->order)) n_range_end.AddOne();
+                else n_range_end.Set(&secp->order);
+                n_range_diff.Set(&n_range_end); n_range_diff.Sub(&n_range_start);
+            } else { output_error("Start and End range can't be great than N\nFallback to random mode!\n"); FLAGRANGE = 0; }
+        }
+    }
+    if(FLAGMODE != MODE_BSGS && FLAGMODE != MODE_MINIKEYS) {
+        if(DEBUGCOUNT == 0) DEBUGCOUNT = 1024;
+        BSGS_N.SetInt32(DEBUGCOUNT);
+        if(FLAGRANGE == 0 && FLAGBITRANGE == 0) {
+            n_range_start.SetInt32(1); n_range_end.Set(&secp->order);
+            n_range_diff.Set(&n_range_end); n_range_diff.Sub(&n_range_start);
+        } else {
+            if(FLAGBITRANGE) {
+                n_range_start.SetBase16(bit_range_str_min); n_range_end.SetBase16(bit_range_str_max);
+                n_range_diff.Set(&n_range_end); n_range_diff.Sub(&n_range_start);
+            } else { if(FLAGRANGE == 0) output_warning("WTF!\n"); }
+        }
+    }
+}

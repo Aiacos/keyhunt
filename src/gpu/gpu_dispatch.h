@@ -21,6 +21,7 @@
 #include "../config/config.h"
 #include "../platform/platform.h"
 #include "../secp256k1/Int.h"
+#include "gpu_multi_worker.h"
 
 /* Thread calling convention (matches search/search_common.h) */
 #ifndef PLATFORM_THREAD_CALL
@@ -125,5 +126,41 @@ bool gpu_selftest_hash160_fromX(void);
  * Returns percentage (50-99) of range to assign to GPU.
  */
 int hybrid_get_gpu_range_percent_default(int cpu_threads);
+
+/* ============================================================================
+ * High-level GPU orchestration functions (extracted from keyhunt.cpp main())
+ * ============================================================================ */
+
+/*
+ * Resolve GPU mode flags based on availability, mode support, and user request.
+ * Modifies FLAGGPU, FLAGGPU_FULL, FLAGGPU_HYBRID, NTHREADS globals.
+ * Must be called after CLI parsing and sysinfo detection.
+ */
+void resolve_gpu_mode(void);
+
+/*
+ * Run GPU full search mode (multi-GPU or single-GPU).
+ * Handles stats thread, multi-GPU scheduler, and GPU lifecycle.
+ *
+ * @param config       Pointer to keyhunt_config_t
+ * @param multi_gpu_workers  Pointer to g_multi_gpu_workers (may be set by this function)
+ * Returns: 0 on success (caller should exit), -1 on failure (fall back to CPU)
+ */
+int run_gpu_full_search_mode(keyhunt_config_t *config, gpu_multi_worker_t **multi_gpu_workers);
+
+/*
+ * Set up GPU hybrid mode (work-stealing or static split).
+ * Starts GPU thread and optionally adjusts CPU range.
+ *
+ * @param config              Pointer to keyhunt_config_t
+ * @param gpu_thread_id       Output: thread handle for GPU thread
+ * @param gpu_hybrid_args     Output: populated hybrid args struct
+ * @param gpu_hybrid_started  Output: 1 if GPU thread was started, 0 otherwise
+ * Returns: 0 on success, -1 on failure
+ */
+int run_gpu_hybrid_setup(keyhunt_config_t *config,
+                         platform_thread_t *gpu_thread_id,
+                         gpu_hybrid_args_t *gpu_hybrid_args,
+                         int *gpu_hybrid_started);
 
 #endif /* GPU_DISPATCH_H */

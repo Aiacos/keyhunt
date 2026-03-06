@@ -172,6 +172,15 @@ int cli_populate_config(const cli_args_t *args, void *cfg);
  */
 void parse_cli_args(int argc, char **argv);
 
+/*
+ * setup_search_range - Resolve range start/end from CLI flags
+ *
+ * Processes FLAGRANGE, FLAGBITRANGE, and FLAGMODE to set:
+ *   n_range_start, n_range_end, n_range_diff, n_range_aux globals.
+ * Must be called after parse_cli_args() and before file loading.
+ */
+void setup_search_range(void);
+
 // C++ only functions (requires Int class from secp256k1)
 #include "secp256k1/Int.h"
 

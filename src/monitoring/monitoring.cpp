@@ -829,3 +829,42 @@ void run_monitoring_loop(monitoring_params_t *params) {
         }
     } while (continue_flag);
 }
+
+/* ============================================================================
+ * init_monitoring_params - Populate monitoring_params_t from globals + locals
+ *
+ * Extracted from keyhunt.cpp main() (Phase 4, Plan 10) to reduce monolith.
+ * ============================================================================ */
+
+void init_monitoring_params(monitoring_params_t *params,
+                            keyhunt_config_t *config,
+                            int gpu_hybrid_started,
+                            platform_thread_t gpu_thread_id,
+                            void *gpu_hybrid_args,
+                            void *progress_state,
+                            bool progress_enabled,
+                            void *multi_gpu_workers) {
+    memset(params, 0, sizeof(*params));
+    params->steps = steps;
+    params->ends = ends;
+    params->num_threads = NTHREADS;
+    params->flagmode = FLAGMODE;
+    params->flagmatrix = FLAGMATRIX;
+    params->flagquiet = FLAGQUIET;
+    params->flagvisual = FLAGVISUAL;
+    params->flaggpu_hybrid = FLAGGPU_HYBRID.load(std::memory_order_relaxed);
+    params->flaggpu_full = FLAGGPU_FULL;
+    params->flagrandom = FLAGRANDOM;
+    params->flagendomorphism = FLAGENDOMORPHISM;
+    params->gpu_hybrid_started = gpu_hybrid_started;
+    params->gpu_thread_id = gpu_thread_id;
+    params->gpu_hybrid_args = gpu_hybrid_args;
+    params->output_seconds = &OUTPUTSECONDS;
+    params->thread_output = &THREADOUTPUT;
+    params->bsgs_mutex = &bsgs_thread;
+    params->config = config;
+    params->progress_state = progress_state;
+    params->progress_enabled = progress_enabled;
+    params->sysinfo = (void *)&g_sysinfo;
+    params->multi_gpu_workers = multi_gpu_workers;
+}

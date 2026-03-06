@@ -515,6 +515,20 @@ uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *b
  */
 void kh_config_apply_autotune(keyhunt_config_t *cfg);
 
+#ifdef __cplusplus
+/**
+ * Build config bridge from legacy globals into keyhunt_config_t.
+ *
+ * Copies FLAGMODE, FLAGSEARCH, FLAGCRYPTO, etc. and runtime pointers
+ * (secp, range, stride, endomorphism, minikey, generator) into config.
+ * Must be called after parse_cli_args() and setup_search_range().
+ *
+ * @param cfg     Pointer to config to populate
+ * @param fileName Current target file name (g_fileName)
+ */
+void kh_config_bridge_from_globals(keyhunt_config_t *cfg, const char *fileName);
+#endif
+
 /**
  * Free any dynamically allocated resources in runtime state
  *

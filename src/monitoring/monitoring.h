@@ -109,6 +109,30 @@ typedef struct {
 } monitoring_params_t;
 
 /*
+ * Initialize monitoring_params_t from current global state.
+ *
+ * Populates all fields (steps, ends, flags, GPU state, config, progress).
+ * Caller provides the local variables that aren't available from globals.
+ *
+ * @param params             Output struct to populate
+ * @param config             Pointer to keyhunt_config_t
+ * @param gpu_hybrid_started 1 if GPU hybrid thread was started
+ * @param gpu_thread_id      GPU thread handle
+ * @param gpu_hybrid_args    Pointer to gpu_hybrid_args_t
+ * @param progress_state     Pointer to progress_state_t
+ * @param progress_enabled   Whether progress tracking is active
+ * @param multi_gpu_workers  Pointer to gpu_multi_worker_t (may be NULL)
+ */
+void init_monitoring_params(monitoring_params_t *params,
+                            keyhunt_config_t *config,
+                            int gpu_hybrid_started,
+                            platform_thread_t gpu_thread_id,
+                            void *gpu_hybrid_args,
+                            void *progress_state,
+                            bool progress_enabled,
+                            void *multi_gpu_workers);
+
+/*
  * Run the main monitoring loop.
  *
  * Sleeps 1s per iteration, checks thread completion, prints status at

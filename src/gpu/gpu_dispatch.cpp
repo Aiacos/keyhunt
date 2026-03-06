@@ -25,8 +25,14 @@
 #include <inttypes.h>
 #include <math.h>
 
+#ifndef _WIN64
+#include <signal.h>
+#endif
+
 #include "../error/enhanced_error.h"
 #include "../secp256k1/SECP256k1.h"
+#include "../monitoring/monitoring.h"
+#include "../core/sysinfo.h"
 
 /* ============================================================================
  * File-local state
@@ -332,6 +338,300 @@ bool gpu_selftest_hash160_fromX() {
  * ============================================================================ */
 
 /* g_gpu_backend_info declared in globals.h */
+
+/* ============================================================================
+ * GPU multi-worker state (moved from keyhunt.cpp)
+ * ============================================================================ */
+
+static gpu_multi_worker_t *g_gpu_multi_workers_local = NULL;
+static volatile sig_atomic_t g_sigint_received_local = 0;
+
+#ifndef _WIN64
+static void gpu_sigint_handler(int sig) {
+    (void)sig;
+    g_sigint_received_local = 1;
+    g_gpu_should_stop.store(1, std::memory_order_release);
+}
+#endif
+
+static void gpu_check_sigint_cleanup(void) {
+    if (g_sigint_received_local && g_gpu_multi_workers_local != NULL) {
+        output_info("\nReceived Ctrl+C, stopping multi-GPU workers...\n");
+        gpu_worker_stop(g_gpu_multi_workers_local, 10000);
+        g_gpu_multi_workers_local = NULL;
+    }
+}
+
+/* ============================================================================
+ * resolve_gpu_mode - GPU mode resolution (extracted from main())
+ * ============================================================================ */
+
+void resolve_gpu_mode(void) {
+    int gpu_available = gpu_backend_available();
+    const bool wantCompressed = (FLAGSEARCH == SEARCH_COMPRESS || FLAGSEARCH == SEARCH_BOTH);
+    const bool wantUncompressed = (FLAGSEARCH == SEARCH_UNCOMPRESS || FLAGSEARCH == SEARCH_BOTH);
+    const int mode_supports_gpu_full = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
+                    FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM && (wantCompressed || wantUncompressed);
+    const int mode_supports_gpu_hash = (FLAGMODE == MODE_RMD160 || FLAGMODE == MODE_ADDRESS) &&
+                    FLAGCRYPTO == CRYPTO_BTC && !FLAGENDOMORPHISM && wantCompressed && !wantUncompressed;
+
+    if (FLAGGPU != 0 || FLAGGPU_FULL != 0) {
+        if (gpu_available) {
+            int available_backends = gpu_enumerate_backends();
+            gpu_backend_type_t current_backend = gpu_backend_get_type();
+            output_success("GPU Backend: %s\n", gpu_backend_type_name(current_backend));
+            if (current_backend == GPU_BACKEND_TYPE_UNIFIED) {
+                output_info("  Total devices: %d across multiple vendors\n", g_gpu_backend_info.gpu_count);
+                if (available_backends & (1 << GPU_BACKEND_TYPE_CUDA)) output_info("  - CUDA backend available (NVIDIA GPUs)\n");
+                if (available_backends & (1 << GPU_BACKEND_TYPE_OPENCL)) output_info("  - OpenCL backend available (AMD/Intel GPUs)\n");
+                if (g_gpu_backend_info.name[0]) { output_info("  Primary device: %s", g_gpu_backend_info.name); if (g_gpu_backend_info.vendor[0]) output_info(" (%s)", g_gpu_backend_info.vendor); output_info("\n"); }
+                output_info("  Compute units: %d, VRAM: %lu MB\n", g_gpu_backend_info.multiprocessors, (unsigned long)g_gpu_backend_info.vram_mb);
+            } else if (current_backend == GPU_BACKEND_TYPE_CUDA) {
+                output_success("  CUDA device: %s (%d SMs, %lu MB VRAM)\n", g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "NVIDIA GPU", g_gpu_backend_info.multiprocessors, (unsigned long)g_gpu_backend_info.vram_mb);
+            } else if (current_backend == GPU_BACKEND_TYPE_OPENCL) {
+                output_success("  OpenCL device: %s", g_gpu_backend_info.name[0] ? g_gpu_backend_info.name : "GPU");
+                if (g_gpu_backend_info.vendor[0]) output_success(" (%s)", g_gpu_backend_info.vendor);
+                output_success("\n");
+                output_info("  Compute units: %d, VRAM: %lu MB\n", g_gpu_backend_info.multiprocessors, (unsigned long)g_gpu_backend_info.vram_mb);
+            }
+        } else {
+            output_warning("No GPU devices detected\n");
+#if defined(HAVE_CUDA_BACKEND) && defined(HAVE_OPENCL_BACKEND)
+            output_info("Build supports: CUDA (NVIDIA) and OpenCL (AMD/Intel)\n");
+#elif defined(HAVE_CUDA_BACKEND)
+            output_info("Build supports: CUDA only (NVIDIA GPUs)\n");
+#elif defined(HAVE_OPENCL_BACKEND)
+            output_info("Build supports: OpenCL only (AMD/Intel GPUs)\n");
+#else
+            output_info("GPU backends not compiled - rebuild with CUDA or OpenCL support\n");
+#endif
+        }
+    }
+
+    if (FLAGGPU == -1 || FLAGGPU_FULL == -1) {
+        if (gpu_available && mode_supports_gpu_full) {
+            FLAGGPU = 1; FLAGGPU_FULL = 1;
+            output_success("GPU auto: using full mode (ECC + hash160 + matching on GPU)\n");
+        } else {
+            FLAGGPU = 0; FLAGGPU_FULL = 0;
+            if (!gpu_available) output_info("GPU auto: falling back to CPU (no GPU available)\n");
+            else if (!mode_supports_gpu_full) output_info("GPU auto: falling back to CPU (mode not supported)\n");
+        }
+    }
+
+    if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !gpu_available) {
+        output_warning("GPU requested but not available, falling back to CPU\n");
+        FLAGGPU = 0; FLAGGPU_FULL = 0;
+    }
+    if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !stride.IsOne()) {
+        output_warning("GPU mode requires stride=1 (-I 1). Falling back to CPU.\n");
+        FLAGGPU = 0; FLAGGPU_FULL = 0;
+        FLAGGPU_HYBRID.store(0, std::memory_order_relaxed);
+    }
+    if (FLAGGPU_FULL == 1 && !mode_supports_gpu_full) {
+        output_warning("GPU FULL not supported for this mode/options, using CPU\n");
+        FLAGGPU = 0; FLAGGPU_FULL = 0;
+    }
+    if (FLAGGPU == 1 && FLAGGPU_FULL == 0 && !mode_supports_gpu_hash) {
+        if (wantUncompressed && gpu_available && mode_supports_gpu_full) {
+            output_info("GPU HASH mode does not support uncompressed; upgrading to GPU FULL\n");
+            FLAGGPU_FULL = 1;
+        } else {
+            output_warning("GPU HASH not supported for this mode/options, using CPU\n");
+            FLAGGPU = 0; FLAGGPU_FULL = 0;
+        }
+    }
+    if (FLAGGPU_FULL == 1) output_success("GPU mode: FULL (secp256k1 + SHA256 + RIPEMD160 + matching on GPU)\n");
+    else if (FLAGGPU == 1) output_success("GPU mode: HASH (CPU generates points, GPU computes hash160)\n");
+
+    if (FLAGGPU == 1 && getenv("KEYHUNT_GPU_SELFTEST")) {
+        if (!gpu_selftest_hash160_fromX()) {
+            output_warning("Disabling GPU due to failed self-test\n");
+            FLAGGPU = 0; FLAGGPU_FULL = 0;
+        } else { printf("[OK] GPU self-test passed\n"); }
+    }
+    if ((FLAGGPU == 1 || FLAGGPU_FULL == 1) && !FLAGTHREADS) {
+        int gpu_threads = 0;
+        if (FLAGGPU_HYBRID) {
+            gpu_threads = g_sysinfo.cpu_logical_cores > 0 ? g_sysinfo.cpu_logical_cores : g_sysinfo.recommended_threads;
+            if (gpu_threads > 1) gpu_threads -= 1;
+        } else {
+            gpu_threads = g_sysinfo.cpu_physical_cores > 0 ? g_sysinfo.cpu_physical_cores : g_sysinfo.recommended_threads;
+        }
+        if (gpu_threads > 0 && gpu_threads < NTHREADS) {
+            NTHREADS = gpu_threads;
+            output_info("GPU active: using %d CPU threads\n", NTHREADS);
+        }
+    }
+}
+
+/* ============================================================================
+ * run_gpu_full_search_mode - GPU full search orchestration (extracted from main())
+ * ============================================================================ */
+
+int run_gpu_full_search_mode(keyhunt_config_t *config, gpu_multi_worker_t **multi_gpu_workers) {
+    output_success("Running GPU full search mode...\n");
+    g_gpu_keys_checked.store(0, std::memory_order_release);
+    g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+    g_gpu_should_stop.store(0, std::memory_order_release);
+
+#ifndef _WIN64
+    platform_thread_t gpu_stats_tid;
+    int gpu_stats_started = 0;
+    std::atomic<int> gpu_stats_stop{0};
+    gpu_full_stats_args_t gpu_stats_args;
+    memset(&gpu_stats_args, 0, sizeof(gpu_stats_args));
+    if (OUTPUTSECONDS.IsGreater(&ZERO)) {
+        gpu_stats_args.period_seconds = OUTPUTSECONDS.GetInt32();
+        gpu_stats_args.stop_flag = &gpu_stats_stop;
+        if (gpu_stats_args.period_seconds > 0) {
+            if (platform_thread_create(&gpu_stats_tid, gpu_full_stats_thread, &gpu_stats_args) == 0) gpu_stats_started = 1;
+        }
+    }
+#endif
+    int gpu_result = -1;
+    if (config->gpu.multi_gpu_enabled && config->gpu.device_count > 1) {
+        output_success("Running multi-GPU search with %d devices...\n", config->gpu.device_count);
+        multi_gpu_config_t sched_config;
+        sched_config.device_count = config->gpu.device_count;
+        for (int gi = 0; gi < config->gpu.device_count; gi++) sched_config.device_ids[gi] = config->gpu.device_ids[gi];
+        sched_config.adaptive_balancing = true;
+        sched_config.rebalance_interval_keys = 100000000;
+        multi_gpu_scheduler_t *scheduler = multi_gpu_init(&sched_config);
+        if (!scheduler) { output_error("Failed to initialize multi-GPU scheduler\n"); gpu_result = -1; }
+        else {
+            uint64_t rs = n_range_start.GetInt64(); uint64_t re = n_range_end.GetInt64();
+            multi_gpu_set_range(scheduler, rs, re);
+            worker_config_t worker_cfg = gpu_worker_default_config(scheduler, config->gpu.device_count);
+            for (int gi = 0; gi < config->gpu.device_count; gi++) worker_cfg.device_ids[gi] = config->gpu.device_ids[gi];
+            worker_cfg.batch_size = THREADBPWORKLOAD;
+            gpu_multi_worker_t *workers = gpu_worker_init(&worker_cfg);
+            if (!workers) { output_error("Failed to initialize multi-GPU workers\n"); multi_gpu_shutdown(scheduler); gpu_result = -1; }
+            else {
+                g_gpu_multi_workers_local = workers;
+                if (multi_gpu_workers) *multi_gpu_workers = workers;
+#ifndef _WIN64
+                struct sigaction sa; memset(&sa, 0, sizeof(sa)); sa.sa_handler = gpu_sigint_handler; sigemptyset(&sa.sa_mask); sa.sa_flags = 0; sigaction(SIGINT, &sa, NULL);
+#endif
+                if (!gpu_worker_start(workers)) { output_error("Failed to start multi-GPU workers\n"); g_gpu_multi_workers_local = NULL; if (multi_gpu_workers) *multi_gpu_workers = NULL; gpu_worker_shutdown(workers); multi_gpu_shutdown(scheduler); gpu_result = -1; }
+                else {
+                    while (!gpu_worker_has_result(workers)) { sleep_ms(1000); if (g_gpu_should_stop.load(std::memory_order_acquire)) { gpu_check_sigint_cleanup(); break; } }
+                    gpu_worker_stop(workers, 10000);
+                    gpu_result = gpu_worker_has_result(workers) ? 0 : -1;
+                    gpu_worker_shutdown(workers); g_gpu_multi_workers_local = NULL; if (multi_gpu_workers) *multi_gpu_workers = NULL; multi_gpu_shutdown(scheduler);
+                }
+            }
+        }
+    } else {
+        if (config->gpu.multi_gpu_enabled && config->gpu.device_count == 1) output_info("Multi-GPU enabled but only 1 device specified, using single GPU mode\n");
+        gpu_result = gpu_dispatch_run_full_search(config, &n_range_start, &n_range_end, &stride, N);
+    }
+#ifndef _WIN64
+    gpu_stats_stop.store(1, std::memory_order_release);
+    if (gpu_stats_started) platform_thread_join(gpu_stats_tid, NULL);
+#endif
+    if (gpu_result >= 0) {
+        output_success("GPU search finished. Keys found: %d\n", gpu_result);
+        output_success("Total keys checked: %" PRIu64 "\n", g_gpu_keys_checked.load(std::memory_order_acquire));
+#ifndef _WIN64
+        extern void shutdown_work_queue();
+        shutdown_work_queue();
+#endif
+        gpu_backend_shutdown();
+        output_success("Done!\n");
+        return 0;
+    }
+    output_warning("GPU search failed, falling back to CPU threads\n");
+    FLAGGPU_FULL = 0;
+    return -1;
+}
+
+/* ============================================================================
+ * run_gpu_hybrid_setup - GPU hybrid mode setup (extracted from main())
+ * ============================================================================ */
+
+/* Forward declaration for maybe_adjust_cpu_sequential_max (defined in keyhunt.cpp) */
+extern void maybe_adjust_cpu_sequential_max(size_t threadCount, Int &cpuStart, Int &rangeEnd,
+                                            const char *env_override, const char *tag);
+
+int run_gpu_hybrid_setup(keyhunt_config_t *config,
+                         platform_thread_t *gpu_thread_id,
+                         gpu_hybrid_args_t *gpu_hybrid_args,
+                         int *gpu_hybrid_started) {
+    (void)config;
+    if (!gpu_backend_available()) {
+        output_warning("GPU not available for hybrid mode, falling back to CPU-only\n");
+        FLAGGPU_HYBRID.store(0, std::memory_order_release);
+        return -1;
+    }
+
+    {
+        const char *env = getenv("KEYHUNT_HYBRID_GPU_PERCENT");
+        if (env && *env) { int v = atoi(env); if (v >= 1 && v <= 99) g_gpu_range_percent = v; }
+        if (g_gpu_range_percent <= 0) g_gpu_range_percent = hybrid_get_gpu_range_percent_default(NTHREADS);
+        if (g_gpu_range_percent <= 0) g_gpu_range_percent = 80;
+        output_info("HYBRID: split GPU %d%% / CPU %d%%\n", g_gpu_range_percent, 100 - g_gpu_range_percent);
+    }
+
+    float initial_cpu_ratio = 1.0f - (g_gpu_range_percent / 100.0f);
+    adaptive_init(initial_cpu_ratio, n_range_start.GetInt64(), n_range_end.GetInt64());
+
+    const char *ws = getenv("KEYHUNT_HYBRID_WORK_STEAL");
+    const bool want_work_steal = (ws && *ws && atoi(ws) != 0);
+    const bool can_work_steal = want_work_steal && !FLAGRANDOM && stride.IsOne();
+    if (want_work_steal && !can_work_steal) output_warning("HYBRID: work-stealing requires non-random mode and stride=1; using static split\n");
+
+    if (can_work_steal) {
+        uint64_t block_size = 0x100000000ULL;
+        const char *bs = getenv("KEYHUNT_HYBRID_BLOCK_SIZE");
+        if (bs && *bs) { if (bs[0] == '0' && (bs[1] == 'x' || bs[1] == 'X')) block_size = strtoull(bs + 2, NULL, 16); else block_size = strtoull(bs, NULL, 10); }
+        if (block_size < 1024ULL) block_size = 1024ULL;
+        block_size = (block_size / 1024ULL) * 1024ULL;
+        output_success("Running GPU+CPU hybrid mode (work-stealing)...\n");
+        g_work_pool.init(&n_range_start, &n_range_end, block_size);
+        gpu_hybrid_args->start_key.Set(&n_range_start); gpu_hybrid_args->end_key.Set(&n_range_end);
+        gpu_hybrid_args->stride.Set(&stride); gpu_hybrid_args->target_count = N;
+        gpu_hybrid_args->result.store(0, std::memory_order_release);
+        gpu_hybrid_args->completed.store(0, std::memory_order_release);
+        g_gpu_keys_checked.store(0, std::memory_order_release);
+        g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+        g_gpu_should_stop.store(0, std::memory_order_release);
+        int err = platform_thread_create(gpu_thread_id, gpu_dispatch_hybrid_thread, gpu_hybrid_args);
+        if (err != 0) { output_warning("Failed to start GPU thread\n"); g_work_pool.disable(); FLAGGPU_HYBRID.store(0, std::memory_order_release); return -1; }
+        *gpu_hybrid_started = 1;
+        output_success("GPU thread started, CPU uses normal fast algorithm\n");
+    } else {
+        output_success("Running GPU+CPU hybrid mode (static split)...\n");
+        Int range_diff, gpu_portion, gpu_range_end, cpu_range_start;
+        range_diff.Set(&n_range_end); range_diff.Sub(&n_range_start);
+        gpu_portion.Set(&range_diff); gpu_portion.Mult(g_gpu_range_percent);
+        Int divisor; divisor.SetInt32(100); gpu_portion.Div(&divisor);
+        gpu_range_end.Set(&n_range_start); gpu_range_end.Add(&gpu_portion);
+        cpu_range_start.Set(&gpu_range_end);
+        output_success("GPU handles %d%% of range, CPU handles %d%%\n", g_gpu_range_percent, 100 - g_gpu_range_percent);
+
+        char *hextemp;
+        hextemp = n_range_start.GetBase16(); output_success("GPU range: 0x%s", hextemp); free(hextemp);
+        { Int gpu_end_inclusive; gpu_end_inclusive.Set(&gpu_range_end); if (gpu_end_inclusive.IsGreater(&n_range_start)) gpu_end_inclusive.SubOne(); hextemp = gpu_end_inclusive.GetBase16(); printf(" - 0x%s\n", hextemp); free(hextemp); }
+        hextemp = cpu_range_start.GetBase16(); output_success("CPU range: 0x%s", hextemp); free(hextemp);
+        { Int cpu_end_inclusive; cpu_end_inclusive.Set(&n_range_end); if (cpu_end_inclusive.IsGreater(&cpu_range_start)) cpu_end_inclusive.SubOne(); hextemp = cpu_end_inclusive.GetBase16(); printf(" - 0x%s\n", hextemp); free(hextemp); }
+
+        gpu_hybrid_args->start_key.Set(&n_range_start); gpu_hybrid_args->end_key.Set(&gpu_range_end);
+        gpu_hybrid_args->stride.Set(&stride); gpu_hybrid_args->target_count = N;
+        gpu_hybrid_args->result.store(0, std::memory_order_release);
+        gpu_hybrid_args->completed.store(0, std::memory_order_release);
+        g_gpu_keys_checked.store(0, std::memory_order_release);
+        g_gpu_keys_checked_cur.store(0, std::memory_order_release);
+        g_gpu_should_stop.store(0, std::memory_order_release);
+        int err = platform_thread_create(gpu_thread_id, gpu_dispatch_hybrid_thread, gpu_hybrid_args);
+        if (err != 0) { output_warning("Failed to start GPU thread\n"); FLAGGPU_HYBRID.store(0, std::memory_order_release); return -1; }
+        *gpu_hybrid_started = 1;
+        n_range_start.Set(&cpu_range_start);
+        maybe_adjust_cpu_sequential_max((size_t)NTHREADS, cpu_range_start, n_range_end, "KEYHUNT_HYBRID_CPU_N", "HYBRID");
+        output_success("GPU thread started, CPU uses normal fast algorithm\n");
+    }
+    return 0;
+}
 
 int hybrid_get_gpu_range_percent_default(int cpu_threads) {
     if (cpu_threads <= 0) return 80;
