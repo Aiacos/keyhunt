@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: in-progress
 stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-03-06T07:02:43Z"
-last_activity: "2026-03-06 -- Plan 04-01 complete: io.cpp config-wired, utilities extracted to src/util/"
+last_updated: "2026-03-06T07:17:28Z"
+last_activity: "2026-03-06 -- Plan 04-02 complete: mode dispatch table + ADDRESS/XPOINT/RMD160 extraction to src/modes/"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 22
-  completed_plans: 17
+  completed_plans: 18
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 4 of 6 (Monolith Decomposition)
-Plan: 1 of 6 in current phase -- COMPLETE
+Plan: 2 of 6 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-06 -- Plan 04-01 complete: io.cpp config-wired, utilities extracted to src/util/
+Last activity: 2026-03-06 -- Plan 04-02 complete: mode dispatch table + ADDRESS/XPOINT/RMD160 extraction to src/modes/
 
-Progress: [██████░░░░] 65% (17/26 estimated total plans)
+Progress: [███████░░░] 69% (18/26 estimated total plans)
 
 ## Performance Metrics
 
@@ -45,11 +45,11 @@ Progress: [██████░░░░] 65% (17/26 estimated total plans)
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 | 3 - Config Migration | 6/6 | ~76 min | ~13 min |
-| 4 - Monolith Decomposition | 1/6 | ~16 min | ~16 min |
+| 4 - Monolith Decomposition | 2/6 | ~27 min | ~14 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-04 (~25 min), 03-05 (~8 min), 03-06 (~5 min), 04-01 (~16 min)
-- Trend: First decomposition plan on track, utility extraction as expected
+- Last 5 plans: 03-05 (~8 min), 03-06 (~5 min), 04-01 (~16 min), 04-02 (~11 min)
+- Trend: Mode extraction faster than utility extraction; dispatch table pattern established
 
 *Updated after each plan completion*
 
@@ -124,6 +124,10 @@ Recent decisions affecting current work:
 - [04-01]: range_progress_start/end fields added to runtime_state_t for writekey range validation
 - [04-01]: acquire_base_key stays in keyhunt.cpp (deeply coupled to 8+ globals, future extraction target)
 - [04-01]: Reuse core/workpool.h for WorkPool struct; util/work_queue.h wraps include + extern g_work_pool
+- [04-02]: Crypto defaults (BTC) stay in keyhunt.cpp before file reading since readFileAddress depends on FLAGCRYPTO
+- [04-02]: extern const required for C++ dispatch table entries (const at file scope has internal linkage)
+- [04-02]: Mode init functions are stubs; extracted logic is thread creation (run function)
+- [04-02]: MINIKEYS/VANITY remain inline in keyhunt.cpp until future extraction plans
 
 ### Pending Todos
 
@@ -137,6 +141,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T07:02:43Z
-Stopped at: Completed 04-01-PLAN.md
-Resume file: .planning/phases/04-monolith-decomposition/04-02-PLAN.md
+Last session: 2026-03-06T07:17:28Z
+Stopped at: Completed 04-02-PLAN.md
+Resume file: .planning/phases/04-monolith-decomposition/04-03-PLAN.md
