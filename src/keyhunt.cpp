@@ -4562,6 +4562,12 @@ int main(int argc, char **argv)	{
 			config.runtime.vanity_min_check_len = vanity_rmd_minimun_bytes_check_length;
 			config.runtime.vanity_addresses = (void *)vanity_address_targets;
 
+			// Minikey state (refreshed after allocation at lines 2690-2714)
+			config.runtime.minikey_coinbuffer = (void *)Ccoinbuffer;
+			config.runtime.minikey_raw_base = (void *)raw_baseminikey;
+			config.runtime.minikey_n = (void *)minikeyN;
+			config.runtime.minikey_n_limit = minikey_n_limit;
+
 			profile_init_threads((int)NTHREADS);
 			for(j= 0;j < NTHREADS; j++)	{
 				tt = (tothread*) malloc(sizeof(struct tothread));
