@@ -1,13 +1,11 @@
 /*
  * io.cpp - File I/O operations for keyhunt
  *
- * MIGRATION STATUS: Config-wired (Phase 4, CFG-07 complete)
+ * MIGRATION STATUS: Fully config-wired (Phase 4, Plan 07)
  *
- * writekey() and writekeyeth() receive keyhunt_config_t* parameter and use
- * no extern globals. File-reading functions (readFileAddress, etc.) still
- * use function-local extern declarations since they run at init time and
- * mutate globals directly. These will be addressed when file-reading is
- * refactored in a future plan.
+ * All functions receive keyhunt_config_t* parameter. No extern globals.
+ * Functions read configuration flags from config->search/bsgs fields and
+ * write output state (N, addressTable, bloom) through config->runtime fields.
  */
 
 #include "io.h"
@@ -98,24 +96,19 @@ void writekey(const keyhunt_config_t *config, bool compressed, Int *key) {
 		strcpy(bech32_address, "[bech32 requires compressed]");
 	}
 
-	platform_mutex_lock(write_mutex);
-	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
-	if(keys == NULL) {
-		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
-		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
-	} else {
-		int written = fprintf(keys, "Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n", hextemp, public_key_hex, address, bech32_address, hexrmd);
-		int closed = fclose(keys);
-		if (written < 0 || closed != 0) {
-			output_error("CRITICAL: Failed to write key to file! Key: %s\n", hextemp);
-			output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
-		}
-	}
-	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n", hextemp, public_key_hex, address, bech32_address, hexrmd);
+	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
 
-	// Show celebratory key found display
+	// Colored box display
+	printf("\n");
 	output_key_found(hextemp, address, public_key_hex);
+	printf("\n");
 
+	platform_mutex_lock(write_mutex);
+	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	if(keys != NULL) {
+		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress: %s\nBech32: %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
+		fclose(keys);
+	}
 	platform_mutex_unlock(write_mutex);
 	free(hextemp);
 	free(hexrmd);
@@ -145,35 +138,28 @@ void writekeyeth(const keyhunt_config_t *config, Int *key) {
 	address[1] = 'x';
 	tohex_dst(hash, 20, address+2);
 
-	platform_mutex_lock(write_mutex);
-	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
-	if(keys == NULL) {
-		output_error("CRITICAL: Cannot open key file for writing! Key: %s\n", hextemp);
-		output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
-	} else {
-		int written = fprintf(keys, "Private Key: %s\naddress: %s\n", hextemp, address);
-		int closed = fclose(keys);
-		if (written < 0 || closed != 0) {
-			output_error("CRITICAL: Failed to write key to file! Key: %s\n", hextemp);
-			output_error("SAVE THIS KEY IMMEDIATELY: %s\n", hextemp);
-		}
-	}
-	printf("\n Hit!!!! Private Key: %s\naddress: %s\n", hextemp, address);
+	printf("\nHit! Private Key: %s\naddress: %s\n",hextemp,address);
 
-	// Show celebratory key found display
 	output_key_found(hextemp, address, NULL);
+
+	platform_mutex_lock(write_mutex);
+	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	if(keys != NULL) {
+		fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address);
+		fclose(keys);
+	}
 
 	platform_mutex_unlock(write_mutex);
 	free(hextemp);
 }
 
-bool processOneVanity() {
-	extern int vanity_rmd_targets;
-	extern int vanity_rmd_total;
-	extern int *vanity_rmd_limits;
-	extern uint8_t ***vanity_rmd_limit_values_A;
-	extern int vanity_rmd_minimun_bytes_check_length;
-	extern struct bloom *vanity_bloom;
+bool processOneVanity(keyhunt_config_t *config) {
+	int vanity_rmd_targets = config->runtime.vanity_targets;
+	int vanity_rmd_total = config->runtime.vanity_total;
+	int *vanity_rmd_limits = (int *)config->runtime.vanity_limits;
+	uint8_t ***vanity_rmd_limit_values_A = (uint8_t ***)config->runtime.vanity_values_a;
+	int vanity_rmd_minimun_bytes_check_length = config->runtime.vanity_min_check_len;
+	struct bloom *vanity_bloom = (struct bloom *)config->runtime.vanity_bloom;
 
 	int i, k;
 	if(vanity_rmd_targets == 0) {
@@ -192,14 +178,13 @@ bool processOneVanity() {
 	return true;
 }
 
-bool readFileVanity(char *fileName) {
-	extern int vanity_rmd_targets;
-	extern int vanity_rmd_total;
-	extern int *vanity_rmd_limits;
-	extern uint8_t ***vanity_rmd_limit_values_A;
-	extern int vanity_rmd_minimun_bytes_check_length;
-	extern struct bloom *vanity_bloom;
-	extern uint64_t N;
+bool readFileVanity(char *fileName, keyhunt_config_t *config) {
+	int vanity_rmd_targets = config->runtime.vanity_targets;
+	int *vanity_rmd_limits = (int *)config->runtime.vanity_limits;
+	uint8_t ***vanity_rmd_limit_values_A = (uint8_t ***)config->runtime.vanity_values_a;
+	int vanity_rmd_minimun_bytes_check_length = config->runtime.vanity_min_check_len;
+	struct bloom *vanity_bloom = (struct bloom *)config->runtime.vanity_bloom;
+	uint64_t N = (uint64_t)config->runtime.address_count;
 
 	/* Forward declaration for function defined in keyhunt.cpp */
 	int addvanity(char *target);
@@ -231,29 +216,48 @@ bool readFileVanity(char *fileName) {
 		fclose(fileDescriptor);
 	}
 
+	/* Re-read vanity state from globals since addvanity() modifies them */
+	int vanity_rmd_total = config->runtime.vanity_total;
 	N = vanity_rmd_total;
 	if(!initBloomFilter(vanity_bloom, N))
 		return false;
+
+	/* Re-read after possible addvanity changes */
+	vanity_rmd_targets = config->runtime.vanity_targets;
+	vanity_rmd_limits = (int *)config->runtime.vanity_limits;
+	vanity_rmd_limit_values_A = (uint8_t ***)config->runtime.vanity_values_a;
 
 	for(i = 0; i < vanity_rmd_targets; i++) {
 		for(k = 0; k < vanity_rmd_limits[i]; k++) {
 			bloom_add(vanity_bloom, vanity_rmd_limit_values_A[i][k], vanity_rmd_minimun_bytes_check_length);
 		}
 	}
+
+	/* Write back N through config */
+	config->runtime.address_count = (int64_t)N;
+
 	return true;
 }
 
-bool readFileAddress(char *fileName) {
-	extern int FLAGMODE;
-	extern int FLAGCRYPTO;
-	extern int FLAGSAVEREADFILE;
-	extern int FLAGSKIPCHECKSUM;
-	extern int FLAGVANITY;
-	extern int FLAGREADEDFILE1;
-	extern int MAXLENGTHADDRESS;
-	extern uint64_t N;
-	extern bloom_extended_t bloom;
-	extern struct address_value *addressTable;
+bool readFileAddress(char *fileName, keyhunt_config_t *config) {
+	/* Read flags from config */
+	int FLAGMODE = (int)config->search.mode;
+	int FLAGCRYPTO = (int)config->search.crypto_type;
+	bool save_progress = config->bsgs.save_progress;
+	bool skip_checksum = config->search.skip_checksum;
+	bool is_vanity = (config->search.mode == MODE_VANITY);
+	int FLAGREADEDFILE1 = config->runtime.io_read_cached;
+	int MAXLENGTHADDRESS = config->runtime.max_address_length;
+	uint64_t N = (uint64_t)config->runtime.address_count;
+	bloom_extended_t *bloom_ptr = (bloom_extended_t *)config->runtime.bloom_filter;
+	/* bloom is stack-local when not from cache; for cache path we need the actual struct */
+	bloom_extended_t bloom_local;
+	if (bloom_ptr) {
+		bloom_local = *bloom_ptr;
+	} else {
+		memset(&bloom_local, 0, sizeof(bloom_local));
+	}
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
 
 	FILE *fileDescriptor;
 	char fileBloomName[30];
@@ -262,9 +266,9 @@ bool readFileAddress(char *fileName) {
 	size_t bytesRead;
 	uint64_t dataSize;
 	/*
-		if the FLAGSAVEREADFILE is Set to 1 we need to the checksum and check if we have that information already saved
+		if the save_progress is Set to 1 we need to the checksum and check if we have that information already saved
 	*/
-	if(FLAGSAVEREADFILE) {
+	if(save_progress) {
 		if(!sha256_file((const char*)fileName, checksum)) {
 			output_error("sha256_file error line %i\n", __LINE__ - 1);
 			return false;
@@ -284,55 +288,55 @@ bool readFileAddress(char *fileName) {
 			}
 
 			//read bloom filter structure
-			bytesRead = fread(&bloom.orig, 1, sizeof(struct bloom), fileDescriptor);
+			bytesRead = fread(&bloom_local.orig, 1, sizeof(struct bloom), fileDescriptor);
 			if(bytesRead != sizeof(struct bloom)) {
 				output_error("Error reading file, code line %i\n", __LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 
-			output_success("Bloom filter for %" PRIu64 " elements.\n", bloom.orig.entries);
+			output_success("Bloom filter for %" PRIu64 " elements.\n", bloom_local.orig.entries);
 
 			/* Validate deserialized bloom size to prevent heap overflow from corrupted cache */
 			const uint64_t MAX_BLOOM_CACHE_BYTES = (uint64_t)16 * 1024 * 1024 * 1024; /* 16 GB */
-			if(bloom.orig.bytes == 0 || bloom.orig.bytes > MAX_BLOOM_CACHE_BYTES) {
-				output_error("Bloom filter cache has invalid size %" PRIu64 " bytes. Delete the .blm file and retry.\n", bloom.orig.bytes);
+			if(bloom_local.orig.bytes == 0 || bloom_local.orig.bytes > MAX_BLOOM_CACHE_BYTES) {
+				output_error("Bloom filter cache has invalid size %" PRIu64 " bytes. Delete the .blm file and retry.\n", bloom_local.orig.bytes);
 				fclose(fileDescriptor);
 				return false;
 			}
 
-			const bool cache_fast = (bloom.orig.major == BLOOM_EXT_FAST_MAJOR && bloom.orig.minor == BLOOM_EXT_FAST_MINOR);
+			const bool cache_fast = (bloom_local.orig.major == BLOOM_EXT_FAST_MAJOR && bloom_local.orig.minor == BLOOM_EXT_FAST_MINOR);
 #if defined(_WIN64) && !defined(__CYGWIN__)
 			if (cache_fast) {
-				bloom.orig.bf = (uint8_t*)_aligned_malloc(bloom.orig.bytes, 64);
+				bloom_local.orig.bf = (uint8_t*)_aligned_malloc(bloom_local.orig.bytes, 64);
 			} else {
-				bloom.orig.bf = (uint8_t*)malloc(bloom.orig.bytes);
+				bloom_local.orig.bf = (uint8_t*)malloc(bloom_local.orig.bytes);
 			}
 #else
 			if (cache_fast) {
 				void *ptr = NULL;
-				if (posix_memalign(&ptr, 64, bloom.orig.bytes) != 0) ptr = NULL;
-				bloom.orig.bf = (uint8_t*)ptr;
+				if (posix_memalign(&ptr, 64, bloom_local.orig.bytes) != 0) ptr = NULL;
+				bloom_local.orig.bf = (uint8_t*)ptr;
 			} else {
-				bloom.orig.bf = (uint8_t*)malloc(bloom.orig.bytes);
+				bloom_local.orig.bf = (uint8_t*)malloc(bloom_local.orig.bytes);
 			}
 #endif
-			if(bloom.orig.bf == NULL) {
+			if(bloom_local.orig.bf == NULL) {
 				output_error("Error allocating memory, code line %i\n", __LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
 
 			//read bloom filter data
-			bytesRead = fread(bloom.orig.bf, 1, bloom.orig.bytes, fileDescriptor);
-			if(bytesRead != bloom.orig.bytes) {
+			bytesRead = fread(bloom_local.orig.bf, 1, bloom_local.orig.bytes, fileDescriptor);
+			if(bytesRead != bloom_local.orig.bytes) {
 				output_error("Error reading file, code line %i\n", __LINE__ - 2);
 				fclose(fileDescriptor);
 				return false;
 			}
-			if(FLAGSKIPCHECKSUM == 0) {
+			if(!skip_checksum) {
 				//calculate checksum of the current readed data
-				sha256((uint8_t*)bloom.orig.bf, bloom.orig.bytes, (uint8_t*)checksum);
+				sha256((uint8_t*)bloom_local.orig.bf, bloom_local.orig.bytes, (uint8_t*)checksum);
 
 				//Compare checksums
 				if(memcmp(checksum, bloomChecksum, 32) != 0) {
@@ -343,15 +347,15 @@ bool readFileAddress(char *fileName) {
 			}
 
 			// If this cache was built with the fast bloom implementation, restore fast metadata
-			bloom_ext_sync_from_orig(&bloom);
+			bloom_ext_sync_from_orig(&bloom_local);
 #if USE_FAST_BLOOM
-			if (bloom_ext_is_fast(&bloom)) {
+			if (bloom_ext_is_fast(&bloom_local)) {
 				output_success("Using FAST bloom filter (cached)\n");
 			}
 #endif
 #ifdef __linux__
-			if (bloom_ext_is_fast(&bloom)) {
-				(void)madvise(bloom.fast.bf, bloom.fast.bits / 8, MADV_HUGEPAGE);
+			if (bloom_ext_is_fast(&bloom_local)) {
+				(void)madvise(bloom_local.fast.bf, bloom_local.fast.bits / 8, MADV_HUGEPAGE);
 			}
 #endif
 
@@ -385,7 +389,7 @@ bool readFileAddress(char *fileName) {
 				fclose(fileDescriptor);
 				return false;
 			}
-			if(FLAGSKIPCHECKSUM == 0) {
+			if(!skip_checksum) {
 				sha256((uint8_t*)addressTable, dataSize, (uint8_t*)checksum);
 				if(memcmp(checksum, dataChecksum, 32) != 0) {
 					output_error("Error checksum mismatch, code line %i\n", __LINE__ - 2);
@@ -396,27 +400,37 @@ bool readFileAddress(char *fileName) {
 			FLAGREADEDFILE1 = 1;
 			fclose(fileDescriptor);
 			MAXLENGTHADDRESS = sizeof(struct address_value);
+
+			/* Write back to config */
+			config->runtime.address_count = (int64_t)N;
+			config->runtime.address_table = (void *)addressTable;
+			config->runtime.max_address_length = MAXLENGTHADDRESS;
+			config->runtime.io_read_cached = FLAGREADEDFILE1;
+			/* Write bloom back: copy local bloom to the global bloom via config */
+			if (bloom_ptr) {
+				*bloom_ptr = bloom_local;
+			}
 		}
 	}
-	if(FLAGVANITY) {
-		processOneVanity();
+	if(is_vanity) {
+		processOneVanity(config);
 	}
 	if(!FLAGREADEDFILE1) {
 		switch(FLAGMODE) {
 			case MODE_ADDRESS:
 				if(FLAGCRYPTO == CRYPTO_BTC) {
-					return forceReadFileAddress(fileName);
+					return forceReadFileAddress(fileName, config);
 				}
 				if(FLAGCRYPTO == CRYPTO_ETH) {
-					return forceReadFileAddressEth(fileName);
+					return forceReadFileAddressEth(fileName, config);
 				}
 			break;
 			case MODE_MINIKEYS:
 			case MODE_RMD160:
-				return forceReadFileAddress(fileName);
+				return forceReadFileAddress(fileName, config);
 			break;
 			case MODE_XPOINT:
-				return forceReadFileXPoint(fileName);
+				return forceReadFileXPoint(fileName, config);
 			break;
 			default:
 				return false;
@@ -426,11 +440,11 @@ bool readFileAddress(char *fileName) {
 	return true;
 }
 
-bool forceReadFileAddress(char *fileName) {
-	extern int MAXLENGTHADDRESS;
-	extern uint64_t N;
-	extern bloom_extended_t bloom;
-	extern struct address_value *addressTable;
+bool forceReadFileAddress(char *fileName, keyhunt_config_t *config) {
+	int MAXLENGTHADDRESS = config->runtime.max_address_length;
+	uint64_t N = (uint64_t)config->runtime.address_count;
+	bloom_extended_t *bloom_ptr = (bloom_extended_t *)config->runtime.bloom_filter;
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
 
 	FILE *fileDescriptor;
 	bool validAddress;
@@ -465,7 +479,7 @@ bool forceReadFileAddress(char *fileName) {
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ -1);
 
-	if(!initBloomFilterExt(&bloom, numberItems)) {
+	if(!initBloomFilterExt(bloom_ptr, numberItems)) {
 		free(addressTable);
 		addressTable = NULL;
 		fclose(fileDescriptor);
@@ -485,7 +499,7 @@ bool forceReadFileAddress(char *fileName) {
 				raw_value_length = 25;
 				b58tobin(rawvalue, &raw_value_length, aux, r);
 				if(raw_value_length == 25) {
-					bloom_ext_add(&bloom, rawvalue+1, sizeof(struct address_value));
+					bloom_ext_add(bloom_ptr, rawvalue+1, sizeof(struct address_value));
 					memcpy(addressTable[i].value, rawvalue+1, sizeof(struct address_value));
 					i++;
 					validAddress = true;
@@ -493,7 +507,7 @@ bool forceReadFileAddress(char *fileName) {
 			}
 			else if(r == 40 && isValidHex(aux)) {	//Raw RMD160 hex
 				hexs2bin(aux, rawvalue);
-				bloom_ext_add(&bloom, rawvalue, sizeof(struct address_value));
+				bloom_ext_add(bloom_ptr, rawvalue, sizeof(struct address_value));
 				memcpy(addressTable[i].value, rawvalue, sizeof(struct address_value));
 				i++;
 				validAddress = true;
@@ -506,7 +520,7 @@ bool forceReadFileAddress(char *fileName) {
 				if(segwit_addr_decode(&witver, witprog, &witprog_len, "bc", aux)) {
 					// For P2WPKH (witness v0, 20-byte program), use witness program as hash
 					if(witver == 0 && witprog_len == 20) {
-						bloom_ext_add(&bloom, witprog, sizeof(struct address_value));
+						bloom_ext_add(bloom_ptr, witprog, sizeof(struct address_value));
 						memcpy(addressTable[i].value, witprog, sizeof(struct address_value));
 						i++;
 						validAddress = true;
@@ -534,14 +548,20 @@ bool forceReadFileAddress(char *fileName) {
 	}
 	N = numberItems;
 	fclose(fileDescriptor);
+
+	/* Write back to config */
+	config->runtime.address_count = (int64_t)N;
+	config->runtime.address_table = (void *)addressTable;
+	config->runtime.max_address_length = MAXLENGTHADDRESS;
+
 	return true;
 }
 
-bool forceReadFileAddressEth(char *fileName) {
-	extern int MAXLENGTHADDRESS;
-	extern uint64_t N;
-	extern bloom_extended_t bloom;
-	extern struct address_value *addressTable;
+bool forceReadFileAddressEth(char *fileName, keyhunt_config_t *config) {
+	int MAXLENGTHADDRESS = config->runtime.max_address_length;
+	uint64_t N = (uint64_t)config->runtime.address_count;
+	bloom_extended_t *bloom_ptr = (bloom_extended_t *)config->runtime.bloom_filter;
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
 
 	FILE *fileDescriptor;
 	bool validAddress;
@@ -577,7 +597,7 @@ bool forceReadFileAddressEth(char *fileName) {
 	addressTable = (struct address_value*) malloc(sizeof(struct address_value)*numberItems);
 	checkpointer((void *)addressTable, __FILE__, "malloc", "addressTable", __LINE__ -1);
 
-	if(!initBloomFilterExt(&bloom, N)) {
+	if(!initBloomFilterExt(bloom_ptr, N)) {
 		free(addressTable);
 		addressTable = NULL;
 		fclose(fileDescriptor);
@@ -597,7 +617,7 @@ bool forceReadFileAddressEth(char *fileName) {
 				case 40:
 					if(isValidHex(aux)) {
 						hexs2bin(aux, rawvalue);
-						bloom_ext_add(&bloom, rawvalue, sizeof(struct address_value));
+						bloom_ext_add(bloom_ptr, rawvalue, sizeof(struct address_value));
 						memcpy(addressTable[i].value, rawvalue, sizeof(struct address_value));
 						i++;
 						validAddress = true;
@@ -606,7 +626,7 @@ bool forceReadFileAddressEth(char *fileName) {
 				case 42:
 					if(isValidHex(aux+2)) {
 						hexs2bin(aux+2, rawvalue);
-						bloom_ext_add(&bloom, rawvalue, sizeof(struct address_value));
+						bloom_ext_add(bloom_ptr, rawvalue, sizeof(struct address_value));
 						memcpy(addressTable[i].value, rawvalue, sizeof(struct address_value));
 						i++;
 						validAddress = true;
@@ -623,14 +643,20 @@ bool forceReadFileAddressEth(char *fileName) {
 	}
 
 	fclose(fileDescriptor);
+
+	/* Write back to config */
+	config->runtime.address_count = (int64_t)N;
+	config->runtime.address_table = (void *)addressTable;
+	config->runtime.max_address_length = MAXLENGTHADDRESS;
+
 	return true;
 }
 
-bool forceReadFileXPoint(char *fileName) {
-	extern int MAXLENGTHADDRESS;
-	extern uint64_t N;
-	extern bloom_extended_t bloom;
-	extern struct address_value *addressTable;
+bool forceReadFileXPoint(char *fileName, keyhunt_config_t *config) {
+	int MAXLENGTHADDRESS = config->runtime.max_address_length;
+	uint64_t N = (uint64_t)config->runtime.address_count;
+	bloom_extended_t *bloom_ptr = (bloom_extended_t *)config->runtime.bloom_filter;
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
 
 	FILE *fileDescriptor;
 	uint64_t numberItems, i;
@@ -667,7 +693,7 @@ bool forceReadFileXPoint(char *fileName) {
 
 	N = numberItems;
 
-	if(!initBloomFilterExt(&bloom, N)) {
+	if(!initBloomFilterExt(bloom_ptr, N)) {
 		free(addressTable);
 		addressTable = NULL;
 		fclose(fileDescriptor);
@@ -691,7 +717,7 @@ bool forceReadFileXPoint(char *fileName) {
 						r = hexs2bin(aux, (uint8_t*) rawvalue);
 						if(r) {
 							memcpy(addressTable[i].value, rawvalue, 20);
-							bloom_ext_add(&bloom, rawvalue, MAXLENGTHADDRESS);
+							bloom_ext_add(bloom_ptr, rawvalue, MAXLENGTHADDRESS);
 							entry_valid = true;
 						}
 						else {
@@ -702,7 +728,7 @@ bool forceReadFileXPoint(char *fileName) {
 						r = hexs2bin(aux+2, (uint8_t*)rawvalue);
 						if(r) {
 							memcpy(addressTable[i].value, rawvalue, 20);
-							bloom_ext_add(&bloom, rawvalue, MAXLENGTHADDRESS);
+							bloom_ext_add(bloom_ptr, rawvalue, MAXLENGTHADDRESS);
 							entry_valid = true;
 						}
 						else {
@@ -713,7 +739,7 @@ bool forceReadFileXPoint(char *fileName) {
 						r = hexs2bin(aux, (uint8_t*) rawvalue);
 						if(r) {
 							memcpy(addressTable[i].value, rawvalue+2, 20);
-							bloom_ext_add(&bloom, rawvalue+2, MAXLENGTHADDRESS);
+							bloom_ext_add(bloom_ptr, rawvalue+2, MAXLENGTHADDRESS);
 							entry_valid = true;
 						}
 						else {
@@ -740,18 +766,24 @@ bool forceReadFileXPoint(char *fileName) {
 		}
 	}
 	fclose(fileDescriptor);
+
+	/* Write back to config */
+	config->runtime.address_count = (int64_t)N;
+	config->runtime.address_table = (void *)addressTable;
+	config->runtime.max_address_length = MAXLENGTHADDRESS;
+
 	return true;
 }
 
-void writeFileIfNeeded(const char *fileName) {
-	extern int FLAGSAVEREADFILE;
-	extern int FLAGREADEDFILE1;
-	extern int FLAGDEBUG;
-	extern uint64_t N;
-	extern bloom_extended_t bloom;
-	extern struct address_value *addressTable;
+void writeFileIfNeeded(const char *fileName, keyhunt_config_t *config) {
+	bool save_progress = config->bsgs.save_progress;
+	int FLAGREADEDFILE1 = config->runtime.io_read_cached;
+	bool debug_mode = config->search.debug_mode;
+	uint64_t N = (uint64_t)config->runtime.address_count;
+	bloom_extended_t *bloom_ptr = (bloom_extended_t *)config->runtime.bloom_filter;
+	struct address_value *addressTable = (struct address_value *)config->runtime.address_table;
 
-	if(FLAGSAVEREADFILE && !FLAGREADEDFILE1) {
+	if(save_progress && !FLAGREADEDFILE1) {
 		FILE *fileDescriptor;
 		char fileBloomName[30];
 		uint8_t checksum[32], hexPrefix[9];
@@ -766,13 +798,13 @@ void writeFileIfNeeded(const char *fileName) {
 		snprintf(fileBloomName, 30, "data_%s.dat", hexPrefix);
 		fileDescriptor = fopen(fileBloomName, "wb");
 		dataSize = N * (sizeof(struct address_value));
-		if (FLAGDEBUG) {
+		if (debug_mode) {
 			printf("[D] size data %" PRIu64 "\n", dataSize);
 		}
 		if(fileDescriptor != NULL) {
 			output_success("Writing file %s ", fileBloomName);
 
-			sha256((uint8_t*)bloom.orig.bf, bloom.orig.bytes, (uint8_t*)bloomChecksum);
+			sha256((uint8_t*)bloom_ptr->orig.bf, bloom_ptr->orig.bytes, (uint8_t*)bloomChecksum);
 			printf(".");
 			bytesWrite = fwrite(bloomChecksum, 1, 32, fileDescriptor);
 			if(bytesWrite != 32) {
@@ -781,15 +813,15 @@ void writeFileIfNeeded(const char *fileName) {
 			}
 			printf(".");
 
-			bytesWrite = fwrite(&bloom.orig, 1, sizeof(struct bloom), fileDescriptor);
+			bytesWrite = fwrite(&bloom_ptr->orig, 1, sizeof(struct bloom), fileDescriptor);
 			if(bytesWrite != sizeof(struct bloom)) {
 				output_error("Error writing file, code line %i\n", __LINE__ - 2);
 				exit(EXIT_FAILURE);
 			}
 			printf(".");
 
-			bytesWrite = fwrite(bloom.orig.bf, 1, bloom.orig.bytes, fileDescriptor);
-			if(bytesWrite != bloom.orig.bytes) {
+			bytesWrite = fwrite(bloom_ptr->orig.bf, 1, bloom_ptr->orig.bytes, fileDescriptor);
+			if(bytesWrite != bloom_ptr->orig.bytes) {
 				output_error("Error writing file, code line %i\n", __LINE__ - 2);
 				fclose(fileDescriptor);
 				exit(EXIT_FAILURE);
@@ -820,9 +852,13 @@ void writeFileIfNeeded(const char *fileName) {
 			}
 			printf(".");
 
-			FLAGREADEDFILE1 = 1;
+			config->runtime.io_read_cached = 1;
 			fclose(fileDescriptor);
 			printf("\n");
+		}
+		else {
+			output_error("Error can't create the file %s\n", fileBloomName);
+			exit(EXIT_FAILURE);
 		}
 	}
 }

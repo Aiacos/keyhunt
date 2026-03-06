@@ -2280,29 +2280,57 @@ int main(int argc, char **argv)	{
 				                                "KEYHUNT_CPU_N", "CPU");
 			}
 
+		// Wire I/O state into config BEFORE readFile calls
+		config.runtime.bloom_filter = (void *)&bloom;
+		config.runtime.address_table = (void *)addressTable;
+		config.runtime.address_count = (int64_t)N;
+		config.runtime.io_read_cached = FLAGREADEDFILE1;
+		config.runtime.max_address_length = MAXLENGTHADDRESS;
+
+		// Wire vanity state into config BEFORE readFileVanity
+		config.runtime.vanity_targets = vanity_rmd_targets;
+		config.runtime.vanity_total = vanity_rmd_total;
+		config.runtime.vanity_bloom = (void *)vanity_bloom;
+		config.runtime.vanity_limits = (void *)vanity_rmd_limits;
+		config.runtime.vanity_values_a = (void *)vanity_rmd_limit_values_A;
+		config.runtime.vanity_values_b = (void *)vanity_rmd_limit_values_B;
+		config.runtime.vanity_min_check_len = vanity_rmd_minimun_bytes_check_length;
+		config.runtime.vanity_addresses = (void *)vanity_address_targets;
+
 		switch(FLAGMODE)	{
 			case MODE_MINIKEYS:
 			case MODE_RMD160:
 			case MODE_ADDRESS:
 			case MODE_XPOINT:
-				if(!readFileAddress(fileName))	{
+				if(!readFileAddress(fileName, &config))	{
 					output_error("Unexpected error\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
 			case MODE_VANITY:
-				if(!readFileVanity(fileName))	{
+				if(!readFileVanity(fileName, &config))	{
 					output_error("Unexpected error\n");
 					exit(EXIT_FAILURE);
 				}
 			break;
 		}
-		
+
+		// Sync config output back to globals after readFile
+		N = (uint64_t)config.runtime.address_count;
+		addressTable = (struct address_value *)config.runtime.address_table;
+		FLAGREADEDFILE1 = config.runtime.io_read_cached;
+		MAXLENGTHADDRESS = config.runtime.max_address_length;
+
 		if(FLAGMODE != MODE_VANITY && !FLAGREADEDFILE1)	{
 			output_success("Sorting data ...");
 			kh_sort(addressTable,N);
 			printf(" done! %" PRIu64 " values were loaded and sorted\n",N);
-			writeFileIfNeeded(fileName);
+			// Re-sync to config before writeFileIfNeeded
+			config.runtime.address_table = (void *)addressTable;
+			config.runtime.address_count = (int64_t)N;
+			writeFileIfNeeded(fileName, &config);
+			// Sync back after write
+			FLAGREADEDFILE1 = config.runtime.io_read_cached;
 		}
 
 			// GPU Full Search initialization (upload G table and targets)
@@ -2758,17 +2786,9 @@ int main(int argc, char **argv)	{
 			config.gpu.hybrid_mode = (FLAGGPU_HYBRID.load(std::memory_order_relaxed) != 0);
 			config.autotune.has_avx2 = g_avx2_available;
 
-			// Vanity state (if applicable)
-			config.runtime.vanity_targets = vanity_rmd_targets;
-			config.runtime.vanity_total = vanity_rmd_total;
-			config.runtime.vanity_bloom = (void *)vanity_bloom;
-			config.runtime.vanity_limits = (void *)vanity_rmd_limits;
-			config.runtime.vanity_values_a = (void *)vanity_rmd_limit_values_A;
-			config.runtime.vanity_values_b = (void *)vanity_rmd_limit_values_B;
-			config.runtime.vanity_min_check_len = vanity_rmd_minimun_bytes_check_length;
-			config.runtime.vanity_addresses = (void *)vanity_address_targets;
+			// Vanity state already wired before readFile calls (Plan 07)
 
-			// Minikey state (refreshed after allocation at lines 2690-2714)
+			// Minikey state (refreshed after allocation)
 			config.runtime.minikey_coinbuffer = (void *)Ccoinbuffer;
 			config.runtime.minikey_raw_base = (void *)raw_baseminikey;
 			config.runtime.minikey_n = (void *)minikeyN;

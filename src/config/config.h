@@ -277,6 +277,14 @@ typedef struct {
 
     /* Sequential iteration limit */
     uint64_t sequential_max;      /* N_SEQUENTIAL_MAX */
+
+    /* ------------------------------------------------------------------ */
+    /*  Fields below added for Phase 4, Plan 07 (io.cpp config wiring)    */
+    /* ------------------------------------------------------------------ */
+
+    /* I/O cache state (used by readFileAddress / writeFileIfNeeded) */
+    int      io_read_cached;      /* FLAGREADEDFILE1: 1 if target data read from cache */
+    int      thread_count;        /* NTHREADS (alias for num_threads, writable by io) */
 } runtime_state_t;
 
 /* ============================================================================
