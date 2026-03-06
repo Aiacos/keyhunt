@@ -34,43 +34,8 @@
 
 static int g_gpu_bloom_uploaded = 0;
 
-/* ============================================================================
- * Extern references to keyhunt.cpp globals (temporary, until full migration)
- * ============================================================================ */
-
-/* secp256k1 instance (set once at init) */
-extern Secp256K1 *secp;
-
-/* GPU atomic counters (defined in keyhunt.cpp) */
-extern std::atomic<uint64_t> g_gpu_keys_checked;
-extern std::atomic<uint64_t> g_gpu_keys_checked_cur;
-extern std::atomic<int> g_gpu_should_stop;
-
-/* Search flags (defined in keyhunt.cpp) */
-extern int FLAGSEARCH;
-extern int FLAGQUIET;
-extern std::atomic<int> FLAGGPU_HYBRID;
-
-/* Output timing */
-extern Int OUTPUTSECONDS;
-extern Int ZERO;
-
-/* Work pool (defined in util/work_queue.cpp) */
-extern WorkPool g_work_pool;
-
-/* Config pointer (set by main() in keyhunt.cpp) */
-extern keyhunt_config_t *g_kh_config_ptr;
-
-/* check_sigint_cleanup (defined in keyhunt.cpp) */
-extern void check_sigint_cleanup(void);
-
-/* ============================================================================
- * address_value struct (matches keyhunt.cpp definition)
- * ============================================================================ */
-
-struct address_value {
-    uint8_t value[20];
-};
+/* Shared globals (secp, flags, counters, config pointer, etc.) */
+#include "../globals.h"
 
 /* ============================================================================
  * GPU Dispatch Implementations
@@ -366,7 +331,7 @@ bool gpu_selftest_hash160_fromX() {
  * Hybrid GPU range percent default
  * ============================================================================ */
 
-extern gpu_backend_info_t g_gpu_backend_info;
+/* g_gpu_backend_info declared in globals.h */
 
 int hybrid_get_gpu_range_percent_default(int cpu_threads) {
     if (cpu_threads <= 0) return 80;

@@ -118,88 +118,12 @@ char buffer_bloom_file[1024];
 /* BSGS mode names */
 const char *bsgs_modes[5] = {"sequential","backward","both","random","dance"};
 
-/* ============================================================================
- * Extern declarations for SHARED state defined in keyhunt.cpp
- *
- * These are shared across all modes (secp, ranges, flags, counters, mutexes).
- * They are NOT BSGS-specific and remain in keyhunt.cpp.
- * ============================================================================ */
-
-/* Range variables (shared across modes) */
-extern Int n_range_start;
-extern Int n_range_end;
-extern Int n_range_diff;
-extern Int n_range_aux;
-
-/* Search config flags (set by CLI parser in keyhunt.cpp) */
-extern int FLAGBSGSMODE;
-extern int FLAGSAVEREADFILE;
-extern int FLAGREADEDFILE1;
-extern int FLAGREADEDFILE2;
-extern int FLAGREADEDFILE3;
-extern int FLAGREADEDFILE4;
-extern int FLAGUPDATEFILE1;
-extern int FLAGSKIPCHECKSUM;
-extern int FLAGRANGE;
-extern int FLAGBITRANGE;
-extern int FLAG_N;
-extern int FLAGTHREADS;
-extern int KFACTOR;
-extern int NTHREADS;
-extern int OPTIMAL_THREADS;
-extern int OPTIMAL_KFACTOR;
-extern uint64_t OPTIMAL_N;
-extern char *str_N;
-extern char *range_start;
-extern char *range_end;
-extern int bitrange;
-extern char *bit_range_str_min;
-extern char *bit_range_str_max;
-
-/* Thread runtime state (shared across modes) */
-extern uint64_t FINISHED_THREADS_COUNTER;
-extern uint64_t FINISHED_THREADS_BP;
-extern uint64_t THREADCYCLES;
-extern uint64_t THREADCOUNTER;
-extern std::atomic<uint64_t> FINISHED_ITEMS;
-extern uint64_t OLDFINISHED_ITEMS;
-extern uint32_t THREADBPWORKLOAD;
-
-/* Shared globals (used by all modes) */
-extern uint32_t CPU_GRP_SIZE;
-extern uint64_t N;
-extern struct thread_counter *steps;
-extern struct thread_flag *ends;
-extern platform_thread_t *tid;
-extern Secp256K1 *secp;
-extern system_info_t g_sysinfo;
-extern struct address_value *addressTable;
-extern platform_mutex_t write_keys;
-extern platform_mutex_t write_random;
-extern platform_mutex_t bsgs_thread;
-extern platform_mutex_t *bPload_mutex;
-extern std::atomic<int> THREADOUTPUT;
-extern uint64_t N_SEQUENTIAL_MAX;
-extern bloom_extended_t bloom;
-
-/* bPload struct (defined in search/search_context.h) */
-struct bPload {
-    uint32_t threadid;
-    uint64_t from;
-    uint64_t to;
-    uint64_t counter;
-    uint64_t workload;
-    uint32_t aux;
-    uint32_t finished;
-};
+/* Shared globals (secp, flags, counters, ranges, mutexes) via globals.h */
+#include "../globals.h"
 
 /* bPload thread declarations (defined in search/search_bsgs_threads.cpp) */
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload(void *vargp);
 platform_thread_return_t PLATFORM_THREAD_CALL thread_bPload_2blooms(void *vargp);
-
-#ifndef _WIN64
-extern void shutdown_work_queue();
-#endif
 
 /* ============================================================================
  * mode_bsgs_init - BSGS mode initialization

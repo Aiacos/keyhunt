@@ -19,16 +19,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "secp256k1/SECP256k1.h"
-#include "secp256k1/Point.h"
-#include "secp256k1/Int.h"
-#include "bloom/bloom.h"
-#include "bloom/bloom_wrapper.h"
-
-#include "platform/platform.h"
+/* globals.h provides: struct definitions (address_value, bPload, publickey,
+ * thread_counter, thread_flag), all shared extern declarations, and
+ * transitively includes config/config.h -> cli.h which provides
+ * search_mode_t enum (MODE_ADDRESS, MODE_BSGS, etc.). */
+#include "globals.h"
 
 /* ------------------------------------------------------------------ */
-/*  Mode and crypto constants                                         */
+/*  Mode and crypto constants (legacy macro compatibility)             */
+/*  The enum values in cli.h (via globals.h) are the canonical source. */
+/*  These macros are retained for translation units that compare       */
+/*  integer flag values directly (e.g., FLAGMODE == MODE_ADDRESS).     */
 /* ------------------------------------------------------------------ */
 
 #ifndef CRYPTO_NONE
@@ -38,15 +39,8 @@
 #define CRYPTO_ALL  3
 #endif
 
-#ifndef MODE_XPOINT
-#define MODE_XPOINT   0
-#define MODE_ADDRESS  1
-#define MODE_BSGS     2
-#define MODE_RMD160   3
-#define MODE_PUB2RMD  4
-#define MODE_MINIKEYS 5
-#define MODE_VANITY   6
-#endif
+/* MODE_* values come from search_mode_t enum in cli.h (included via globals.h).
+ * Do NOT redefine them as macros -- that would conflict with the enum. */
 
 #ifndef SEARCH_UNCOMPRESS
 #define SEARCH_UNCOMPRESS 0
@@ -54,14 +48,11 @@
 #define SEARCH_BOTH       2
 #endif
 
-/* Canonical definition. Also defined in keyhunt_legacy.cpp and bsgsd.cpp
- * (standalone monoliths that don't include this header). */
-#ifndef CPU_GRP_SIZE
-#define CPU_GRP_SIZE 1024
-#endif
+/* CPU_GRP_SIZE is now a variable in globals.h (uint32_t CPU_GRP_SIZE = 1024).
+ * keyhunt_legacy.cpp and bsgsd.cpp define their own local versions. */
 
 /* ------------------------------------------------------------------ */
-/*  Struct definitions                                                */
+/*  Struct definitions (now in globals.h)                              */
 /* ------------------------------------------------------------------ */
 
 #ifndef CHECKSUMSHA256_DEFINED
@@ -74,56 +65,6 @@ struct checksumsha256 {
 
 /* struct bsgs_xvalue defined in bsgs/bsgs_sort.h */
 #include "bsgs/bsgs_sort.h"
-
-struct address_value {
-	uint8_t value[20];
-};
-
-struct bPload {
-	uint32_t threadid;
-	uint64_t from;
-	uint64_t to;
-	uint64_t counter;
-	uint64_t workload;
-	uint32_t aux;
-	uint32_t finished;
-};
-
-#if defined(_MSC_VER)
-#define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
-PACK(struct publickey
-{
-	uint8_t parity;
-	union {
-		uint8_t data8[32];
-		uint32_t data32[8];
-		uint64_t data64[4];
-	} X;
-});
-#else
-struct __attribute__((__packed__)) publickey {
-	uint8_t parity;
-	union {
-		uint8_t data8[32];
-		uint32_t data32[8];
-		uint64_t data64[4];
-	} X;
-};
-#endif
-
-/* Cache-line padded counters to avoid false sharing */
-#ifndef THREAD_COUNTER_DEFINED
-#define THREAD_COUNTER_DEFINED
-struct thread_counter {
-    uint64_t value;
-    uint8_t padding[56];
-};
-
-struct thread_flag {
-    unsigned int value;
-    uint8_t padding[60];
-};
-#endif
 
 /* ------------------------------------------------------------------ */
 /*  BSGS helper function declarations                                 */

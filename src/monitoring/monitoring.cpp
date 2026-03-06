@@ -26,33 +26,8 @@
 #include <inttypes.h>
 #include <math.h>
 
-/* ============================================================================
- * Extern references to keyhunt.cpp globals (temporary bridge)
- * ============================================================================ */
-
-/* GPU atomic counters */
-extern std::atomic<uint64_t> g_gpu_keys_checked;
-extern std::atomic<uint64_t> g_gpu_keys_checked_cur;
-extern std::atomic<int> g_gpu_should_stop;
-
-/* Work pool (for GPU work-stealing mode) */
-extern WorkPool g_work_pool;
-
-/* Search flags read by utility functions */
-extern int FLAGSEARCH;
-extern int FLAGMODE;
-extern int FLAGCRYPTO;
-extern int FLAGENDOMORPHISM;
-extern int FLAGGPU_FULL;
-extern std::atomic<int> FLAGGPU_HYBRID;
-extern int FLAGRANDOM;
-
-/* Range variables (read by progress tracker) */
-extern Int n_range_start;
-extern platform_mutex_t write_random;
-
-/* Shared Int constants */
-extern Int ZERO;
+/* Shared globals (flags, counters, ranges, etc.) */
+#include "../globals.h"
 
 /* ============================================================================
  * File-local state: Rate limits

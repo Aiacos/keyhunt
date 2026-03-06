@@ -27,19 +27,15 @@
     #define PLATFORM_THREAD_CALL
 #endif
 
-/* ============================================================================
- * Search Mode Constants
- * ============================================================================ */
+/* Shared globals (secp, flags, counters, struct definitions, etc.)
+ * Also provides MODE_* values via search_mode_t enum (cli.h -> config.h -> globals.h) */
+#include "../globals.h"
 
-#ifndef MODE_XPOINT
-#define MODE_XPOINT 0
-#define MODE_ADDRESS 1
-#define MODE_BSGS 2
-#define MODE_RMD160 3
-#define MODE_PUB2RMD 4
-#define MODE_MINIKEYS 5
-#define MODE_VANITY 6
-#endif
+/* ============================================================================
+ * Search Mode Constants (legacy macro compatibility)
+ * MODE_* values come from search_mode_t enum in cli.h (included via globals.h).
+ * Do NOT redefine MODE_* as macros -- that conflicts with the enum.
+ * ============================================================================ */
 
 #define SEARCH_UNCOMPRESS 0
 #define SEARCH_COMPRESS 1
@@ -49,28 +45,6 @@
 #define CRYPTO_BTC 1
 #define CRYPTO_ETH 2
 #define CRYPTO_ALL 3
-
-/* ============================================================================
- * Shared Global Variables (extern declarations)
- * These are defined in keyhunt.cpp
- * ============================================================================ */
-
-/* SECP256K1 curve instance */
-extern Secp256K1 *secp;
-
-/* Thread-padded counters to avoid false sharing */
-#ifndef THREAD_COUNTER_DEFINED
-#define THREAD_COUNTER_DEFINED
-struct thread_counter {
-    uint64_t value;
-    uint8_t padding[56];
-};
-
-struct thread_flag {
-    unsigned int value;
-    uint8_t padding[60];
-};
-#endif
 
 /* ============================================================================
  * Thread Arguments - New configuration-based threading
@@ -235,8 +209,7 @@ extern uint64_t BSGS_BUFFERXPOINTLENGTH;      /* X-point buffer length (16) */
 
 /* BSGS extended bloom filters (declared above with bloom_bP) */
 
-/* Byte encode for address generation */
-extern uint8_t byte_encode_crypto;
+/* Byte encode for address generation (declared in globals.h) */
 
 /* NOTE: Vanity mode variables have been migrated to keyhunt_config_t and
  * removed in subtask-4-1 (see REMOVED_GLOBALS_SUMMARY.txt section 3).
@@ -249,13 +222,7 @@ extern uint8_t byte_encode_crypto;
  *   - vanity_address_targets, vanity_bloom
  */
 
-/* Thread synchronization */
-extern platform_mutex_t write_keys;
-extern platform_mutex_t write_random;
-extern platform_mutex_t bsgs_thread;
-
-/* Output control */
-extern Int OUTPUTSECONDS;
+/* Thread synchronization and output control (declared in globals.h) */
 
 /* ============================================================================
  * Shared Function Declarations
