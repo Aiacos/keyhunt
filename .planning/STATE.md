@@ -3,30 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-06T06:22:17.262Z"
-last_activity: "2026-03-06 -- Plan 03-06 complete: minikey segfault fixed, requirement statuses corrected"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-03-06T07:02:43Z"
+last_activity: "2026-03-06 -- Plan 04-01 complete: io.cpp config-wired, utilities extracted to src/util/"
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 16
-  completed_plans: 16
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: in-progress
-stopped_at: Completed 03-06-PLAN.md (Phase 3 gap closure complete)
-last_updated: "2026-03-06T05:55:21Z"
-last_activity: "2026-03-06 -- Plan 03-06 complete: minikey segfault fixed, requirement statuses corrected"
-progress:
-  total_phases: 6
-  completed_phases: 3
-  total_plans: 16
-  completed_plans: 16
-  percent: 100
+  total_plans: 22
+  completed_plans: 17
 ---
 
 # Project State
@@ -36,23 +20,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-02-28)
 
 **Core value:** Every search result must be cryptographically correct -- correctness and stability under sustained load are non-negotiable.
-**Current focus:** Phase 3 -- Config Migration
+**Current focus:** Phase 4 -- Monolith Decomposition
 
 ## Current Position
 
-Phase: 3 of 6 (Config Migration) -- COMPLETE
-Plan: 6 of 6 in current phase -- COMPLETE
-Status: Phase 3 Complete (gap closure done)
-Last activity: 2026-03-06 -- Plan 03-06 complete: minikey segfault fixed, requirement statuses corrected
+Phase: 4 of 6 (Monolith Decomposition)
+Plan: 1 of 6 in current phase -- COMPLETE
+Status: In Progress
+Last activity: 2026-03-06 -- Plan 04-01 complete: io.cpp config-wired, utilities extracted to src/util/
 
-Progress: [██████░░░░] 62% (16/26 estimated total plans)
+Progress: [██████░░░░] 65% (17/26 estimated total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
+- Total plans completed: 17
 - Average duration: ~13 min
-- Total execution time: ~2.6 hours
+- Total execution time: ~2.9 hours
 
 **By Phase:**
 
@@ -61,10 +45,11 @@ Progress: [██████░░░░] 62% (16/26 estimated total plans)
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 | 3 - Config Migration | 6/6 | ~76 min | ~13 min |
+| 4 - Monolith Decomposition | 1/6 | ~16 min | ~16 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-02 (~25 min), 03-03 (~3 min), 03-04 (~25 min), 03-05 (~8 min), 03-06 (~5 min)
-- Trend: Gap closure plan fast -- targeted fix with clear root cause
+- Last 5 plans: 03-04 (~25 min), 03-05 (~8 min), 03-06 (~5 min), 04-01 (~16 min)
+- Trend: First decomposition plan on track, utility extraction as expected
 
 *Updated after each plan completion*
 
@@ -134,6 +119,11 @@ Recent decisions affecting current work:
 - [03-05]: search_common.h BSGS externs retained for bPload threads running before bsgs_context_t exists
 - [03-06]: is_base_minikey check uses raw_baseminikey != NULL instead of mode check -- semantically correct for -C flag detection
 - [03-06]: CFG-07 marked Partial not Complete -- io.cpp 22 local externs deferred to Phase 4
+- [04-01]: File-reading functions keep function-local externs (init-time only, not worth parameterizing yet)
+- [04-01]: g_kh_config_ptr file-scope pointer used for GPU found callback to access keyhunt_config_t
+- [04-01]: range_progress_start/end fields added to runtime_state_t for writekey range validation
+- [04-01]: acquire_base_key stays in keyhunt.cpp (deeply coupled to 8+ globals, future extraction target)
+- [04-01]: Reuse core/workpool.h for WorkPool struct; util/work_queue.h wraps include + extern g_work_pool
 
 ### Pending Todos
 
@@ -147,6 +137,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T06:22:17.260Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-monolith-decomposition/04-CONTEXT.md
+Last session: 2026-03-06T07:02:43Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: .planning/phases/04-monolith-decomposition/04-02-PLAN.md
