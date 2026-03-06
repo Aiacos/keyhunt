@@ -16,13 +16,13 @@ extern const mode_ops_t mode_xpoint_ops;    /* mode_xpoint.cpp */
 extern const mode_ops_t mode_rmd160_ops;    /* mode_rmd160.cpp */
 extern const mode_ops_t mode_vanity_ops;    /* mode_vanity.cpp */
 extern const mode_ops_t mode_minikeys_ops;  /* mode_minikeys.cpp */
+extern const mode_ops_t mode_bsgs_ops;      /* mode_bsgs.cpp */
 
 /*
  * mode_get_ops - Get operations for a given search mode
  *
- * Returns the mode_ops_t for registered modes (ADDRESS, XPOINT, RMD160).
- * Returns NULL for unregistered modes (BSGS uses its own
- * dispatch path in keyhunt.cpp until extracted).
+ * Returns the mode_ops_t for registered modes.
+ * Returns NULL for unregistered modes.
  */
 const mode_ops_t* mode_get_ops(int mode) {
     switch (mode) {
@@ -36,6 +36,8 @@ const mode_ops_t* mode_get_ops(int mode) {
             return &mode_vanity_ops;
         case MODE_MINIKEYS:
             return &mode_minikeys_ops;
+        case MODE_BSGS:
+            return &mode_bsgs_ops;
         default:
             return nullptr;
     }
