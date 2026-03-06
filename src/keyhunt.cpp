@@ -92,6 +92,7 @@
 #include "util/thread_util.h"
 #include "util/profiling.h"
 #include "util/work_queue.h"
+#include "globals.h"
 
 /* ============================================================================
  * Config Migration Helpers
@@ -109,72 +110,9 @@ static key_format_t flagsearch_to_key_format(int flagsearch) {
 typedef kh_profile_scope_t profile_scope_t;
 
 /* ============================================================================
- * Global variable definitions
+ * File-local (static) variables -- NOT moved to globals
  * ============================================================================ */
 
-/* struct checksumsha256 now declared in modes/bsgs_globals.h */
-
-struct address_value {
-    uint8_t value[20];
-};
-
-struct tothread {
-    int nt;
-    char *rs;
-    char *rpt;
-};
-
-struct bPload {
-    uint32_t threadid;
-    uint64_t from;
-    uint64_t to;
-    uint64_t counter;
-    uint64_t workload;
-    uint32_t aux;
-    uint32_t finished;
-};
-
-#if defined(_MSC_VER)
-#define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
-PACK(struct publickey
-{
-    uint8_t parity;
-    union {
-        uint8_t data8[32];
-        uint32_t data32[8];
-        uint64_t data64[4];
-    } X;
-});
-#else
-struct __attribute__((__packed__)) publickey {
-  uint8_t parity;
-    union {
-        uint8_t data8[32];
-        uint32_t data32[8];
-        uint64_t data64[4];
-    } X;
-};
-#endif
-
-const char *Ccoinbuffer_default = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-char *Ccoinbuffer = (char*) Ccoinbuffer_default;
-char *str_baseminikey = NULL;
-char *raw_baseminikey = NULL;
-char *minikeyN = NULL;
-int minikey_n_limit;
-
-const char *version = "0.2.230519 Satoshi Quest";
-
-uint32_t CPU_GRP_SIZE = 1024;
-int OPTIMAL_THREADS = 0;
-uint64_t OPTIMAL_N = 0;
-int OPTIMAL_KFACTOR = 0;
-
-std::vector<Point> Gn;
-Point _2Gn;
-
-uint32_t THREADBPWORKLOAD = 1048576;
-bool g_avx2_available = false;
 static keyhunt_ini_config_t g_config;
 static bool g_config_loaded = false;
 static const char *g_save_config_path = NULL;
@@ -207,88 +145,6 @@ void writevanitykey(bool compress,Int *key, keyhunt_config_t *config);
 int addvanity(char *target);
 int minimum_same_bytes(unsigned char* A,unsigned char* B, int length);
 
-keyhunt_config_t *g_kh_config_ptr = nullptr;
-
-const char *modes[7] = {"xpoint","address","bsgs","rmd160","pub2rmd","minikeys","vanity"};
-const char *cryptos[3] = {"btc","eth","all"};
-const char *publicsearch[3] = {"uncompress","compress","both"};
-const char *default_fileName = "addresses.txt";
-
-std::atomic<int> THREADOUTPUT{0};
-char *bit_range_str_min;
-char *bit_range_str_max;
-
-platform_thread_t *tid = NULL;
-platform_mutex_t write_keys;
-platform_mutex_t write_random;
-platform_mutex_t bsgs_thread;
-platform_mutex_t *bPload_mutex = NULL;
-
-uint64_t FINISHED_THREADS_COUNTER = 0;
-uint64_t FINISHED_THREADS_BP = 0;
-uint64_t THREADCYCLES = 0;
-uint64_t THREADCOUNTER = 0;
-std::atomic<uint64_t> FINISHED_ITEMS{0};
-uint64_t OLDFINISHED_ITEMS = 0;
-
-uint8_t byte_encode_crypto = 0x00;
-
-int vanity_rmd_targets = 0;
-int vanity_rmd_total = 0;
-int *vanity_rmd_limits = NULL;
-uint8_t ***vanity_rmd_limit_values_A = NULL;
-uint8_t ***vanity_rmd_limit_values_B = NULL;
-int vanity_rmd_minimun_bytes_check_length = 999999;
-char **vanity_address_targets = NULL;
-struct bloom *vanity_bloom = NULL;
-bloom_extended_t bloom;
-
-struct thread_counter *steps = NULL;
-struct thread_flag *ends = NULL;
-uint64_t N = 0;
-
-int FLAGSKIPCHECKSUM = 0;
-int FLAGENDOMORPHISM = 0;
-int FLAGBLOOMMULTIPLIER = 1;
-int FLAGVANITY = 0;
-int FLAGBASEMINIKEY = 0;
-int FLAGBSGSMODE = 0;
-int FLAGDEBUG = 0;
-int FLAGQUIET = 0;
-int FLAGMATRIX = 0;
-int FLAGPROGRESSBAR = 0;
-int FLAGVISUAL = 0;
-int KFACTOR = 1;
-int MAXLENGTHADDRESS = 20;
-int NTHREADS = 1;
-int FLAGTHREADS = 0;
-int FLAGSAVEREADFILE = 0;
-int FLAGREADEDFILE1 = 0;
-int FLAGREADEDFILE2 = 0;
-int FLAGREADEDFILE3 = 0;
-int FLAGREADEDFILE4 = 0;
-int FLAGUPDATEFILE1 = 0;
-int FLAGSTRIDE = 0;
-int FLAGSEARCH = SEARCH_BOTH;
-int FLAGBITRANGE = 0;
-int FLAGRANGE = 0;
-int FLAGFILE = 0;
-int FLAGMODE = MODE_ADDRESS;
-int FLAGCRYPTO = 0;
-int FLAGRAWDATA = 0;
-int FLAGRANDOM = 0;
-int FLAG_N = 0;
-int FLAGPRECALCUTED_P_FILE = 0;
-int FLAGGPU = 0;
-int FLAGGPU_FULL = 0;
-std::atomic<int> FLAGGPU_HYBRID{0};
-int DEBUGCOUNT = 0;
-
-std::atomic<uint64_t> g_gpu_keys_checked{0};
-std::atomic<uint64_t> g_gpu_keys_checked_cur{0};
-std::atomic<int> g_gpu_should_stop{0};
-int g_gpu_range_percent = 0;
-
 static gpu_multi_worker_t *g_multi_gpu_workers = NULL;
 static volatile sig_atomic_t g_sigint_received = 0;
 
@@ -308,29 +164,6 @@ void check_sigint_cleanup(void) {
     }
 }
 
-int bitrange = 0;
-char *str_N = NULL;
-char *range_start = NULL;
-char *range_end = NULL;
-char *str_stride = NULL;
-Int stride;
-Int OUTPUTSECONDS;
-
-uint64_t N_SEQUENTIAL_MAX = 4096;
-
-system_info_t g_sysinfo;
-gpu_backend_info_t g_gpu_backend_info;
-
-struct address_value *addressTable;
-
-Int ONE;
-Int ZERO;
-Int MPZAUX;
-Int n_range_start;
-Int n_range_end;
-Int n_range_diff;
-Int n_range_aux;
-
 /* Cleanup functions */
 static void cleanup_general_resources(void) {
     if (addressTable != NULL) {
@@ -343,9 +176,6 @@ static void cleanup_all_resources(void) {
     cleanup_general_resources();
     cleanup_bsgs_resources();
 }
-
-Int lambda,lambda2,beta,beta2;
-Secp256K1 *secp;
 
 #ifndef _WIN64
 static void configure_work_queue(size_t threadCount) {
