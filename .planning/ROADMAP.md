@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Test Baseline** - Fix all 19 pre-existing test failures and verify all 6 search modes against known answers
 - [x] **Phase 2: Sanitizer Coverage** - Achieve ASan, UBSan, and TSan clean builds with zero findings
 - [x] **Phase 3: Config Migration** - Eliminate all extern globals by wiring keyhunt_config_t into every search module
-- [x] **Phase 4: Monolith Decomposition** - Reduce keyhunt.cpp from ~5300 lines to a ~600-line orchestrator (completed 2026-03-06)
+- [ ] **Phase 4: Monolith Decomposition** - Reduce keyhunt.cpp from ~5300 lines to a ~600-line orchestrator
 - [ ] **Phase 5: CI Pipeline** - Green GitHub Actions matrix on Linux, Windows, and macOS with regression detection
 - [ ] **Phase 6: Fuzz and Advanced Verification** - libFuzzer harnesses for all untrusted inputs and GPU known-answer tests
 
@@ -86,7 +86,7 @@ Plans:
   3. `clang-tidy` with bugprone-* and clang-analyzer-security.* checks exits 0 on the entire src/ tree
   4. `cppcheck --enable=warning,error` exits 0 on the entire src/ tree
   5. The release build compiles with -D_FORTIFY_SOURCE=3, -fstack-protector-strong, and -fcf-protection without warnings
-**Plans:** 8/8 plans complete
+**Plans:** 10 plans
 
 Plans:
 - [x] 04-01-PLAN.md — Wire io.cpp through config (CFG-07) + extract utilities to src/util/
@@ -95,8 +95,10 @@ Plans:
 - [x] 04-04-PLAN.md — Extract BSGS mode (largest extraction)
 - [x] 04-05-PLAN.md — Extract GPU dispatch + slim keyhunt.cpp to orchestrator
 - [x] 04-06-PLAN.md — Static analysis gates (clang-tidy, cppcheck) + hardening flags
-- [ ] 04-07-PLAN.md — Gap closure: move BSGS globals to mode_bsgs.cpp, wire io.cpp readFile* through config
-- [ ] 04-08-PLAN.md — Gap closure: extract monitoring loop + utilities, slim keyhunt.cpp to 600 lines
+- [x] 04-07-PLAN.md — Gap closure: move BSGS globals to mode_bsgs.cpp, wire io.cpp readFile* through config
+- [x] 04-08-PLAN.md — Gap closure: extract monitoring loop + utilities, slim keyhunt.cpp to 600 lines
+- [ ] 04-09-PLAN.md — Gap closure: move shared globals to src/globals.h + src/globals.cpp, eliminate mode_bsgs.cpp externs
+- [ ] 04-10-PLAN.md — Gap closure: extract CLI parsing + GPU orchestration from main(), slim keyhunt.cpp to 600 lines
 
 ### Phase 5: CI Pipeline
 **Goal**: Every push and pull request is automatically built and tested on all three target platforms, with regressions caught before merge
@@ -129,6 +131,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 1. Test Baseline | 6/6 | Complete | - |
 | 2. Sanitizer Coverage | 4/4 | Complete | - |
 | 3. Config Migration | 6/6 | Complete   | 2026-03-06 |
-| 4. Monolith Decomposition | 8/8 | Complete   | 2026-03-06 |
+| 4. Monolith Decomposition | 8/10 | In Progress | - |
 | 5. CI Pipeline | 0/TBD | Not started | - |
 | 6. Fuzz and Advanced Verification | 0/TBD | Not started | - |
