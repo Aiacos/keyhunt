@@ -57,6 +57,101 @@ const char *cli_gpu_mode_name(gpu_mode_t mode) {
     return "unknown";
 }
 
+const char *get_mode_name(int mode) {
+    switch (mode) {
+        case MODE_XPOINT:   return "xpoint";
+        case MODE_ADDRESS:  return "address";
+        case MODE_BSGS:     return "bsgs";
+        case MODE_RMD160:   return "rmd160";
+        case MODE_PUB2RMD:  return "pub2rmd";
+        case MODE_MINIKEYS: return "minikeys";
+        case MODE_VANITY:   return "vanity";
+        default:            return "unknown";
+    }
+}
+
+void menu(void) {
+    printf("\n");
+    printf("keyhunt - High-performance cryptocurrency private key search tool\n");
+    printf("\n");
+    printf("USAGE:\n");
+    printf("  keyhunt -m <mode> -f <file> [options]\n");
+    printf("\n");
+    printf("MODES (-m):\n");
+    printf("  address     Search for Bitcoin addresses using bloom filters (default)\n");
+    printf("  rmd160      Search for RIPEMD160 hashes directly\n");
+    printf("  xpoint      Search for public key X-coordinates (fastest for known pubkeys)\n");
+    printf("  bsgs        Baby Step Giant Step algorithm for known public keys\n");
+    printf("  vanity      Generate vanity addresses with specific prefixes\n");
+    printf("\n");
+    printf("REQUIRED OPTIONS:\n");
+    printf("  -f <file>   Input file with addresses, xpoints, or public keys\n");
+    printf("  -m <mode>   Search mode (see MODES above)\n");
+    printf("\n");
+    printf("COMMON OPTIONS:\n");
+    printf("  -h, --help  Show this help message\n");
+    printf("  -t <num>    Number of threads (default: auto-detect CPU cores)\n");
+    printf("  -b <bits>   Bit range for puzzle solving (e.g., 66 for puzzle #66)\n");
+    printf("  -r <range>  Search range as START:END in hex (e.g., 1:FFFFFFFF)\n");
+    printf("  -R          Random search mode (default behavior)\n");
+    printf("  -q          Quiet mode - suppress thread output\n");
+    printf("  -s <secs>   Stats output interval in seconds (0 to disable)\n");
+    printf("  -l <type>   Address type: compress, uncompress, both\n");
+    printf("  -c <crypto> Cryptocurrency: btc, eth (only with -m address)\n");
+    printf("  -e          Enable endomorphism (6x speed for full curve search)\n");
+    printf("  -I <stride> Stride value for sequential search\n");
+    printf("  -P          Show segmented range progress indicator\n");
+    printf("  -M          Matrix display mode (slower but cool looking)\n");
+    printf("\n");
+    printf("BSGS OPTIONS:\n");
+    printf("  -n <value>  N value - larger N uses more RAM but faster search\n");
+    printf("  -k <value>  K factor multiplier for M (more RAM, more speed)\n");
+    printf("  -B <mode>   BSGS search pattern: sequential, backward, both, random, dance\n");
+    printf("  -S          Save/load BSGS data (bloom filters and bP tables)\n");
+    printf("  -6          Skip SHA256 checksum verification on data files\n");
+    printf("\n");
+    printf("VANITY OPTIONS:\n");
+    printf("  -v <prefix> Vanity address prefix to search for\n");
+    printf("\n");
+    printf("MINIKEY OPTIONS:\n");
+    printf("  -C <base>   Set 22-character minikey base (e.g., SRPqx8QiwnW4WNWnTVa2W5)\n");
+    printf("  -8 <alpha>  Set custom Base58 alphabet for minikeys\n");
+    printf("\n");
+    printf("GPU OPTIONS:\n");
+    printf("  -G <mode>   GPU mode: auto, on, off (default: off)\n");
+    printf("\n");
+    printf("ADVANCED OPTIONS:\n");
+    printf("  -z <mult>   Bloom filter size multiplier (>= 1)\n");
+    printf("  -W, --wizard          Interactive setup wizard\n");
+    printf("  --wizard-client <hp>  Non-interactive client mode (host:port)\n");
+    printf("  --config <file>       Load configuration from file\n");
+    printf("  --save-config <file>  Save current configuration to file\n");
+    printf("  --visual              Enhanced progress display with graphs and stats\n");
+    printf("\n");
+    printf("QUICK START EXAMPLES:\n");
+    printf("\n");
+    printf("  # Search for Bitcoin addresses in a 32-bit range:\n");
+    printf("  ./keyhunt -m address -f targets.txt -r 1:FFFFFFFF\n");
+    printf("\n");
+    printf("  # Solve puzzle #66 with RIPEMD160 hashes:\n");
+    printf("  ./keyhunt -m rmd160 -f puzzle66.rmd -b 66 -l compress -R -q -t 8\n");
+    printf("\n");
+    printf("  # BSGS mode for known public key:\n");
+    printf("  ./keyhunt -m bsgs -f pubkey.txt -b 125 -q -S -R\n");
+    printf("\n");
+    printf("  # Search for vanity address starting with '1ABC':\n");
+    printf("  ./keyhunt -m vanity -v 1ABC -t 4\n");
+    printf("\n");
+    printf("For more information, see: https://github.com/albertobsd/keyhunt\n");
+    printf("\n");
+    printf("Developed by AlbertoBSD\n");
+    printf("Tips BTC: 1Coffee1jV4gB5gaXfHgSHDz9xx9QSECVW\n");
+    printf("Thanks to Iceland for ideas and contributions.\n");
+    printf("Tips to Iceland: bc1q39meky2mn5qjq704zz0nnkl0v7kj4uz6r529at\n");
+    printf("\n");
+    exit(EXIT_SUCCESS);
+}
+
 static void cli_set_defaults(cli_args_t *args) {
     if (args == NULL) return;
 

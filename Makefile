@@ -159,8 +159,9 @@ SORT_OBJS := $(OBJDIR)/sort/sort.o
 CRYPTO_OBJS := $(OBJDIR)/crypto/address_util.o $(OBJDIR)/crypto/bloom_init.o
 IO_OBJS := $(OBJDIR)/io/io.o
 MODES_OBJS := $(OBJDIR)/modes/modes.o $(OBJDIR)/modes/mode_address.o $(OBJDIR)/modes/mode_xpoint.o $(OBJDIR)/modes/mode_rmd160.o $(OBJDIR)/modes/mode_vanity.o $(OBJDIR)/modes/mode_minikeys.o $(OBJDIR)/modes/mode_bsgs.o
+MONITORING_OBJS := $(OBJDIR)/monitoring/monitoring.o
 
-COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/bech32/bech32.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(DATABASE_OBJS) $(DIAGNOSTICS_OBJS) $(ERROR_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS) $(SORT_OBJS) $(CRYPTO_OBJS) $(IO_OBJS) $(MODES_OBJS)
+COMMON_OBJS := $(OBJDIR)/base58/base58.o $(OBJDIR)/bech32/bech32.o $(OBJDIR)/rmd160/rmd160.o $(OBJDIR)/xxhash/xxhash.o $(CORE_OBJS) $(CONFIG_OBJS) $(GPU_OBJS) $(BLOOM_OBJS) $(HASH_OBJS) $(SHA3_OBJS) $(PLATFORM_OBJS) $(BSGS_OBJS) $(HYBRID_OBJS) $(UTIL_OBJS) $(DIST_OBJS) $(DATABASE_OBJS) $(DIAGNOSTICS_OBJS) $(ERROR_OBJS) $(OUTPUT_OBJS) $(PROGRESS_OBJS) $(BENCHMARK_OBJS) $(CLI_OBJS) $(SEARCH_OBJS) $(SORT_OBJS) $(CRYPTO_OBJS) $(IO_OBJS) $(MODES_OBJS) $(MONITORING_OBJS)
 
 # Legacy common excludes SEARCH_OBJS, SORT_OBJS, CRYPTO_OBJS, IO_OBJS
 # (keyhunt_legacy.cpp contains its own implementations of these functions)
@@ -177,7 +178,7 @@ LEGACY_EXE := keyhunt_legacy$(EXE_EXT)
 TEST_EXE := run_tests$(EXE_EXT)
 
 # Create obj directory structure
-OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/bech32 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/diagnostics $(OBJDIR)/error $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/modes $(OBJDIR)/tests $(OBJDIR)/benchmarks
+OBJ_DIRS := $(OBJDIR) $(OBJDIR)/base58 $(OBJDIR)/bech32 $(OBJDIR)/rmd160 $(OBJDIR)/xxhash $(OBJDIR)/core $(OBJDIR)/config $(OBJDIR)/gpu $(OBJDIR)/bloom $(OBJDIR)/hash $(OBJDIR)/sha3 $(OBJDIR)/platform $(OBJDIR)/bsgs $(OBJDIR)/hybrid $(OBJDIR)/util $(OBJDIR)/distributed $(OBJDIR)/database $(OBJDIR)/diagnostics $(OBJDIR)/error $(OBJDIR)/wizard $(OBJDIR)/secp256k1 $(OBJDIR)/gmp256k1 $(OBJDIR)/search $(OBJDIR)/sort $(OBJDIR)/crypto $(OBJDIR)/io $(OBJDIR)/modes $(OBJDIR)/monitoring $(OBJDIR)/tests $(OBJDIR)/benchmarks
 
 .PHONY: all clean legacy bsgsd directories test test-e2e test-all run_tests sanitize tsan coverage pgo-generate pgo-train pgo-use pgo-clean
 

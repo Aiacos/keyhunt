@@ -23,6 +23,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <math.h>
+
+#include "../error/enhanced_error.h"
+#include "../secp256k1/SECP256k1.h"
 
 /* ============================================================================
  * File-local state
@@ -315,4 +319,65 @@ int gpu_dispatch_run_full_search(keyhunt_config_t *config_ptr,
 
 int gpu_dispatch_bloom_uploaded(void) {
     return g_gpu_bloom_uploaded;
+}
+
+/* ============================================================================
+ * GPU self-test (hash160 from X-coordinates)
+ * ============================================================================ */
+
+bool gpu_selftest_hash160_fromX() {
+    const size_t kCount = 16;
+    alignas(32) uint8_t x32_be[kCount * 32];
+    Int xs[kCount];
+
+    for (size_t i = 0; i < kCount; ++i) {
+        uint8_t bytes[32];
+        for (size_t j = 0; j < 32; ++j) {
+            bytes[j] = (uint8_t)((i * 17 + j) & 0xFF);
+        }
+        xs[i].Set32Bytes(bytes);
+        memcpy(x32_be + i * 32, bytes, 32);
+    }
+
+    alignas(32) uint8_t cpu02[kCount][20];
+    alignas(32) uint8_t cpu03[kCount][20];
+    for (size_t i = 0; i < kCount; i += 4) {
+        secp->GetHash160_fromX(P2PKH, 0x02, &xs[i], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+            cpu02[i], cpu02[i + 1], cpu02[i + 2], cpu02[i + 3]);
+        secp->GetHash160_fromX(P2PKH, 0x03, &xs[i], &xs[i + 1], &xs[i + 2], &xs[i + 3],
+            cpu03[i], cpu03[i + 1], cpu03[i + 2], cpu03[i + 3]);
+    }
+
+    alignas(32) uint8_t gpu02[kCount][20];
+    alignas(32) uint8_t gpu03[kCount][20];
+    if (gpu_hash160_fromX_batch(x32_be, kCount, gpu02[0], gpu03[0]) != 0) {
+        return false;
+    }
+
+    for (size_t i = 0; i < kCount; ++i) {
+        if (memcmp(cpu02[i], gpu02[i], 20) != 0) return false;
+        if (memcmp(cpu03[i], gpu03[i], 20) != 0) return false;
+    }
+
+    return true;
+}
+
+/* ============================================================================
+ * Hybrid GPU range percent default
+ * ============================================================================ */
+
+extern gpu_backend_info_t g_gpu_backend_info;
+
+int hybrid_get_gpu_range_percent_default(int cpu_threads) {
+    if (cpu_threads <= 0) return 80;
+    const int sms = g_gpu_backend_info.multiprocessors;
+    if (sms > 0) {
+        const double ratio = ((double)sms * 5.0) / (double)cpu_threads;
+        const double pct = (ratio / (ratio + 1.0)) * 100.0;
+        int v = (int)lround(pct);
+        if (v < 50) v = 50;
+        if (v > 99) v = 99;
+        return v;
+    }
+    return 80;
 }

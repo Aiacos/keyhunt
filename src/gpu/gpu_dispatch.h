@@ -114,4 +114,16 @@ platform_thread_return_t PLATFORM_THREAD_CALL gpu_dispatch_hybrid_thread(void *a
  */
 int gpu_dispatch_bloom_uploaded(void);
 
+/*
+ * GPU self-test: verify GPU hash160 against CPU reference for 16 test points.
+ * Returns true if GPU matches CPU output, false on mismatch or error.
+ */
+bool gpu_selftest_hash160_fromX(void);
+
+/*
+ * Calculate default GPU range percent for hybrid mode based on SM/CU count vs CPU threads.
+ * Returns percentage (50-99) of range to assign to GPU.
+ */
+int hybrid_get_gpu_range_percent_default(int cpu_threads);
+
 #endif /* GPU_DISPATCH_H */
