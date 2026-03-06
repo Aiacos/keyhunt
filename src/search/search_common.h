@@ -286,9 +286,8 @@ void checksumalidate(char *address, char *checksum, char *checksum_calculated);
 /* BSGS check function */
 int bsgs_point_check(Point &p, Int &key);
 
-/* Thread-safe random */
-int thread_rand(void);
-int thread_rand_n(int n);
+/* Thread-safe random (defined in util/thread_util.cpp) */
+#include "../util/thread_util.h"
 
 /* ============================================================================
  * Thread Entry Points (search mode implementations)

@@ -46,8 +46,8 @@ void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3,
 /* From crypto/address_util.cpp */
 extern "C" void rmd160toaddress_dst(char *rmd, char *dst);
 
-/* profile_set_thread is defined in keyhunt.cpp */
-extern void profile_set_thread(int idx);
+/* Profiling support (defined in util/profiling.cpp) */
+#include "../util/profiling.h"
 
 /* ============================================================================
  * Minikey Utility Functions

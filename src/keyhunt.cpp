@@ -93,31 +93,11 @@
  * Allocate zero-initialized memory aligned to cache line boundaries (64 bytes).
  * This prevents false sharing between threads accessing adjacent array elements.
  * Uses _aligned_malloc on Windows (MinGW/MSVC) or aligned_alloc on POSIX.
+ * Now defined in util/thread_util.cpp.
  */
-static inline void* aligned_calloc(size_t alignment, size_t count, size_t elem_size) {
-    if (count != 0 && elem_size > SIZE_MAX / count) return NULL;
-    size_t total_size = count * elem_size;
-    // Round up to multiple of alignment
-    total_size = ((total_size + alignment - 1) / alignment) * alignment;
-#if defined(_WIN32) || defined(_WIN64)
-    void* ptr = _aligned_malloc(total_size, alignment);
-#else
-    void* ptr = aligned_alloc(alignment, total_size);
-#endif
-    if (ptr) {
-        memset(ptr, 0, total_size);  // Zero-initialize like calloc
-    }
-    return ptr;
-}
-
-/* Portable aligned free (matches aligned_calloc) */
-static inline void aligned_free(void *ptr) {
-#if defined(_WIN32) || defined(_WIN64)
-    _aligned_free(ptr);
-#else
-    free(ptr);
-#endif
-}
+#include "util/thread_util.h"
+#include "util/profiling.h"
+#include "util/work_queue.h"
 
 /* ============================================================================
  * Config Migration Helpers
@@ -135,38 +115,7 @@ static key_format_t flagsearch_to_key_format(int flagsearch) {
     }
 }
 
-/* ============================================================================
- * Thread-Safe Random Number Generation
- * ============================================================================ */
-
-/*
- * Thread-safe random number generator using thread-local state.
- * This replaces rand() which is not thread-safe.
- */
-static thread_local unsigned int g_thread_rand_state = 0;
-static thread_local bool g_thread_rand_initialized = false;
-
-static inline void thread_rand_init(void) {
-    if (!g_thread_rand_initialized) {
-        /* Seed with time + thread ID for uniqueness */
-        g_thread_rand_state = (unsigned int)(time(NULL) ^ (uintptr_t)pthread_self() ^ clock());
-        g_thread_rand_initialized = true;
-    }
-}
-
-/* Thread-safe replacement for rand() */
-int thread_rand(void) {
-    thread_rand_init();
-    /* Simple LCG (same as glibc rand) */
-    g_thread_rand_state = g_thread_rand_state * 1103515245 + 12345;
-    return (int)((g_thread_rand_state >> 16) & 0x7fff);
-}
-
-/* Thread-safe random in range [0, n) */
-int thread_rand_n(int n) {
-    if (n <= 0) return 0;
-    return thread_rand() % n;
-}
+/* Thread-safe random: now defined in util/thread_util.cpp */
 
 /* Mode, crypto, and search constants now provided by search/search_common.h */
 
@@ -222,135 +171,14 @@ static inline bool env_truthy_kh(const char *name) {
 	return true;
 }
 
-typedef struct {
-	uint64_t ns_ec;
-	uint64_t ns_hash;
-	uint64_t ns_bloom;
-	uint64_t ns_binsearch;
-	uint64_t ns_write;
-	uint64_t keys;
-} profile_counters_t;
-
-bool g_profile_enabled = false;
-static profile_counters_t *g_profile_counters = NULL;
-static int g_profile_thread_count = 0;
-static profile_counters_t g_profile_prev_agg;
-
-thread_local profile_counters_t *tls_prof = NULL;
-
-static inline uint64_t profile_now_ns() {
-	return platform_time_now_ns();
-}
-
-struct profile_scope_t {
-	uint64_t start;
-	uint64_t *target;
-	explicit profile_scope_t(uint64_t *t) : start(0), target(t) {
-		if (t) start = profile_now_ns();
-	}
-	~profile_scope_t() {
-		if (target) {
-			*target += (profile_now_ns() - start);
-		}
-	}
-};
-
-#define KH_PROF_PTR() ((__builtin_expect(g_profile_enabled, 0) && tls_prof) ? tls_prof : NULL)
-#define KH_PROF_SCOPE(field) profile_scope_t _kh_prof_scope_##__LINE__(KH_PROF_PTR() ? &KH_PROF_PTR()->field : NULL)
-#define KH_PROF_ADD_KEYS(n) do { profile_counters_t *p = KH_PROF_PTR(); if (p) p->keys += (uint64_t)(n); } while(0)
-
-static inline void profile_init_threads(int nthreads) {
-	if (!g_profile_enabled || nthreads <= 0 || g_profile_counters) return;
-	g_profile_counters = (profile_counters_t *)calloc((size_t)nthreads, sizeof(profile_counters_t));
-	if (!g_profile_counters) {
-		error_report_t report;
-		size_t required_bytes = (size_t)nthreads * sizeof(profile_counters_t);
-		error_context_t ctx = ERROR_CONTEXT_VALUES(
-			ERROR_CAT_MEMORY,
-			ERROR_SEV_WARNING,
-			"profiling allocation",
-			"Failed to allocate memory for profiling counters",
-			required_bytes / (1024 * 1024),  // Convert to MB
-			0  // We don't have available memory here
-		);
-		error_report(&ctx, &report);
-		error_print(&report);
-		output_warning("Profiling disabled due to memory allocation failure\n");
-		g_profile_enabled = false;
-		return;
-	}
-	g_profile_thread_count = nthreads;
-	memset(&g_profile_prev_agg, 0, sizeof(g_profile_prev_agg));
-}
-
-void profile_set_thread(int idx) {
-	if (!g_profile_enabled || !g_profile_counters || idx < 0 || idx >= g_profile_thread_count) {
-		tls_prof = NULL;
-		return;
-	}
-	tls_prof = &g_profile_counters[idx];
-}
-
-static inline void profile_aggregate(profile_counters_t *out) {
-	memset(out, 0, sizeof(*out));
-	if (!g_profile_enabled || !g_profile_counters) return;
-	for (int i = 0; i < g_profile_thread_count; i++) {
-		out->ns_ec += g_profile_counters[i].ns_ec;
-		out->ns_hash += g_profile_counters[i].ns_hash;
-		out->ns_bloom += g_profile_counters[i].ns_bloom;
-		out->ns_binsearch += g_profile_counters[i].ns_binsearch;
-		out->ns_write += g_profile_counters[i].ns_write;
-		out->keys += g_profile_counters[i].keys;
-	}
-}
-
-static void append_profile_info(char *buffer, size_t bufferSize) {
-	if (!g_profile_enabled || !g_profile_counters || bufferSize < 4) return;
-
-	profile_counters_t cur;
-	profile_aggregate(&cur);
-
-	profile_counters_t delta;
-	delta.ns_ec = cur.ns_ec - g_profile_prev_agg.ns_ec;
-	delta.ns_hash = cur.ns_hash - g_profile_prev_agg.ns_hash;
-	delta.ns_bloom = cur.ns_bloom - g_profile_prev_agg.ns_bloom;
-	delta.ns_binsearch = cur.ns_binsearch - g_profile_prev_agg.ns_binsearch;
-	delta.ns_write = cur.ns_write - g_profile_prev_agg.ns_write;
-	delta.keys = cur.keys - g_profile_prev_agg.keys;
-	g_profile_prev_agg = cur;
-
-	const uint64_t total_ns = delta.ns_ec + delta.ns_hash + delta.ns_bloom + delta.ns_binsearch + delta.ns_write;
-	if (delta.keys == 0 || total_ns == 0) return;
-
-	const unsigned ec_pct = (unsigned)((delta.ns_ec * 100ULL) / total_ns);
-	const unsigned hash_pct = (unsigned)((delta.ns_hash * 100ULL) / total_ns);
-	const unsigned bloom_pct = (unsigned)((delta.ns_bloom * 100ULL) / total_ns);
-	const unsigned bin_pct = (unsigned)((delta.ns_binsearch * 100ULL) / total_ns);
-	const unsigned write_pct = (unsigned)((delta.ns_write * 100ULL) / total_ns);
-	const uint64_t ns_per_key = total_ns / delta.keys;
-
-	char addition[256];
-	snprintf(addition, sizeof(addition),
-	         " | prof %luns/key EC%u Hash%u Bloom%u Bin%u Write%u",
-	         (unsigned long)ns_per_key, ec_pct, hash_pct, bloom_pct, bin_pct, write_pct);
-
-	size_t len = strlen(buffer);
-	char tail = 0;
-	if (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
-		tail = buffer[len - 1];
-		buffer[len - 1] = '\0';
-		len--;
-	}
-	size_t remaining = (len < bufferSize) ? bufferSize - len : 0;
-	if (remaining > 1) {
-		strncat(buffer, addition, remaining - 1);
-		len = strlen(buffer);
-	}
-	if (tail != 0 && len + 1 < bufferSize) {
-		buffer[len] = tail;
-		buffer[len + 1] = '\0';
-	}
-}
+/* Profiling: profile_counters_t, g_profile_enabled, tls_prof, profile_init_threads,
+ * profile_set_thread, profile_aggregate, append_profile_info now defined in
+ * util/profiling.h and util/profiling.cpp.
+ *
+ * keyhunt.cpp still uses the KH_PROF_* macros (from profiling.h) and
+ * the profile_scope_t alias for local scope guards.
+ */
+typedef kh_profile_scope_t profile_scope_t;
 
 // Append adaptive scheduler stats to status output (hybrid mode only)
 static void append_adaptive_info(char *buffer, size_t bufferSize) {
@@ -388,96 +216,7 @@ static void append_adaptive_info(char *buffer, size_t bufferSize) {
 	}
 }
 
-// ============================================================================
-// Work-stealing pool for GPU/CPU collaboration
-// Both GPU and CPU threads pull work blocks from the same pool for dynamic
-// load balancing. The faster processor (GPU) naturally gets more work.
-// ============================================================================
-	struct WorkPool {
-		std::atomic<uint64_t> next_block;      // Next available block index
-		uint64_t block_size;                    // Keys per block (immutable after init)
-		Int range_base;                         // Starting point of range (IMMUTABLE after init)
-		Int range_end;                          // End of range (IMMUTABLE after init)
-		std::atomic<bool> enabled;              // Work pool is active
-		std::atomic<bool> exhausted;            // All work has been taken
-		std::atomic<bool> initialized;          // Set true after init() completes (barrier for readers)
-
-		WorkPool() : next_block(0), block_size(0), enabled(false), exhausted(false), initialized(false) {}
-	
-		// Initialize work pool with a range
-		// NOTE: range_base, range_end, and block_size are IMMUTABLE after init()
-		void init(Int *start, Int *end, uint64_t blk_size) {
-			// Set immutable fields first (before initialized barrier)
-			range_base.Set(start);
-			range_end.Set(end);
-			block_size = blk_size;
-
-			next_block.store(0, std::memory_order_release);
-			exhausted.store(false, std::memory_order_release);
-			enabled.store(true, std::memory_order_release);
-			// Memory barrier: initialized must be set AFTER all other fields
-			initialized.store(true, std::memory_order_release);
-		}
-
-	// Get next work block (thread-safe, lock-free)
-	// Returns true if work was assigned, false if no more work
-	// NOTE: range_base, range_end, block_size are IMMUTABLE after init(), safe to read without lock
-		bool get_block(Int &start_out, Int &end_out) {
-			// Check initialized barrier first (acquire to sync with init's release)
-			if (!initialized.load(std::memory_order_acquire)) return false;
-			if (!enabled.load(std::memory_order_acquire) ||
-			    exhausted.load(std::memory_order_acquire)) return false;
-
-			uint64_t block_idx = next_block.fetch_add(1, std::memory_order_acq_rel);
-
-			// Calculate start = range_base + block_idx * block_size
-			// Use base10 conversion to avoid signed overflow when block_idx > INT64_MAX.
-			// NOTE: range_base and block_size are immutable after init(), safe to read
-			char tmp[32];
-			Int offset;
-			snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
-			offset.SetBase10(tmp);
-			Int mult;
-			snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_idx);
-			mult.SetBase10(tmp);
-			offset.Mult(&mult);
-
-			start_out.Set(&range_base);
-			start_out.Add(&offset);
-			// NOTE: range_end is immutable after init(), safe to read
-			if (!start_out.IsLower(&range_end)) {
-				exhausted.store(true, std::memory_order_release);
-				return false;
-			}
-
-			// Calculate end = min(start + block_size, range_end)
-			end_out.Set(&start_out);
-			Int blk;
-			snprintf(tmp, sizeof(tmp), "%llu", (unsigned long long)block_size);
-			blk.SetBase10(tmp);
-			end_out.Add(&blk);
-
-			if (end_out.IsGreater(&range_end)) {
-				end_out.Set(&range_end);
-			}
-
-			return true;
-		}
-
-		// Check if pool is exhausted
-		bool is_exhausted() const {
-			return exhausted.load(std::memory_order_acquire);
-		}
-
-		// Disable the pool
-		void disable() {
-			enabled.store(false, std::memory_order_release);
-			exhausted.store(true, std::memory_order_release);
-		}
-	};
-
-// Global work pool instance
-WorkPool g_work_pool;
+/* WorkPool and g_work_pool now defined in util/work_queue.h and util/work_queue.cpp */
 
 struct checksumsha256	{
 	char data[32];
@@ -5119,20 +4858,7 @@ bool sub_u64_if_fits(const Int &a, const Int &b, uint64_t *out) {
 
 /* bsgs_secondcheck and bsgs_thirdcheck definitions moved to search/search_bsgs.cpp */
 
-void sleep_ms(int milliseconds)	{ // cross-platform sleep function
-#if defined(_WIN64) && !defined(__CYGWIN__)
-    Sleep(milliseconds);
-#elif _POSIX_C_SOURCE >= 199309L
-    struct timespec ts;
-    ts.tv_sec = milliseconds / 1000;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    nanosleep(&ts, NULL);
-#else
-    if (milliseconds >= 1000)
-      sleep(milliseconds / 1000);
-    usleep((milliseconds % 1000) * 1000);
-#endif
-}
+/* sleep_ms now defined in util/thread_util.cpp */
 
 
 void init_generator()	{

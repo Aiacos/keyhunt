@@ -47,77 +47,23 @@
 #include <time.h>
 
 /* ============================================================================
- * External Dependencies (defined in keyhunt.cpp)
+ * External Dependencies
  *
  * Infrastructure externs that remain (not config-mapped):
- * - g_sysinfo: hardware detection structure
- * - g_work_pool / cpu_cached_block_*: work-stealing infrastructure
- * - g_profile_enabled / tls_prof / profile_set_thread: profiling
- * - acquire_base_key: key acquisition from work pool
+ * - g_sysinfo: hardware detection structure (defined in keyhunt.cpp)
+ * - cpu_cached_block_*: work-stealing thread-local cache (defined in keyhunt.cpp)
+ * - acquire_base_key: key acquisition from work pool (defined in keyhunt.cpp)
  * ============================================================================ */
+
+#include "../util/profiling.h"
+#include "../util/work_queue.h"
 
 extern system_info_t g_sysinfo;
 
-/* Work pool / work queue (defined in keyhunt.cpp) */
-extern WorkPool g_work_pool;
-
-/* Thread-local block cache for work-stealing */
+/* Thread-local block cache for work-stealing (defined in keyhunt.cpp) */
 extern thread_local Int cpu_cached_block_start;
 extern thread_local Int cpu_cached_block_end;
 extern thread_local bool cpu_cached_block_valid;
-
-/* ============================================================================
- * Profiling Support
- *
- * These mirror the profiling macros defined in keyhunt.cpp.
- * We need local copies since the originals are file-static.
- * The profile_counters_t matches keyhunt.cpp's profile_counters_t
- * layout (which differs from search_utils.h's version).
- * ============================================================================ */
-
-typedef struct {
-	uint64_t ns_ec;
-	uint64_t ns_hash;
-	uint64_t ns_bloom;
-	uint64_t ns_binsearch;
-	uint64_t ns_write;
-	uint64_t keys;
-} profile_counters_t;
-
-extern bool g_profile_enabled;
-extern thread_local profile_counters_t *tls_prof;
-
-/* High-resolution monotonic time in nanoseconds */
-static inline uint64_t kh_profile_now_ns(void) {
-#if defined(_WIN64) && !defined(__CYGWIN__)
-	LARGE_INTEGER freq, cnt;
-	QueryPerformanceFrequency(&freq);
-	QueryPerformanceCounter(&cnt);
-	return (uint64_t)((double)cnt.QuadPart / freq.QuadPart * 1e9);
-#else
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-#endif
-}
-
-struct kh_profile_scope_t {
-	uint64_t start;
-	uint64_t *target;
-	explicit kh_profile_scope_t(uint64_t *t) : start(0), target(t) {
-		if (t) start = kh_profile_now_ns();
-	}
-	~kh_profile_scope_t() {
-		if (target) *target += (kh_profile_now_ns() - start);
-	}
-};
-
-#define KH_PROF_PTR() ((__builtin_expect(g_profile_enabled, 0) && tls_prof) ? tls_prof : NULL)
-#define KH_PROF_SCOPE(field) kh_profile_scope_t _kh_prof_scope_##__LINE__(KH_PROF_PTR() ? &KH_PROF_PTR()->field : NULL)
-#define KH_PROF_ADD_KEYS(n) do { profile_counters_t *p = KH_PROF_PTR(); if (p) p->keys += (uint64_t)(n); } while(0)
-
-/* profile_set_thread: sets tls_prof for the current thread. Defined in keyhunt.cpp. */
-extern void profile_set_thread(int idx);
 
 /* int_sub_to_u64: defined in search_utils.h (requires BIGINTH) */
 
@@ -670,7 +616,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 					}
 
 				profile_counters_t *prof = KH_PROF_PTR();
-				const uint64_t ec_start = prof ? kh_profile_now_ns() : 0;
+				const uint64_t ec_start = prof ? platform_time_now_ns() : 0;
 
 				for(i = 0; i < hLength; i++) {
 					dx[i].ModSub(&Gn[i].x,&startP.x);
@@ -782,7 +728,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process(void *vargp) {
 					endomorphism_beta2[0].x.ModMulK1(&pn.x, &beta2);
 				}
 
-				if (prof) prof->ns_ec += (kh_profile_now_ns() - ec_start);
+				if (prof) prof->ns_ec += (platform_time_now_ns() - ec_start);
 				if((local_mode == MODE_RMD160 || local_mode == MODE_ADDRESS) && local_crypto == CRYPTO_BTC && !local_endomorphism) {
 					process_rmd160_batch_btc_simple(config, key_mpz, pts, count);
 				}

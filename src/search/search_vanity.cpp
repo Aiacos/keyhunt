@@ -55,33 +55,15 @@
  * ============================================================================ */
 
 #include "../core/sysinfo.h"
+#include "../util/profiling.h"
+#include "../util/work_queue.h"
+
 extern system_info_t g_sysinfo;
 
-/* WorkPool (defined in keyhunt.cpp) */
-#include "../core/workpool.h"
-extern WorkPool g_work_pool;
-
-/* Thread-local block cache for work-stealing */
+/* Thread-local block cache for work-stealing (defined in keyhunt.cpp) */
 extern thread_local Int cpu_cached_block_start;
 extern thread_local Int cpu_cached_block_end;
 extern thread_local bool cpu_cached_block_valid;
-
-/* ============================================================================
- * Profiling Support (mirrors keyhunt.cpp)
- * ============================================================================ */
-
-typedef struct {
-	uint64_t ns_ec;
-	uint64_t ns_hash;
-	uint64_t ns_bloom;
-	uint64_t ns_binsearch;
-	uint64_t ns_write;
-	uint64_t keys;
-} profile_counters_t;
-
-extern bool g_profile_enabled;
-extern thread_local profile_counters_t *tls_prof;
-extern void profile_set_thread(int idx);
 
 /* acquire_base_key is defined in keyhunt.cpp */
 extern bool acquire_base_key(Int &key);

@@ -37,8 +37,8 @@
 #include "../secure_file.h"
 #include <cmath>
 
-/* Infrastructure function externs (not BSGS state) */
-extern void profile_set_thread(int idx);
+/* Infrastructure externs */
+#include "../util/profiling.h"
 extern system_info_t g_sysinfo;
 
 /**
