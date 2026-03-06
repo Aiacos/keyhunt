@@ -1,0 +1,9 @@
+---
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-security.*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape
+HeaderFilterRegex: 'src/(modes|util|io|search|config|gpu|platform)/'
+WarningsAsErrors: ''

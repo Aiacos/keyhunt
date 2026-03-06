@@ -42,6 +42,7 @@ endif
 
 OPT_FLAGS := -O2 -ftree-vectorize -funroll-loops -pipe
 WARN_FLAGS := -Wall -Wextra
+HARDEN_FLAGS := -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fcf-protection
 
 CXXFLAGS ?=
 CFLAGS ?=
@@ -113,8 +114,8 @@ GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_unified.o
 # Combine backend objects with common GPU objects
 GPU_OBJS := $(GPU_BACKEND_OBJS) $(GPU_COMMON_OBJS)
 
-CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
-CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES)
+CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(HARDEN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
+CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(HARDEN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES)
 CXXFLAGS += $(GPU_CXXFLAGS)
 
 LDFLAGS ?=
@@ -691,4 +692,23 @@ test_intgroup_avx2: directories $(SECP256K1_OBJS)
 	@echo "  ./test_intgroup_avx2"
 	@echo ""
 
-.PHONY: fuzz fuzz_afl
+.PHONY: fuzz fuzz_afl clang-tidy cppcheck
+
+# ============================================================================
+# Static Analysis Targets
+# ============================================================================
+# Usage:
+#   make clang-tidy    # Run clang-tidy on src/ (requires compile_commands.json)
+#   make cppcheck      # Run cppcheck on src/
+# ============================================================================
+
+clang-tidy: compile_commands.json
+	find src/ -name '*.cpp' -not -path 'src/secp256k1/*' -not -path 'src/gmp256k1/*' \
+	  | xargs -P4 clang-tidy -p . 2>&1 | tee clang-tidy-report.txt
+	@! grep -c "warning:" clang-tidy-report.txt || echo "Warnings found"
+
+cppcheck:
+	cppcheck --enable=warning --error-exitcode=1 \
+	  --suppress=dangerousTypeCast:src/secp256k1/Int.h \
+	  --suppress=dangerousTypeCast:src/gmp256k1/Int.h \
+	  -Isrc src/ 2>&1 | tee cppcheck-report.txt

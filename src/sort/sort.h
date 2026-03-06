@@ -5,9 +5,9 @@
  * and binary search for address_value arrays used in ADDRESS mode target lookup.
  *
  * Sorting pipeline:
- * 1. _sort() selects introsort with computed depth limit
- * 2. _introsort() partitions recursively, falls back to heapsort at depth limit
- * 3. _insertionsort() handles small partitions (≤16 elements)
+ * 1. kh_sort() selects introsort with computed depth limit
+ * 2. kh_introsort() partitions recursively, falls back to heapsort at depth limit
+ * 3. kh_insertionsort() handles small partitions (≤16 elements)
  *
  * Binary search:
  * - searchbinary() performs binary search on sorted address_value array
@@ -33,7 +33,7 @@ struct address_value;
  *   a - Pointer to first element
  *   b - Pointer to second element
  */
-void _swap(struct address_value *a, struct address_value *b);
+void kh_swap(struct address_value *a, struct address_value *b);
 
 /*
  * Sort an array of address_value elements using introsort.
@@ -43,7 +43,7 @@ void _swap(struct address_value *a, struct address_value *b);
  *   arr - Array to sort
  *   N   - Number of elements
  */
-void _sort(struct address_value *arr, int64_t N);
+void kh_sort(struct address_value *arr, int64_t N);
 
 /*
  * Introsort implementation with heapsort fallback.
@@ -55,7 +55,7 @@ void _sort(struct address_value *arr, int64_t N);
  *   depthLimit - Maximum recursion depth before heapsort fallback
  *   n          - Number of elements
  */
-void _introsort(struct address_value *arr, uint32_t depthLimit, int64_t n);
+void kh_introsort(struct address_value *arr, uint32_t depthLimit, int64_t n);
 
 /*
  * Insertion sort for small arrays or nearly-sorted partitions.
@@ -64,7 +64,7 @@ void _introsort(struct address_value *arr, uint32_t depthLimit, int64_t n);
  *   arr - Array to sort
  *   n   - Number of elements
  */
-void _insertionsort(struct address_value *arr, int64_t n);
+void kh_insertionsort(struct address_value *arr, int64_t n);
 
 /*
  * Partition array around pivot for introsort.
@@ -76,7 +76,7 @@ void _insertionsort(struct address_value *arr, int64_t n);
  * Returns:
  *   Partition index
  */
-int64_t _partition(struct address_value *arr, int64_t n);
+int64_t kh_partition(struct address_value *arr, int64_t n);
 
 /*
  * Heapify subtree rooted at index i.
@@ -86,7 +86,7 @@ int64_t _partition(struct address_value *arr, int64_t n);
  *   n   - Size of heap
  *   i   - Root index of subtree to heapify
  */
-void _heapify(struct address_value *arr, int64_t n, int64_t i);
+void kh_heapify(struct address_value *arr, int64_t n, int64_t i);
 
 /*
  * Heapsort implementation used as fallback when introsort depth limit is reached.
@@ -95,7 +95,7 @@ void _heapify(struct address_value *arr, int64_t n, int64_t i);
  *   arr - Array to sort
  *   n   - Number of elements
  */
-void _myheapsort(struct address_value *arr, int64_t n);
+void kh_myheapsort(struct address_value *arr, int64_t n);
 
 /* ============================================================================
  * Binary Search

@@ -8,9 +8,9 @@
  * target lookup.
  *
  * Sorting pipeline:
- * 1. _sort() selects introsort with computed depth limit
- * 2. _introsort() partitions recursively, falls back to heapsort at depth limit
- * 3. _insertionsort() handles small partitions (<=16 elements)
+ * 1. kh_sort() selects introsort with computed depth limit
+ * 2. kh_introsort() partitions recursively, falls back to heapsort at depth limit
+ * 3. kh_insertionsort() handles small partitions (<=16 elements)
  *
  * Binary search:
  * - searchbinary() performs binary search on sorted address_value array
@@ -67,39 +67,39 @@ static inline int cmp_hash20(const uint8_t *a, const uint8_t *b) {
  * Sorting Functions
  * ============================================================================ */
 
-void _swap(struct address_value *a, struct address_value *b) {
+void kh_swap(struct address_value *a, struct address_value *b) {
 	struct address_value t;
 	t  = *a;
 	*a = *b;
 	*b =  t;
 }
 
-void _sort(struct address_value *arr, int64_t n) {
+void kh_sort(struct address_value *arr, int64_t n) {
 	if (n <= 1) return;
 	uint32_t depthLimit = ((uint32_t) ceil(log2((double)n))) * 2;
-	_introsort(arr, depthLimit, n);
+	kh_introsort(arr, depthLimit, n);
 }
 
-void _introsort(struct address_value *arr, uint32_t depthLimit, int64_t n) {
+void kh_introsort(struct address_value *arr, uint32_t depthLimit, int64_t n) {
 	int64_t p;
 	if(n > 1)	{
 		if(n <= 16) {
-			_insertionsort(arr, n);
+			kh_insertionsort(arr, n);
 		}
 		else	{
 			if(depthLimit == 0) {
-				_myheapsort(arr, n);
+				kh_myheapsort(arr, n);
 			}
 			else	{
-				p = _partition(arr, n);
-				if(p > 0) _introsort(arr, depthLimit-1, p);
-				if(p < n) _introsort(&arr[p+1], depthLimit-1, n-(p+1));
+				p = kh_partition(arr, n);
+				if(p > 0) kh_introsort(arr, depthLimit-1, p);
+				if(p < n) kh_introsort(&arr[p+1], depthLimit-1, n-(p+1));
 			}
 		}
 	}
 }
 
-void _insertionsort(struct address_value *arr, int64_t n) {
+void kh_insertionsort(struct address_value *arr, int64_t n) {
 	int64_t j;
 	int64_t i;
 	struct address_value key;
@@ -114,7 +114,7 @@ void _insertionsort(struct address_value *arr, int64_t n) {
 	}
 }
 
-int64_t _partition(struct address_value *arr, int64_t n) {
+int64_t kh_partition(struct address_value *arr, int64_t n) {
 	struct address_value pivot;
 	int64_t r, left, right;
 	r = n / 2;
@@ -137,16 +137,16 @@ int64_t _partition(struct address_value *arr, int64_t n) {
 					r = left;
 				}
 			}
-			_swap(&arr[right], &arr[left]);
+			kh_swap(&arr[right], &arr[left]);
 		}
 	} while(left < right);
 	if(right != r) {
-		_swap(&arr[right], &arr[r]);
+		kh_swap(&arr[right], &arr[r]);
 	}
 	return right;
 }
 
-void _heapify(struct address_value *arr, int64_t n, int64_t i) {
+void kh_heapify(struct address_value *arr, int64_t n, int64_t i) {
 	int64_t largest = i;
 	int64_t l = 2 * i + 1;
 	int64_t r = 2 * i + 2;
@@ -155,19 +155,19 @@ void _heapify(struct address_value *arr, int64_t n, int64_t i) {
 	if (r < n && memcmp(arr[r].value, arr[largest].value, 20) > 0)
 		largest = r;
 	if (largest != i) {
-		_swap(&arr[i], &arr[largest]);
-		_heapify(arr, n, largest);
+		kh_swap(&arr[i], &arr[largest]);
+		kh_heapify(arr, n, largest);
 	}
 }
 
-void _myheapsort(struct address_value *arr, int64_t n) {
+void kh_myheapsort(struct address_value *arr, int64_t n) {
 	int64_t i;
 	for (i = (n / 2) - 1; i >= 0; i--) {
-		_heapify(arr, n, i);
+		kh_heapify(arr, n, i);
 	}
 	for (i = n - 1; i > 0; i--) {
-		_swap(&arr[0], &arr[i]);
-		_heapify(arr, i, 0);
+		kh_swap(&arr[0], &arr[i]);
+		kh_heapify(arr, i, 0);
 	}
 }
 

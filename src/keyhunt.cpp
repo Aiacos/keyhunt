@@ -2433,7 +2433,7 @@ int main(int argc, char **argv)	{
 		
 		if(FLAGMODE != MODE_VANITY && !FLAGREADEDFILE1)	{
 			output_success("Sorting data ...");
-			_sort(addressTable,N);
+			kh_sort(addressTable,N);
 			printf(" done! %" PRIu64 " values were loaded and sorted\n",N);
 			writeFileIfNeeded(fileName);
 		}
