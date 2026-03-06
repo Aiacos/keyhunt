@@ -244,6 +244,15 @@ extern Secp256K1 *secp;
 /* Config pointer (set by main() in keyhunt.cpp) */
 extern keyhunt_config_t *g_kh_config_ptr;
 
+/* INI config state (used by CLI parsing and main()) */
+#include "core/config.h"
+extern keyhunt_ini_config_t g_ini_config;
+extern bool g_ini_config_loaded;
+extern const char *g_save_config_path;
+
+/* Parsed fileName pointer (set by CLI parsing, used throughout) */
+extern char *g_fileName;
+
 /* ============================================================================
  * Forward declarations for cross-TU functions
  * ============================================================================ */

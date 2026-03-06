@@ -158,6 +158,20 @@ int cli_populate_config(const cli_args_t *args, void *cfg);
 #ifdef __cplusplus
 }
 
+/*
+ * parse_cli_args - Extract and process all CLI arguments from main()
+ *
+ * Handles: early checks (help/wizard/benchmark/diagnose), INI config file
+ * loading, getopt loop, output_init, and parameter validation.
+ *
+ * Sets globals directly (FLAGMODE, FLAGSEARCH, NTHREADS, etc.)
+ * Sets g_fileName, g_ini_config, g_ini_config_loaded, g_save_config_path.
+ *
+ * Must be called after secp->Init(), OUTPUTSECONDS/ZERO/ONE init, and
+ * sysinfo/gpu_backend detection.
+ */
+void parse_cli_args(int argc, char **argv);
+
 // C++ only functions (requires Int class from secp256k1)
 #include "secp256k1/Int.h"
 

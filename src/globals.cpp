@@ -173,3 +173,11 @@ Secp256K1 *secp;
 
 /* Config pointer (set by main() in keyhunt.cpp) */
 keyhunt_config_t *g_kh_config_ptr = nullptr;
+
+/* INI config state */
+keyhunt_ini_config_t g_ini_config;
+bool g_ini_config_loaded = false;
+const char *g_save_config_path = NULL;
+
+/* Parsed fileName pointer */
+char *g_fileName = NULL;
