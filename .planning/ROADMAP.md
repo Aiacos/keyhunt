@@ -67,7 +67,7 @@ Plans:
   2. All 6 search module files (search_address.cpp, search_bsgs.cpp, search_bsgs_threads.cpp, search_vanity.cpp, search_minikeys.cpp, search_xpoint.cpp, search_rmd160.cpp, io/io.cpp) compile without warnings when search_context.h is excluded from their include path
   3. A call to keyhunt_config_validate() succeeds before every test run, proving write sites were migrated before read sites
   4. Re-running the Phase 1 end-to-end mode tests still produces correct results, proving no silent mode mismatches were introduced
-**Plans:** 5/5 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 - [x] 03-01-PLAN.md — Freeze config schema + populate write-sites + migrate xpoint/rmd160 (trivial)
@@ -118,7 +118,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 |-------|----------------|--------|-----------|
 | 1. Test Baseline | 6/6 | Complete | - |
 | 2. Sanitizer Coverage | 4/4 | Complete | - |
-| 3. Config Migration | 5/5 | Complete | 2026-03-01 |
+| 3. Config Migration | 6/6 | Complete   | 2026-03-06 |
 | 4. Monolith Decomposition | 0/TBD | Not started | - |
 | 5. CI Pipeline | 0/TBD | Not started | - |
 | 6. Fuzz and Advanced Verification | 0/TBD | Not started | - |
