@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 04-06-PLAN.md
-last_updated: "2026-03-06T09:24:09Z"
-last_activity: "2026-03-06 -- Plan 04-06 complete: static analysis gates and compiler hardening"
+stopped_at: Completed 04-07-PLAN.md
+last_updated: "2026-03-06T10:20:00Z"
+last_activity: "2026-03-06 -- Plan 04-07 complete: BSGS globals ownership + io.cpp config wiring"
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 22
-  completed_plans: 22
-  percent: 100
+  total_plans: 24
+  completed_plans: 23
+  percent: 96
 ---
 
 # Project State
@@ -25,19 +25,19 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 
 ## Current Position
 
-Phase: 4 of 6 (Monolith Decomposition) -- COMPLETE
-Plan: 6 of 6 in current phase -- COMPLETE
-Status: Phase 4 Complete
-Last activity: 2026-03-06 -- Plan 04-06 complete: static analysis gates and compiler hardening
+Phase: 4 of 6 (Monolith Decomposition) -- Gap Closure In Progress
+Plan: 7 of 8 in current phase (gap closure plans 07-08)
+Status: Plan 04-07 Complete, 04-08 Remaining
+Last activity: 2026-03-06 -- Plan 04-07 complete: BSGS globals ownership + io.cpp config wiring
 
-Progress: [██████████] 100% (22/22 total plans)
+Progress: [█████████░] 96% (23/24 total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 22
-- Average duration: ~14 min
-- Total execution time: ~4.4 hours
+- Total plans completed: 23
+- Average duration: ~15 min
+- Total execution time: ~5.2 hours
 
 **By Phase:**
 
@@ -46,11 +46,11 @@ Progress: [██████████] 100% (22/22 total plans)
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 | 3 - Config Migration | 6/6 | ~76 min | ~13 min |
-| 4 - Monolith Decomposition | 6/6 | ~131 min | ~22 min |
+| 4 - Monolith Decomposition | 7/8 | ~176 min | ~22 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-03 (~4 min), 04-04 (~17 min), 04-05 (~14 min), 04-06 (~69 min)
-- Trend: Static analysis gates required extensive cppcheck tuning and finding resolution
+- Last 5 plans: 04-04 (~17 min), 04-05 (~14 min), 04-06 (~69 min), 04-07 (~45 min)
+- Trend: Gap closure plans require moderate effort for global ownership transfers
 
 *Updated after each plan completion*
 
@@ -141,6 +141,10 @@ Recent decisions affecting current work:
 - [04-06]: Suppressed noisy clang-tidy checks (macro-parentheses, narrowing-conversions, widening-multiplication) as false positives for SIMD-heavy codebase
 - [04-06]: cppcheck --check-level=normal with vendored code exclusion to keep analysis tractable (full analysis times out)
 - [04-06]: Reserved identifiers in sort.h renamed to kh_ prefix per C++ standard
+- [04-07]: BSGS globals owned by mode_bsgs.cpp; bsgs_globals.h header for cross-TU access
+- [04-07]: 49 shared-state externs retained in mode_bsgs.cpp (secp, flags, counters, ranges are NOT BSGS-specific)
+- [04-07]: io.cpp config bridge: pre-call wiring + post-call sync for gradual global elimination
+- [04-07]: Vanity state wired into config BEFORE readFileVanity (not after like original config bridge)
 
 ### Pending Todos
 
@@ -154,6 +158,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T09:24:09Z
-Stopped at: Completed 04-06-PLAN.md (Phase 4 complete)
-Resume file: N/A (all phases complete)
+Last session: 2026-03-06T10:20:00Z
+Stopped at: Completed 04-07-PLAN.md (BSGS globals + io.cpp config wiring)
+Resume file: .planning/phases/04-monolith-decomposition/04-08-PLAN.md
