@@ -32,11 +32,10 @@ Reduce keyhunt.cpp from ~5500 lines to a ~600-line thin orchestrator by extracti
 - Natural timing: call sites are moving to mode files anyway, so signature changes are absorbed during extraction
 
 ### Global variable strategy
-- Absorb all ~100+ globals into keyhunt_config_t sub-structs
-- Thread counters (THREADCOUNTER, FINISHED_THREADS_COUNTER, OLDFINISHED_ITEMS) as atomics in runtime_state_t
-- Vanity state (vanity_rmd_targets, vanity_rmd_limits, vanity_rmd_limit_values_A/B) packed into vanity_state_t sub-struct
-- Mode-specific flags (FLAGENDOMORPHISM, FLAGBSGSMODE, etc.) absorbed into appropriate config sub-structs
-- No globals.h fallback -- everything goes through config
+- **Updated (gap closure round 3):** Move shared globals to `src/globals.h` + `src/globals.cpp` as a dedicated shared-state module. The original plan to absorb all ~123 globals into keyhunt_config_t sub-structs proved impractical after 8 plans of decomposition -- it would require touching every file that reads these globals (100+ sites). The globals.h approach achieves the same isolation goal (no dependency on keyhunt.cpp symbols) with far less risk.
+- Thread counters (THREADCOUNTER, FINISHED_THREADS_COUNTER, OLDFINISHED_ITEMS) remain as globals in globals.cpp (already atomic where needed)
+- Mode-specific flags (FLAGENDOMORPHISM, FLAGBSGSMODE, etc.) remain as globals in globals.cpp
+- Config bridge in main() still populates keyhunt_config_t from globals for modules that accept config parameters
 
 ### Static analysis gates
 - Apply clang-tidy (bugprone-*, clang-analyzer-security.*) and cppcheck during decomposition, not as a separate pass
