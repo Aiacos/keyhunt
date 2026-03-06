@@ -178,7 +178,7 @@ static int mode_bsgs_init(keyhunt_config_t *config) {
             }
         }
     }
-    if (N == 0) {
+    if (N == 0 || N > SIZE_MAX / sizeof(std::atomic<int>)) {
         output_error("There is no valid data in the file\n");
         free(aux);
         fclose(fd);

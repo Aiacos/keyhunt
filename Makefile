@@ -47,8 +47,11 @@ HARDEN_FLAGS := -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fcf-protection
 CXXFLAGS ?=
 CFLAGS ?=
 
-# Include path for src/
-INCLUDES := -I$(SRCDIR)
+# Include path for src/ (EXTRA_INCLUDES for build scripts to append without overriding)
+EXTRA_INCLUDES ?=
+EXTRA_LDFLAGS ?=
+EXTRA_DEFINES ?=
+INCLUDES := -I$(SRCDIR) $(EXTRA_INCLUDES)
 
 # Union removed from Int class - strict aliasing is now safe
 LTO_FLAGS ?= -flto=auto
@@ -114,12 +117,12 @@ GPU_BACKEND_OBJS += $(OBJDIR)/gpu/gpu_backend_unified.o
 # Combine backend objects with common GPU objects
 GPU_OBJS := $(GPU_BACKEND_OBJS) $(GPU_COMMON_OBJS)
 
-CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(HARDEN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES)
-CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(HARDEN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES)
+CXXFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(HARDEN_FLAGS) -Wno-deprecated-copy -std=gnu++17 $(LTO_FLAGS) -fno-exceptions $(INCLUDES) $(EXTRA_DEFINES)
+CFLAGS += $(COMMON_FLAGS) $(OPT_FLAGS) $(WARN_FLAGS) $(HARDEN_FLAGS) $(LTO_FLAGS) -Wno-unused-parameter -Wno-unused-result $(INCLUDES) $(EXTRA_DEFINES)
 CXXFLAGS += $(GPU_CXXFLAGS)
 
 LDFLAGS ?=
-LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed
+LDFLAGS += $(COMMON_FLAGS) $(LTO_FLAGS) -Wl,-O3 -Wl,--as-needed $(EXTRA_LDFLAGS)
 LDLIBS ?=
 LDLIBS += -lm -lpthread $(PLATFORM_LIBS)
 # SQLite3 is compiled as part of the project (amalgamation)

@@ -31,7 +31,6 @@ GPU_ARCH="${GPU_ARCH:-}"
 JOBS="${JOBS:-$(nproc)}"
 VERBOSE=0
 DETECTED_GPU_ARCH=""
-OPENCL_FOUND=0
 
 # Print verbose message
 verbose() {
@@ -167,7 +166,6 @@ check_opencl() {
     for path in "${opencl_include_paths[@]}"; do
         if [[ -f "$path/CL/cl.h" ]] || [[ -f "$path/CL/opencl.h" ]]; then
             echo -e "${GREEN}Found OpenCL headers in: $path${NC}"
-            OPENCL_FOUND=1
             return 0
         fi
     done
@@ -312,21 +310,30 @@ fi
 
 echo ""
 echo -e "${BLUE}Step 4: Building keyhunt with OpenCL...${NC}"
-echo -e "  ROCM_HOME:      ${ROCM_HOME:-system}"
-echo -e "  GPU_ARCH:       $GPU_ARCH"
-echo -e "  OPENCL_FLAGS:   $OPENCL_FLAGS"
-echo -e "  OPENCL_LIBS:    $OPENCL_LIBS"
+echo -e "  ROCM_HOME:       ${ROCM_HOME:-system}"
+echo -e "  GPU_ARCH:        $GPU_ARCH"
 echo -e "  OPENCL_INCLUDES: $OPENCL_INCLUDES"
-echo -e "  Jobs:           $JOBS"
+echo -e "  OPENCL_LIBS:     $OPENCL_LIBS"
+echo -e "  Jobs:            $JOBS"
 echo ""
 
 # Clean and rebuild
 make clean 2>/dev/null || true
 
-# Build with OpenCL
-CXXFLAGS="$OPENCL_FLAGS $OPENCL_INCLUDES" \
-LDFLAGS="$OPENCL_LIBS" \
-make -B -j"$JOBS"
+# Build with OpenCL using Makefile's built-in HAVE_OPENCL support
+# Pass ROCm paths via EXTRA_INCLUDES/EXTRA_LDFLAGS to avoid overriding Makefile defaults
+OPENCL_MAKE_ARGS=(HAVE_OPENCL=1)
+
+if [[ -n "$ROCM_HOME" ]]; then
+    OPENCL_MAKE_ARGS+=(EXTRA_INCLUDES="$OPENCL_INCLUDES")
+    OPENCL_MAKE_ARGS+=(EXTRA_LDFLAGS="-L$ROCM_HOME/lib")
+fi
+
+if [[ "$GPU_ARCH" != "generic" ]]; then
+    OPENCL_MAKE_ARGS+=(EXTRA_DEFINES="-DGPU_ARCH=$GPU_ARCH")
+fi
+
+make -B -j"$JOBS" "${OPENCL_MAKE_ARGS[@]}"
 
 # Verify build
 echo ""

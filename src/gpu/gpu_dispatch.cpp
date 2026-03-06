@@ -223,7 +223,7 @@ gpu_dispatch_hybrid_thread(void *arg) {
     return (platform_thread_return_t)0;
 }
 
-int gpu_dispatch_run_full_search(keyhunt_config_t *config_ptr,
+int gpu_dispatch_run_full_search(keyhunt_config_t * /*config_ptr*/,
                                  Int *start_key, Int *end_key,
                                  Int *stride_val, int64_t target_count) {
     if (!gpu_backend_available()) {
