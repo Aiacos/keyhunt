@@ -467,22 +467,12 @@ bool acquire_base_key(Int &key) {
  * ============================================================================ */
 
 int main(int argc, char **argv) {
-    char buffer[2048];
-    char rawvalue[32];
-    struct tothread *tt;
     Tokenizer t{};
     char *fileName = NULL;
     char *hextemp = NULL;
-    char *aux = NULL;
-    char *aux2 = NULL;
-    char *str_seconds = NULL;
-    char *str_total = NULL;
-    char *str_pretotal = NULL;
-    char *str_divpretotal = NULL;
-    FILE *fd;
     uint64_t i;
-    int continue_flag,check_flag,c,salir,index_value,j;
-    Int total,pretotal,debugcount_mpz,seconds,div_pretotal,int_aux,int_r,int_q,int58;
+    int c,salir,index_value;
+    Int int_aux,int_r,int_q,int58;
 
     platform_thread_t gpu_thread_id = 0;
     gpu_hybrid_args_t gpu_hybrid_args = {};
