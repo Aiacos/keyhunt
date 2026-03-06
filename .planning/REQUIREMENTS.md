@@ -52,7 +52,7 @@ Requirements for production-ready release. Each maps to roadmap phases.
 - [x] **STR-01**: Extract ADDRESS mode dispatcher from keyhunt.cpp to src/modes/
 - [ ] **STR-02**: Extract BSGS mode dispatcher from keyhunt.cpp to src/modes/
 - [x] **STR-03**: Extract XPOINT and RMD160 mode dispatchers from keyhunt.cpp to src/modes/
-- [ ] **STR-04**: Extract VANITY and MINIKEYS mode dispatchers from keyhunt.cpp to src/modes/
+- [x] **STR-04**: Extract VANITY and MINIKEYS mode dispatchers from keyhunt.cpp to src/modes/
 - [x] **STR-05**: keyhunt.cpp reduced to thin dispatcher (~600 lines or less)
 - [ ] **STR-06**: Static analysis gate with clang-tidy (bugprone-* + clang-analyzer-security.*)
 - [ ] **STR-07**: Static analysis gate with cppcheck (error + warning level)
@@ -141,7 +141,7 @@ Deferred to future release. Tracked but not in current roadmap.
 | STR-01 | Phase 4 | Complete |
 | STR-02 | Phase 4 | Pending |
 | STR-03 | Phase 4 | Complete |
-| STR-04 | Phase 4 | Pending |
+| STR-04 | Phase 4 | Complete |
 | STR-05 | Phase 4 | Complete |
 | STR-06 | Phase 4 | Pending |
 | STR-07 | Phase 4 | Pending |
