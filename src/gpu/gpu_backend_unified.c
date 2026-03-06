@@ -110,8 +110,7 @@ extern int cuda_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int n
 extern int cuda_full_search(const gpu_search_config_t *config);
 extern size_t cuda_get_optimal_batch_size(void);
 extern double cuda_benchmark(size_t duration_ms);
-extern int cuda_autotune(size_t duration_ms, gpu_tune_result_t *result);
-extern void cuda_apply_tune(const gpu_tune_result_t *tune);
+/* cuda_autotune and cuda_apply_tune are not yet implemented in gpu_backend_cuda.cu */
 #endif
 
 /* OpenCL backend (conditionally compiled) */
@@ -152,8 +151,8 @@ static void init_backend_vtables(void) {
     g_unified.cuda_backend.full_search = cuda_full_search;
     g_unified.cuda_backend.get_optimal_batch_size = cuda_get_optimal_batch_size;
     g_unified.cuda_backend.benchmark = cuda_benchmark;
-    g_unified.cuda_backend.autotune = cuda_autotune;
-    g_unified.cuda_backend.apply_tune = cuda_apply_tune;
+    g_unified.cuda_backend.autotune = NULL;
+    g_unified.cuda_backend.apply_tune = NULL;
 #endif
 
 #ifdef HAVE_OPENCL_BACKEND

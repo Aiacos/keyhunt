@@ -322,6 +322,20 @@ if [[ -n "$CCBIN_DIR" ]]; then
     NVCC_FLAGS="$NVCC_FLAGS --compiler-bindir=$CCBIN_DIR -Xcompiler -U_GNU_SOURCE"
 fi
 
+# Handle GCC version mismatch between nvcc's compiler and the system compiler.
+# If nvcc uses a different GCC (e.g., GCC 13 via ccbin) but the rest of the code
+# is compiled by the system GCC (e.g., GCC 15), LTO bytecodes are incompatible
+# and the linker will segfault. Solution: disable LTO when versions differ.
+MAKE_CC_ARGS=()
+if [[ -n "$GCC_VERSION" ]]; then
+    sys_gcc_version=$(gcc -dumpversion 2>/dev/null | cut -d. -f1)
+    cuda_gcc_version=$("$GCC_VERSION" -dumpversion 2>/dev/null | cut -d. -f1)
+    if [[ "$sys_gcc_version" != "$cuda_gcc_version" ]]; then
+        MAKE_CC_ARGS=(LTO_FLAGS=)
+        echo -e "${YELLOW}System GCC $sys_gcc_version != CUDA GCC $cuda_gcc_version — disabling LTO${NC}"
+    fi
+fi
+
 echo ""
 echo -e "${BLUE}Step 4: Building keyhunt with CUDA...${NC}"
 echo -e "  CUDA_HOME:  $CUDA_HOME"
@@ -329,7 +343,7 @@ echo -e "  CUDA_ARCH:  $CUDA_ARCH"
 echo -e "  NVCC_FLAGS: $NVCC_FLAGS"
 echo -e "  Jobs:       $JOBS"
 if [[ -n "$GCC_VERSION" ]]; then
-    echo -e "  GCC:        $GCC_VERSION"
+    echo -e "  GCC:        $GCC_VERSION (used for all compilation)"
 fi
 echo ""
 
@@ -340,7 +354,8 @@ make clean 2>/dev/null || true
 make -B -j"$JOBS" \
     NVCC="$CUDA_HOME/bin/nvcc" \
     CUDA_HOME="$CUDA_HOME" \
-    NVCCFLAGS="$NVCC_FLAGS"
+    NVCCFLAGS="$NVCC_FLAGS" \
+    "${MAKE_CC_ARGS[@]}"
 
 # Verify build
 echo ""

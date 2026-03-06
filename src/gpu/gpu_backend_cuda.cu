@@ -1825,7 +1825,7 @@ static void cleanup_search_streams(void) {
 
 extern "C" {
 
-int gpu_backend_init(gpu_backend_info_t *info) {
+int cuda_backend_init(gpu_backend_info_t *info) {
     int deviceCount = 0;
     cudaError_t err = cudaGetDeviceCount(&deviceCount);
 
@@ -1956,14 +1956,14 @@ int gpu_backend_init(gpu_backend_info_t *info) {
     return 0;
 }
 
-int gpu_backend_available(void) {
+int cuda_backend_available(void) {
     return g_available;
 }
 
 // Forward declarations for cleanup
 static void cleanup_pinned_memory(void);
 
-void gpu_backend_shutdown(void) {
+void cuda_backend_shutdown(void) {
     // Clean up multi-stream search infrastructure
     cleanup_search_streams();
 
@@ -2040,7 +2040,7 @@ static void cleanup_pinned_memory(void) {
     g_pinned_capacity = 0;
 }
 
-int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
+int cuda_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
                             uint8_t *out02, uint8_t *out03) {
     if (!g_available || count == 0) return 1;
 
@@ -2086,7 +2086,7 @@ int gpu_hash160_fromX_batch(const uint8_t *x32_be, size_t count,
     return (cudaGetLastError() == cudaSuccess) ? 0 : -1;
 }
 
-int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
+int cuda_upload_gtable(const uint8_t *gtable, size_t point_count) {
     if (!g_available || g_gpu_count == 0) return 1;
 
     size_t size = point_count * 64;
@@ -2160,7 +2160,7 @@ int gpu_upload_gtable(const uint8_t *gtable, size_t point_count) {
     return (success > 0) ? 0 : 1;
 }
 
-int gpu_upload_targets(const uint8_t *targets, size_t count) {
+int cuda_upload_targets(const uint8_t *targets, size_t count) {
     if (!g_available || g_gpu_count == 0) return 1;
 
     size_t size = count * 20;
@@ -2244,7 +2244,7 @@ int gpu_upload_targets(const uint8_t *targets, size_t count) {
     return (success > 0) ? 0 : 1;
 }
 
-int gpu_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashes) {
+int cuda_upload_bloom(const uint8_t *bloom_data, size_t bloom_size, int num_hashes) {
     if (!g_available || g_gpu_count == 0) return 1;
 
     // Keep host copy for multi-GPU upload
@@ -2347,7 +2347,7 @@ static int init_gpu_streams(gpu_context_t *ctx) {
     return 0;
 }
 
-int gpu_full_search(const gpu_search_config_t *config) {
+int cuda_full_search(const gpu_search_config_t *config) {
     if (!g_available || !config || g_gpu_count == 0) return -1;
 
     // Verify all GPUs have required data
@@ -2793,12 +2793,12 @@ int gpu_full_search(const gpu_search_config_t *config) {
     return total_found;
 }
 
-size_t gpu_get_optimal_batch_size(void) {
+size_t cuda_get_optimal_batch_size(void) {
     if (!g_available) return 0;
     return g_info.multiprocessors * 2048;
 }
 
-double gpu_benchmark(size_t duration_ms) {
+double cuda_benchmark(size_t duration_ms) {
     (void)duration_ms;
     return 0.0;
 }
