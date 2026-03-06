@@ -134,7 +134,7 @@ platform_thread_return_t PLATFORM_THREAD_CALL thread_process_minikeys(void *varg
 	bool is_random = config->search.random_mode;
 	bool is_quiet = config->search.quiet_mode;
 	bool is_matrix = config->search.matrix_mode;
-	bool is_base_minikey = (config->search.mode == MODE_MINIKEYS);
+	bool is_base_minikey = (config->runtime.minikey_raw_base != NULL);
 
 	/* Runtime state */
 	bloom_extended_t *bloom = (bloom_extended_t *)config->runtime.bloom_filter;
