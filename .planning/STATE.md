@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 04-08-PLAN.md
-last_updated: "2026-03-06T11:05:00Z"
-last_activity: "2026-03-06 -- Plan 04-08 complete: Final monitoring/menu/GPU extraction from keyhunt.cpp"
+stopped_at: Completed 04-09-PLAN.md
+last_updated: "2026-03-06T12:02:00Z"
+last_activity: "2026-03-06 -- Plan 04-09 complete: Globals extraction from keyhunt.cpp to globals.h/cpp"
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 24
-  completed_plans: 24
-  percent: 100
+  total_plans: 26
+  completed_plans: 25
+  percent: 96
 ---
 
 # Project State
@@ -25,19 +25,19 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 
 ## Current Position
 
-Phase: 4 of 6 (Monolith Decomposition) -- Complete
-Plan: 8 of 8 in current phase (all plans complete)
-Status: Phase 04 Complete
-Last activity: 2026-03-06 -- Plan 04-08 complete: Final monitoring/menu/GPU extraction from keyhunt.cpp
+Phase: 4 of 6 (Monolith Decomposition) -- Gap Closure
+Plan: 9 of 10 in current phase (gap closure plans 09-10)
+Status: In Progress
+Last activity: 2026-03-06 -- Plan 04-09 complete: Globals extraction from keyhunt.cpp to globals.h/cpp
 
-Progress: [██████████] 100% (24/24 total plans)
+Progress: [█████████░] 96% (25/26 total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 23
+- Total plans completed: 25
 - Average duration: ~15 min
-- Total execution time: ~5.2 hours
+- Total execution time: ~5.4 hours
 
 **By Phase:**
 
@@ -46,11 +46,11 @@ Progress: [██████████] 100% (24/24 total plans)
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 | 3 - Config Migration | 6/6 | ~76 min | ~13 min |
-| 4 - Monolith Decomposition | 8/8 | ~196 min | ~24 min |
+| 4 - Monolith Decomposition | 9/10 | ~207 min | ~23 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-05 (~14 min), 04-06 (~69 min), 04-07 (~45 min), 04-08 (~20 min)
-- Trend: All phases complete; monitoring extraction was straightforward
+- Last 5 plans: 04-06 (~69 min), 04-07 (~45 min), 04-08 (~20 min), 04-09 (~11 min)
+- Trend: Gap closure plans executing quickly; globals extraction straightforward
 
 *Updated after each plan completion*
 
@@ -149,6 +149,9 @@ Recent decisions affecting current work:
 - [04-08]: Globals remain in keyhunt.cpp (extern bridge) since moving them would break 100+ extern references
 - [04-08]: 600-line target not achievable without global elimination; 1504 lines achieved (55% reduction from 3374)
 - [04-08]: Cleaned up 13 unused variables from main() after extraction
+- [04-09]: Shared globals centralized in globals.h/cpp; file-local statics stay in keyhunt.cpp
+- [04-09]: MODE_* macros removed from search_common.h/search_context.h to avoid conflict with cli.h enum values
+- [04-09]: search_context.h struct definitions replaced with #include globals.h
 
 ### Pending Todos
 
@@ -162,6 +165,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T11:05:00Z
-Stopped at: Completed 04-08-PLAN.md (Final monitoring/menu/GPU extraction -- Phase 04 complete)
-Resume file: All plans complete (24/24)
+Last session: 2026-03-06T12:02:00Z
+Stopped at: Completed 04-09-PLAN.md (Globals extraction from keyhunt.cpp)
+Resume file: 04-10-PLAN.md (main() slimming)

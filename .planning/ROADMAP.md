@@ -86,7 +86,7 @@ Plans:
   3. `clang-tidy` with bugprone-* and clang-analyzer-security.* checks exits 0 on the entire src/ tree
   4. `cppcheck --enable=warning,error` exits 0 on the entire src/ tree
   5. The release build compiles with -D_FORTIFY_SOURCE=3, -fstack-protector-strong, and -fcf-protection without warnings
-**Plans:** 10 plans
+**Plans:** 9/10 plans executed
 
 Plans:
 - [x] 04-01-PLAN.md — Wire io.cpp through config (CFG-07) + extract utilities to src/util/
@@ -131,6 +131,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 1. Test Baseline | 6/6 | Complete | - |
 | 2. Sanitizer Coverage | 4/4 | Complete | - |
 | 3. Config Migration | 6/6 | Complete   | 2026-03-06 |
-| 4. Monolith Decomposition | 8/10 | In Progress | - |
+| 4. Monolith Decomposition | 9/10 | In Progress|  |
 | 5. CI Pipeline | 0/TBD | Not started | - |
 | 6. Fuzz and Advanced Verification | 0/TBD | Not started | - |
