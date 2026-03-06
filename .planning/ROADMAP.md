@@ -86,7 +86,15 @@ Plans:
   3. `clang-tidy` with bugprone-* and clang-analyzer-security.* checks exits 0 on the entire src/ tree
   4. `cppcheck --enable=warning,error` exits 0 on the entire src/ tree
   5. The release build compiles with -D_FORTIFY_SOURCE=3, -fstack-protector-strong, and -fcf-protection without warnings
-**Plans**: TBD
+**Plans:** 6 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Wire io.cpp through config (CFG-07) + extract utilities to src/util/
+- [ ] 04-02-PLAN.md — Create modes.h dispatch + extract ADDRESS, XPOINT, RMD160 modes
+- [ ] 04-03-PLAN.md — Extract VANITY and MINIKEYS modes
+- [ ] 04-04-PLAN.md — Extract BSGS mode (largest extraction)
+- [ ] 04-05-PLAN.md — Extract GPU dispatch + slim keyhunt.cpp to orchestrator
+- [ ] 04-06-PLAN.md — Static analysis gates (clang-tidy, cppcheck) + hardening flags
 
 ### Phase 5: CI Pipeline
 **Goal**: Every push and pull request is automatically built and tested on all three target platforms, with regressions caught before merge
@@ -119,6 +127,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 1. Test Baseline | 6/6 | Complete | - |
 | 2. Sanitizer Coverage | 4/4 | Complete | - |
 | 3. Config Migration | 6/6 | Complete   | 2026-03-06 |
-| 4. Monolith Decomposition | 0/TBD | Not started | - |
+| 4. Monolith Decomposition | 0/6 | In Progress | - |
 | 5. CI Pipeline | 0/TBD | Not started | - |
 | 6. Fuzz and Advanced Verification | 0/TBD | Not started | - |
