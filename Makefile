@@ -252,7 +252,9 @@ TEST_RUNNER_OBJ := $(TEST_OBJDIR)/run_tests.o
 # Use COMMON_OBJS (all modules) + SECP256K1_OBJS + WIZARD_OBJS to match
 # the main build minus keyhunt.o. This ensures test builds link against
 # the same set of symbols as the main binary.
-TEST_SHARED_OBJS := $(COMMON_OBJS) $(SECP256K1_OBJS) $(WIZARD_OBJS)
+# Exclude SORT_OBJS: tests use mock searchbinary from test_search_mocks.cpp
+# (sort.o provides a non-mock binary search that expects sorted data)
+TEST_SHARED_OBJS := $(filter-out $(SORT_OBJS),$(COMMON_OBJS)) $(SECP256K1_OBJS) $(WIZARD_OBJS)
 
 # Build test object files
 $(TEST_INT_OBJ): tests/test_int.cpp tests/test_framework.h | directories

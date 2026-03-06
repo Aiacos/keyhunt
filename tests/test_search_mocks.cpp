@@ -27,8 +27,6 @@ struct address_value {
  * Returns:
  *   1 if match found in any target, 0 otherwise
  */
-// Use weak linkage so the real sort.o implementation takes precedence
-__attribute__((weak))
 int searchbinary(struct address_value *buffer, char *data, int64_t array_length) {
     /* Iterate through all targets to find a match */
     for (int64_t i = 0; i < array_length; i++) {

@@ -122,6 +122,47 @@ char platform_get_path_separator(void);
 char* platform_normalize_path(char *path);
 
 /**
+ * @brief Write to a file descriptor.
+ *
+ * Wraps _write on Windows to match POSIX write() behavior.
+ */
+#if PLATFORM_WINDOWS
+    #include <io.h>
+    #ifndef write
+        #define write _write
+    #endif
+#endif
+
+/**
+ * @brief Delete a file by name.
+ *
+ * Wraps _unlink on Windows to match POSIX unlink() behavior.
+ */
+#if PLATFORM_WINDOWS
+    #ifndef unlink
+        #define unlink _unlink
+    #endif
+#endif
+
+/**
+ * @brief Create a unique temporary file from a template.
+ *
+ * On Windows, uses _mktemp + _open to approximate POSIX mkstemp().
+ */
+#if PLATFORM_WINDOWS
+    #include <io.h>
+    #include <fcntl.h>
+    #include <sys/stat.h>
+    static inline int platform_mkstemp(char *tmpl) {
+        if (_mktemp(tmpl) == NULL) return -1;
+        return _open(tmpl, _O_CREAT | _O_EXCL | _O_RDWR, _S_IREAD | _S_IWRITE);
+    }
+    #ifndef mkstemp
+        #define mkstemp platform_mkstemp
+    #endif
+#endif
+
+/**
  * @brief Thread-safe version of localtime.
  *
  * Converts a time_t value to a broken-down local time.

@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../platform/platform_types.h"
+#include "../platform/platform_compat.h"
 #if !PLATFORM_WINDOWS
 #include <unistd.h>
 #endif

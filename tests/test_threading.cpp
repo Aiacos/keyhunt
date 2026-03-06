@@ -30,12 +30,12 @@ struct counter_args {
     std::atomic<int> *stop_flag;
 };
 
-static void* counter_worker(void* arg) {
+static platform_thread_return_t counter_worker(void* arg) {
     struct counter_args *a = (struct counter_args *)arg;
     while (a->stop_flag->load(std::memory_order_acquire) == 0) {
         a->counter->fetch_add(1, std::memory_order_relaxed);
     }
-    return NULL;
+    return (platform_thread_return_t)0;
 }
 
 TEST(threading_atomic_counter_no_race) {
@@ -54,8 +54,12 @@ TEST(threading_atomic_counter_no_race) {
     }
 
     /* Let threads run for 10ms */
+#if PLATFORM_WINDOWS
+    Sleep(10);
+#else
     struct timespec ts = {0, 10000000}; /* 10ms */
     nanosleep(&ts, NULL);
+#endif
 
     /* Signal stop */
     stop_flag.store(1, std::memory_order_release);
@@ -84,10 +88,10 @@ struct array_args {
     int id;
 };
 
-static void* array_worker(void* arg) {
+static platform_thread_return_t array_worker(void* arg) {
     struct array_args *a = (struct array_args *)arg;
     a->arr[a->id].store(1, std::memory_order_release);
-    return NULL;
+    return (platform_thread_return_t)0;
 }
 
 TEST(threading_per_element_atomic_array) {
@@ -134,14 +138,14 @@ struct mutex_args {
     int increments;
 };
 
-static void* mutex_worker(void* arg) {
+static platform_thread_return_t mutex_worker(void* arg) {
     struct mutex_args *a = (struct mutex_args *)arg;
     for (int i = 0; i < a->increments; i++) {
         platform_mutex_lock(a->mutex);
         (*a->shared_data)++;
         platform_mutex_unlock(a->mutex);
     }
-    return NULL;
+    return (platform_thread_return_t)0;
 }
 
 TEST(threading_mutex_shared_data) {
