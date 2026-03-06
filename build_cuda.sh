@@ -331,7 +331,9 @@ if [[ -n "$GCC_VERSION" ]]; then
     sys_gcc_version=$(gcc -dumpversion 2>/dev/null | cut -d. -f1)
     cuda_gcc_version=$("$GCC_VERSION" -dumpversion 2>/dev/null | cut -d. -f1)
     if [[ "$sys_gcc_version" != "$cuda_gcc_version" ]]; then
-        MAKE_CC_ARGS=(LTO_FLAGS=)
+        # Disable LTO and suppress truncation warnings that only appear without LTO
+        # (with LTO, GCC can prove buffers are sufficient and suppresses these)
+        MAKE_CC_ARGS=(LTO_FLAGS= EXTRA_DEFINES="-Wno-stringop-truncation -Wno-format-truncation")
         echo -e "${YELLOW}System GCC $sys_gcc_version != CUDA GCC $cuda_gcc_version — disabling LTO${NC}"
     fi
 fi
