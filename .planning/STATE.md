@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-03-06T07:51:54Z"
-last_activity: "2026-03-06 -- Plan 04-04 complete: BSGS mode extraction to src/modes/mode_bsgs.cpp"
+stopped_at: Completed 04-05-PLAN.md
+last_updated: "2026-03-06T08:10:00Z"
+last_activity: "2026-03-06 -- Plan 04-05 complete: GPU dispatch extraction to src/gpu/gpu_dispatch.cpp"
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 22
-  completed_plans: 20
-  percent: 91
+  completed_plans: 21
+  percent: 95
 ---
 
 # Project State
@@ -26,18 +26,18 @@ See: .planning/PROJECT.md (updated 2026-02-28)
 ## Current Position
 
 Phase: 4 of 6 (Monolith Decomposition)
-Plan: 4 of 6 in current phase -- COMPLETE
+Plan: 5 of 6 in current phase -- COMPLETE
 Status: In Progress
-Last activity: 2026-03-06 -- Plan 04-04 complete: BSGS mode extraction to src/modes/mode_bsgs.cpp
+Last activity: 2026-03-06 -- Plan 04-05 complete: GPU dispatch extraction to src/gpu/gpu_dispatch.cpp
 
-Progress: [█████████░] 91% (20/22 total plans)
+Progress: [█████████░] 95% (21/22 total plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19
+- Total plans completed: 21
 - Average duration: ~12 min
-- Total execution time: ~3.0 hours
+- Total execution time: ~3.3 hours
 
 **By Phase:**
 
@@ -46,11 +46,11 @@ Progress: [█████████░] 91% (20/22 total plans)
 | 1 - Test Baseline | 6/6 | ~98 min | ~16 min |
 | 2 - Sanitizer Coverage | 4/4 | ~37 min | ~9 min |
 | 3 - Config Migration | 6/6 | ~76 min | ~13 min |
-| 4 - Monolith Decomposition | 4/6 | ~48 min | ~12 min |
+| 4 - Monolith Decomposition | 5/6 | ~62 min | ~12 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-01 (~16 min), 04-02 (~11 min), 04-03 (~4 min), 04-04 (~17 min)
-- Trend: BSGS extraction was the largest block (1334 lines); all 6 modes now dispatched
+- Last 5 plans: 04-02 (~11 min), 04-03 (~4 min), 04-04 (~17 min), 04-05 (~14 min)
+- Trend: GPU dispatch extraction completes GPU modularization; keyhunt.cpp 3885->3487
 
 *Updated after each plan completion*
 
@@ -135,6 +135,9 @@ Recent decisions affecting current work:
 - [04-04]: mode_bsgs_run ignores tids/thread_count parameters since init allocates its own global arrays
 - [04-04]: shutdown_work_queue made non-static for mode_bsgs.cpp cross-file access
 - [04-04]: config.search.target_file wired in config bridge to pass fileName to mode init functions
+- [04-05]: GPU dispatch uses extern globals (not config-parameterized) as temporary bridge pattern
+- [04-05]: g_kh_config_ptr and check_sigint_cleanup made non-static for gpu_dispatch.cpp cross-file access
+- [04-05]: 600-line keyhunt.cpp target deferred -- requires CLI/monitoring/GPU-resolution extraction as separate plans
 
 ### Pending Todos
 
@@ -148,6 +151,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-06T07:51:54Z
-Stopped at: Completed 04-04-PLAN.md
-Resume file: .planning/phases/04-monolith-decomposition/04-05-PLAN.md
+Last session: 2026-03-06T08:10:00Z
+Stopped at: Completed 04-05-PLAN.md
+Resume file: .planning/phases/04-monolith-decomposition/04-06-PLAN.md
