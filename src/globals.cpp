@@ -120,10 +120,8 @@ int FLAGRANGE = 0;
 int FLAGFILE = 0;
 int FLAGMODE = 1; /* MODE_ADDRESS */
 int FLAGCRYPTO = 0;
-int FLAGRAWDATA = 0;
 int FLAGRANDOM = 0;
 int FLAG_N = 0;
-int FLAGPRECALCUTED_P_FILE = 0;
 int FLAGGPU = 0;
 int FLAGGPU_FULL = 0;
 std::atomic<int> FLAGGPU_HYBRID{0};

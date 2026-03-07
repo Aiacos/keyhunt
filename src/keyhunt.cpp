@@ -281,7 +281,6 @@ int main(int argc, char **argv) {
     platform_mutex_init(&write_random);
     platform_mutex_init(&bsgs_thread);
 
-    srand(time(NULL));
     atexit(cleanup_all_resources);
 
     secp = new Secp256K1();

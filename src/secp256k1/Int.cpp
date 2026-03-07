@@ -220,6 +220,7 @@ uint64_t Int::GetInt64() {
 
 unsigned char Int::GetByte(int n) {
 
+  if (n < 0 || n >= NB64BLOCK * 8) return 0;
   unsigned char *bbPtr = (unsigned char *)bits64;
   return bbPtr[n];
 
@@ -264,6 +265,7 @@ void Int::GetLo16Bytes(unsigned char *buff) {
 
 void Int::SetByte(int n,unsigned char byte) {
 
+	if (n < 0 || n >= NB64BLOCK * 8) return;
 	unsigned char *bbPtr = (unsigned char *)bits64;
 	bbPtr[n] = byte;
 
@@ -618,7 +620,7 @@ void Int::Mod(Int *n) {
 
 int Int::GetLowestBit() {
 
-  // Assume this!=0
+  if (IsZero()) return -1;
   int b=0;
   while(GetBit(b)==0) b++;
   return b;

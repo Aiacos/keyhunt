@@ -617,6 +617,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(&tmp_bloom, sizeof(struct bloom), 1, fd_aux1);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bP[k].orig.bf) { free(bloom_bP[k].orig.bf); bloom_bP[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux1);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -624,6 +628,16 @@ bsgs_recalculate_with_new_params:
                 bloom_ext_free(&bloom_bP[i]);
                 bloom_bP[i].orig = tmp_bloom;
                 bloom_bP[i].orig.bf = NULL;
+                if (bloom_bP[i].orig.bytes == 0 || bloom_bP[i].orig.bytes > 17179869184ULL) {
+                    output_error("Bloom cache file corrupted: invalid size %lu in %s\n",
+                                 (unsigned long)bloom_bP[i].orig.bytes, buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bP[k].orig.bf) { free(bloom_bP[k].orig.bf); bloom_bP[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux1);
+                    free(aux); free(pointx_str); free(pointy_str);
+                    return -1;
+                }
                 const bool cache_fast = (bloom_bP[i].orig.major == BLOOM_EXT_FAST_MAJOR && bloom_bP[i].orig.minor == BLOOM_EXT_FAST_MINOR);
 #if defined(_WIN64) && !defined(__CYGWIN__)
                 if (cache_fast) {
@@ -642,6 +656,10 @@ bsgs_recalculate_with_new_params:
 #endif
                 if (!bloom_bP[i].orig.bf) {
                     output_error("Error allocating memory for bloom cache %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bP[k].orig.bf) { free(bloom_bP[k].orig.bf); bloom_bP[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux1);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -649,6 +667,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes, 1, fd_aux1);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k <= i; k++) {
+                        if (bloom_bP[k].orig.bf) { free(bloom_bP[k].orig.bf); bloom_bP[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux1);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -656,6 +678,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(&bloom_bP_checksums[i], sizeof(struct checksumsha256), 1, fd_aux1);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k <= i; k++) {
+                        if (bloom_bP[k].orig.bf) { free(bloom_bP[k].orig.bf); bloom_bP[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux1);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -663,6 +689,10 @@ bsgs_recalculate_with_new_params:
                     sha256((uint8_t *)bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes, (uint8_t *)rawvalue);
                     if (memcmp(bloom_bP_checksums[i].data, rawvalue, 32) != 0 || memcmp(bloom_bP_checksums[i].backup, rawvalue, 32) != 0) {
                         output_error("Error checksum file mismatch! %s\n", buffer_bloom_file);
+                        for (uint64_t k = 0; k <= i; k++) {
+                            if (bloom_bP[k].orig.bf) { free(bloom_bP[k].orig.bf); bloom_bP[k].orig.bf = NULL; }
+                        }
+                        fclose(fd_aux1);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -697,6 +727,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(&tmp_bloom, sizeof(struct bloom), 1, fd_aux2);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bPx2nd[k].orig.bf) { free(bloom_bPx2nd[k].orig.bf); bloom_bPx2nd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -704,6 +738,16 @@ bsgs_recalculate_with_new_params:
                 bloom_ext_free(&bloom_bPx2nd[i]);
                 bloom_bPx2nd[i].orig = tmp_bloom;
                 bloom_bPx2nd[i].orig.bf = NULL;
+                if (bloom_bPx2nd[i].orig.bytes == 0 || bloom_bPx2nd[i].orig.bytes > 17179869184ULL) {
+                    output_error("Bloom cache file corrupted: invalid size %lu in %s\n",
+                                 (unsigned long)bloom_bPx2nd[i].orig.bytes, buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bPx2nd[k].orig.bf) { free(bloom_bPx2nd[k].orig.bf); bloom_bPx2nd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
+                    free(aux); free(pointx_str); free(pointy_str);
+                    return -1;
+                }
                 const bool cache_fast = (bloom_bPx2nd[i].orig.major == BLOOM_EXT_FAST_MAJOR && bloom_bPx2nd[i].orig.minor == BLOOM_EXT_FAST_MINOR);
 #if defined(_WIN64) && !defined(__CYGWIN__)
                 if (cache_fast) {
@@ -722,6 +766,10 @@ bsgs_recalculate_with_new_params:
 #endif
                 if (!bloom_bPx2nd[i].orig.bf) {
                     output_error("Error allocating memory for bloom cache %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bPx2nd[k].orig.bf) { free(bloom_bPx2nd[k].orig.bf); bloom_bPx2nd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -729,6 +777,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(bloom_bPx2nd[i].orig.bf, bloom_bPx2nd[i].orig.bytes, 1, fd_aux2);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k <= i; k++) {
+                        if (bloom_bPx2nd[k].orig.bf) { free(bloom_bPx2nd[k].orig.bf); bloom_bPx2nd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -736,6 +788,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(&bloom_bPx2nd_checksums[i], sizeof(struct checksumsha256), 1, fd_aux2);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k <= i; k++) {
+                        if (bloom_bPx2nd[k].orig.bf) { free(bloom_bPx2nd[k].orig.bf); bloom_bPx2nd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -744,6 +800,10 @@ bsgs_recalculate_with_new_params:
                     sha256((uint8_t *)bloom_bPx2nd[i].orig.bf, bloom_bPx2nd[i].orig.bytes, (uint8_t *)rawvalue);
                     if (memcmp(bloom_bPx2nd_checksums[i].data, rawvalue, 32) != 0 || memcmp(bloom_bPx2nd_checksums[i].backup, rawvalue, 32) != 0) {
                         output_error("Error checksum file mismatch! %s\n", buffer_bloom_file);
+                        for (uint64_t k = 0; k <= i; k++) {
+                            if (bloom_bPx2nd[k].orig.bf) { free(bloom_bPx2nd[k].orig.bf); bloom_bPx2nd[k].orig.bf = NULL; }
+                        }
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -791,6 +851,7 @@ bsgs_recalculate_with_new_params:
                 rsize = fread(bPtable_ptr + bytes_read, 1, to_read, fd_aux3);
                 if (rsize != to_read) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    fclose(fd_aux3);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -807,6 +868,7 @@ bsgs_recalculate_with_new_params:
             rsize = fread(checksum, 32, 1, fd_aux3);
             if (rsize != 1) {
                 output_error("Error reading the file %s\n", buffer_bloom_file);
+                fclose(fd_aux3);
                 free(aux); free(pointx_str); free(pointy_str);
                 return -1;
             }
@@ -814,6 +876,7 @@ bsgs_recalculate_with_new_params:
                 sha256((uint8_t *)bPtable, bytes, (uint8_t *)checksum_backup);
                 if (memcmp(checksum, checksum_backup, 32) != 0) {
                     output_error("Error checksum file mismatch! %s\n", buffer_bloom_file);
+                    fclose(fd_aux3);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -835,6 +898,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(&tmp_bloom, sizeof(struct bloom), 1, fd_aux2);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bPx3rd[k].orig.bf) { free(bloom_bPx3rd[k].orig.bf); bloom_bPx3rd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -842,6 +909,16 @@ bsgs_recalculate_with_new_params:
                 bloom_ext_free(&bloom_bPx3rd[i]);
                 bloom_bPx3rd[i].orig = tmp_bloom;
                 bloom_bPx3rd[i].orig.bf = NULL;
+                if (bloom_bPx3rd[i].orig.bytes == 0 || bloom_bPx3rd[i].orig.bytes > 17179869184ULL) {
+                    output_error("Bloom cache file corrupted: invalid size %lu in %s\n",
+                                 (unsigned long)bloom_bPx3rd[i].orig.bytes, buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bPx3rd[k].orig.bf) { free(bloom_bPx3rd[k].orig.bf); bloom_bPx3rd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
+                    free(aux); free(pointx_str); free(pointy_str);
+                    return -1;
+                }
                 const bool cache_fast = (bloom_bPx3rd[i].orig.major == BLOOM_EXT_FAST_MAJOR && bloom_bPx3rd[i].orig.minor == BLOOM_EXT_FAST_MINOR);
 #if defined(_WIN64) && !defined(__CYGWIN__)
                 if (cache_fast) {
@@ -860,6 +937,10 @@ bsgs_recalculate_with_new_params:
 #endif
                 if (!bloom_bPx3rd[i].orig.bf) {
                     output_error("Error allocating memory for bloom cache %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k < i; k++) {
+                        if (bloom_bPx3rd[k].orig.bf) { free(bloom_bPx3rd[k].orig.bf); bloom_bPx3rd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -867,6 +948,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(bloom_bPx3rd[i].orig.bf, bloom_bPx3rd[i].orig.bytes, 1, fd_aux2);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k <= i; k++) {
+                        if (bloom_bPx3rd[k].orig.bf) { free(bloom_bPx3rd[k].orig.bf); bloom_bPx3rd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -874,6 +959,10 @@ bsgs_recalculate_with_new_params:
                 readed = fread(&bloom_bPx3rd_checksums[i], sizeof(struct checksumsha256), 1, fd_aux2);
                 if (readed != 1) {
                     output_error("Error reading the file %s\n", buffer_bloom_file);
+                    for (uint64_t k = 0; k <= i; k++) {
+                        if (bloom_bPx3rd[k].orig.bf) { free(bloom_bPx3rd[k].orig.bf); bloom_bPx3rd[k].orig.bf = NULL; }
+                    }
+                    fclose(fd_aux2);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
@@ -882,6 +971,10 @@ bsgs_recalculate_with_new_params:
                     sha256((uint8_t *)bloom_bPx3rd[i].orig.bf, bloom_bPx3rd[i].orig.bytes, (uint8_t *)rawvalue);
                     if (memcmp(bloom_bPx3rd_checksums[i].data, rawvalue, 32) != 0 || memcmp(bloom_bPx3rd_checksums[i].backup, rawvalue, 32) != 0) {
                         output_error("Error checksum file mismatch! %s\n", buffer_bloom_file);
+                        for (uint64_t k = 0; k <= i; k++) {
+                            if (bloom_bPx3rd[k].orig.bf) { free(bloom_bPx3rd[k].orig.bf); bloom_bPx3rd[k].orig.bf = NULL; }
+                        }
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -1187,18 +1280,21 @@ bsgs_recalculate_with_new_params:
                     readed = fwrite(&bloom_bP[i].orig, sizeof(struct bloom), 1, fd_aux1);
                     if (readed != 1) {
                         output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        fclose(fd_aux1);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes, 1, fd_aux1);
                     if (readed != 1) {
                         output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        fclose(fd_aux1);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(&bloom_bP_checksums[i], sizeof(struct checksumsha256), 1, fd_aux1);
                     if (readed != 1) {
                         output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        fclose(fd_aux1);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -1209,7 +1305,9 @@ bsgs_recalculate_with_new_params:
                     fflush(stdout);
                 }
                 printf("\n");
-                fclose(fd_aux1);
+                if (fclose(fd_aux1) != 0) {
+                    output_warning("Warning: failed to flush bloom cache file %s\n", buffer_bloom_file);
+                }
             } else {
                 output_error("Error can't create the file %s\n", buffer_bloom_file);
                 free(aux); free(pointx_str); free(pointy_str);
@@ -1225,18 +1323,21 @@ bsgs_recalculate_with_new_params:
                     readed = fwrite(&bloom_bPx2nd[i].orig, sizeof(struct bloom), 1, fd_aux2);
                     if (readed != 1) {
                         output_error("Error writing the file %s\n", buffer_bloom_file);
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(bloom_bPx2nd[i].orig.bf, bloom_bPx2nd[i].orig.bytes, 1, fd_aux2);
                     if (readed != 1) {
                         output_error("Error writing the file %s\n", buffer_bloom_file);
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(&bloom_bPx2nd_checksums[i], sizeof(struct checksumsha256), 1, fd_aux2);
                     if (readed != 1) {
                         output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -1247,7 +1348,9 @@ bsgs_recalculate_with_new_params:
                     fflush(stdout);
                 }
                 printf("\n");
-                fclose(fd_aux2);
+                if (fclose(fd_aux2) != 0) {
+                    output_warning("Warning: failed to flush bloom cache file %s\n", buffer_bloom_file);
+                }
             } else {
                 output_error("Error can't create the file %s\n", buffer_bloom_file);
                 free(aux); free(pointx_str); free(pointy_str);
@@ -1267,19 +1370,23 @@ bsgs_recalculate_with_new_params:
                 readed = fwrite(bPtable, bytes, 1, fd_aux3);
                 if (readed != 1) {
                     output_error("Error writing the file %s\n", buffer_bloom_file);
+                    fclose(fd_aux3);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
                 readed = fwrite(checksum, 32, 1, fd_aux3);
                 if (readed != 1) {
                     output_error("Error writing the file %s\n", buffer_bloom_file);
+                    fclose(fd_aux3);
                     free(aux); free(pointx_str); free(pointy_str);
                     return -1;
                 }
                 printf("\r[");
                 output_progress_bar(100, 40);
                 printf("] 100.0%%\n");
-                fclose(fd_aux3);
+                if (fclose(fd_aux3) != 0) {
+                    output_warning("Warning: failed to flush bP table cache file %s\n", buffer_bloom_file);
+                }
             } else {
                 output_error("Error can't create the file %s\n", buffer_bloom_file);
                 free(aux); free(pointx_str); free(pointy_str);
@@ -1295,18 +1402,21 @@ bsgs_recalculate_with_new_params:
                     readed = fwrite(&bloom_bPx3rd[i].orig, sizeof(struct bloom), 1, fd_aux2);
                     if (readed != 1) {
                         output_error("Error writing the file %s\n", buffer_bloom_file);
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(bloom_bPx3rd[i].orig.bf, bloom_bPx3rd[i].orig.bytes, 1, fd_aux2);
                     if (readed != 1) {
                         output_error("Error writing the file %s\n", buffer_bloom_file);
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(&bloom_bPx3rd_checksums[i], sizeof(struct checksumsha256), 1, fd_aux2);
                     if (readed != 1) {
                         output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        fclose(fd_aux2);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -1317,7 +1427,9 @@ bsgs_recalculate_with_new_params:
                     fflush(stdout);
                 }
                 printf("\n");
-                fclose(fd_aux2);
+                if (fclose(fd_aux2) != 0) {
+                    output_warning("Warning: failed to flush bloom cache file %s\n", buffer_bloom_file);
+                }
             } else {
                 output_error("Error can't create the file %s\n", buffer_bloom_file);
                 free(aux); free(pointx_str); free(pointy_str);

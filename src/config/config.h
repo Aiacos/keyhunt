@@ -177,18 +177,8 @@ typedef struct {
 typedef struct {
     /* Thread management */
     int      num_threads;         /* Number of CPU threads */
-    void    *thread_handles;      /* Platform-specific thread handles */
-
-    /* Progress counters (atomic in implementation) */
-    uint64_t finished_threads;    /* Number of completed threads */
-    uint64_t thread_cycles;       /* Total thread cycles */
-    uint64_t thread_counter;      /* Shared counter */
-    uint64_t finished_items;      /* Keys processed (atomic) */
-    uint64_t old_finished_items;  /* Previous value for rate calculation */
 
     /* Timing */
-    uint64_t start_time_ms;       /* Search start time (milliseconds) */
-    uint64_t last_output_time;    /* Last status output time */
     int      output_interval_sec; /* Seconds between status updates */
 
     /* Target data */
@@ -212,13 +202,6 @@ typedef struct {
     void    *random_mutex;        /* Mutex for random generation */
     void    *bsgs_mutex;          /* BSGS-specific mutex */
 
-    /* Work pool state */
-    void    *work_pool;           /* Work-stealing pool handle */
-    bool     work_pool_enabled;   /* Work pool is active */
-    bool     work_pool_exhausted; /* All work distributed */
-
-    /* Found keys */
-    int      keys_found;          /* Total keys found this session */
     char     output_file[KH_PATH_BUF_SIZE]; /* Path to output file */
 
     /* ------------------------------------------------------------------ */
@@ -421,34 +404,6 @@ int kh_config_validate(keyhunt_config_t *cfg);
 int kh_bsgs_config_validate_memory(bsgs_config_t *cfg, uint64_t available_ram);
 
 /**
- * Print current configuration to stderr
- *
- * @param cfg Pointer to configuration
- */
-void kh_config_print(const keyhunt_config_t *cfg);
-
-/**
- * Print search config section
- *
- * @param cfg Pointer to search config
- */
-void kh_search_config_print(const search_config_t *cfg);
-
-/**
- * Print BSGS config section
- *
- * @param cfg Pointer to BSGS config
- */
-void kh_bsgs_config_print(const bsgs_config_t *cfg);
-
-/**
- * Print GPU config section
- *
- * @param cfg Pointer to GPU config
- */
-void kh_gpu_config_print(const gpu_config_t *cfg);
-
-/**
  * Get string name for search mode
  *
  * @param mode Search mode enum value
@@ -508,13 +463,6 @@ uint64_t kh_bsgs_calc_memory(uint64_t n, int k, uint64_t *bloom_out, uint64_t *t
 uint64_t kh_bsgs_calc_memory_int(Int *n_int, int k, Int **m_int_out, uint64_t *bloom_out, uint64_t *table_out);
 #endif
 
-/**
- * Apply autotune settings to main config
- *
- * @param cfg Pointer to main config
- */
-void kh_config_apply_autotune(keyhunt_config_t *cfg);
-
 #ifdef __cplusplus
 /**
  * Build config bridge from legacy globals into keyhunt_config_t.
@@ -528,13 +476,6 @@ void kh_config_apply_autotune(keyhunt_config_t *cfg);
  */
 void kh_config_bridge_from_globals(keyhunt_config_t *cfg, const char *fileName);
 #endif
-
-/**
- * Free any dynamically allocated resources in runtime state
- *
- * @param state Pointer to runtime state
- */
-void kh_runtime_state_cleanup(runtime_state_t *state);
 
 /* ============================================================================
  * Environment Variable Overrides
@@ -562,13 +503,6 @@ typedef struct {
     int64_t cpu_n_override;       /* KEYHUNT_CPU_N             (0=auto) */
     int64_t hybrid_cpu_n_override;/* KEYHUNT_HYBRID_CPU_N      (0=auto) */
 } env_overrides_t;
-
-/**
- * Read all KEYHUNT_* environment variables into the overrides struct.
- *
- * @param env  Pointer to env_overrides_t to populate
- */
-void kh_env_overrides_init(env_overrides_t *env);
 
 /* ============================================================================
  * Configuration Version
