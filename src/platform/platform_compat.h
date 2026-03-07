@@ -155,7 +155,7 @@ char* platform_normalize_path(char *path);
     #include <sys/stat.h>
     static inline int platform_mkstemp(char *tmpl) {
         if (_mktemp(tmpl) == NULL) return -1;
-        return _open(tmpl, _O_CREAT | _O_EXCL | _O_RDWR, _S_IREAD | _S_IWRITE);
+        return _open(tmpl, _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY, _S_IREAD | _S_IWRITE);
     }
     #ifndef mkstemp
         #define mkstemp platform_mkstemp
