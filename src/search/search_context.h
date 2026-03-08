@@ -32,11 +32,12 @@
 /*  integer flag values directly (e.g., FLAGMODE == MODE_ADDRESS).     */
 /* ------------------------------------------------------------------ */
 
+/* Map legacy CRYPTO_* macros to typed enum values from config.h */
 #ifndef CRYPTO_NONE
-#define CRYPTO_NONE 0
-#define CRYPTO_BTC  1
-#define CRYPTO_ETH  2
-#define CRYPTO_ALL  3
+#define CRYPTO_NONE CRYPTO_TYPE_NONE
+#define CRYPTO_BTC  CRYPTO_TYPE_BTC
+#define CRYPTO_ETH  CRYPTO_TYPE_ETH
+#define CRYPTO_ALL  CRYPTO_TYPE_ALL
 #endif
 
 /* MODE_* values come from search_mode_t enum in cli.h (included via globals.h).

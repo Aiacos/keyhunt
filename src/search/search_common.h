@@ -41,10 +41,11 @@
 #define SEARCH_COMPRESS 1
 #define SEARCH_BOTH 2
 
-#define CRYPTO_NONE 0
-#define CRYPTO_BTC 1
-#define CRYPTO_ETH 2
-#define CRYPTO_ALL 3
+/* Map legacy CRYPTO_* macros to typed enum values from config.h */
+#define CRYPTO_NONE CRYPTO_TYPE_NONE
+#define CRYPTO_BTC  CRYPTO_TYPE_BTC
+#define CRYPTO_ETH  CRYPTO_TYPE_ETH
+#define CRYPTO_ALL  CRYPTO_TYPE_ALL
 
 /* ============================================================================
  * Thread Arguments - New configuration-based threading

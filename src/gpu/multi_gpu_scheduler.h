@@ -16,8 +16,12 @@
 extern "C" {
 #endif
 
-/* Maximum supported GPUs */
+/* Maximum supported GPUs — kept in sync with GPU_MAX_DEVICES from config.h */
+#ifdef GPU_MAX_DEVICES
+#define MULTI_GPU_MAX_DEVICES GPU_MAX_DEVICES
+#else
 #define MULTI_GPU_MAX_DEVICES 16
+#endif
 
 /* Per-GPU statistics */
 typedef struct {

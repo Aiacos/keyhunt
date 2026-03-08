@@ -1052,6 +1052,11 @@ bsgs_recalculate_with_new_params:
                         s = platform_thread_create(&tid[j], thread_bPload_2blooms, (void *)&bPload_temp_ptr[j]);
                         if (s == 0) {
                             platform_thread_detach(tid[j]);
+                        } else {
+                            output_error("Failed to create bPload thread %d (error %d)\n", j, s);
+                            bPload_temp_ptr[j].finished = 1;
+                            bPload_threads_available[j] = 1;
+                            FINISHED_THREADS_COUNTER++;
                         }
                         BASE += THREADBPWORKLOAD;
                         THREADCOUNTER++;
@@ -1147,6 +1152,11 @@ bsgs_recalculate_with_new_params:
                         s = platform_thread_create(&tid[j], thread_bPload, (void *)&bPload_temp_ptr[j]);
                         if (s == 0) {
                             platform_thread_detach(tid[j]);
+                        } else {
+                            output_error("Failed to create bPload thread %d (error %d)\n", j, s);
+                            bPload_temp_ptr[j].finished = 1;
+                            bPload_threads_available[j] = 1;
+                            FINISHED_THREADS_COUNTER++;
                         }
                         BASE += THREADBPWORKLOAD;
                         THREADCOUNTER++;
@@ -1279,22 +1289,25 @@ bsgs_recalculate_with_new_params:
                 for (i = 0; i < 256; i++) {
                     readed = fwrite(&bloom_bP[i].orig, sizeof(struct bloom), 1, fd_aux1);
                     if (readed != 1) {
-                        output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        output_error("Error writing bloom cache %s, removing corrupted file\n", buffer_bloom_file);
                         fclose(fd_aux1);
+                        unlink(buffer_bloom_file);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(bloom_bP[i].orig.bf, bloom_bP[i].orig.bytes, 1, fd_aux1);
                     if (readed != 1) {
-                        output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        output_error("Error writing bloom cache %s, removing corrupted file\n", buffer_bloom_file);
                         fclose(fd_aux1);
+                        unlink(buffer_bloom_file);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
                     readed = fwrite(&bloom_bP_checksums[i], sizeof(struct checksumsha256), 1, fd_aux1);
                     if (readed != 1) {
-                        output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        output_error("Error writing bloom cache %s, removing corrupted file\n", buffer_bloom_file);
                         fclose(fd_aux1);
+                        unlink(buffer_bloom_file);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -1336,8 +1349,9 @@ bsgs_recalculate_with_new_params:
                     }
                     readed = fwrite(&bloom_bPx2nd_checksums[i], sizeof(struct checksumsha256), 1, fd_aux2);
                     if (readed != 1) {
-                        output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        output_error("Error writing bloom cache %s, removing corrupted file\n", buffer_bloom_file);
                         fclose(fd_aux2);
+                        unlink(buffer_bloom_file);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }
@@ -1415,8 +1429,9 @@ bsgs_recalculate_with_new_params:
                     }
                     readed = fwrite(&bloom_bPx3rd_checksums[i], sizeof(struct checksumsha256), 1, fd_aux2);
                     if (readed != 1) {
-                        output_error("Error writing the file %s please delete it\n", buffer_bloom_file);
+                        output_error("Error writing bloom cache %s, removing corrupted file\n", buffer_bloom_file);
                         fclose(fd_aux2);
+                        unlink(buffer_bloom_file);
                         free(aux); free(pointx_str); free(pointy_str);
                         return -1;
                     }

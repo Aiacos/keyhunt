@@ -267,7 +267,6 @@ typedef struct {
 
     /* I/O cache state (used by readFileAddress / writeFileIfNeeded) */
     int      io_read_cached;      /* FLAGREADEDFILE1: 1 if target data read from cache */
-    int      thread_count;        /* NTHREADS (alias for num_threads, writable by io) */
 } runtime_state_t;
 
 /* ============================================================================

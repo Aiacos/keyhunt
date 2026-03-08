@@ -60,9 +60,17 @@
 - **monitoring.cpp**: Fixed thread completion check: `check_flag &= value` now correctly converts to boolean
 - **sha512.cpp**: Added RFC 2104 compliant key-length handling for `hmac_sha512` (keys > block size now hashed first)
 
+### Security Hardening
+- **io.cpp**: Key material (`hextemp`, `hexrmd`) zeroed with `explicit_bzero` before `free()` to prevent heap forensics
+- **platform_compat.h**: Added cross-platform `explicit_bzero` wrapper (`SecureZeroMemory` on Windows)
+- **sha256.cpp**: Added bounds check on `sha256_checksum()` — rejects `length > 55` to prevent buffer overflow
+- **keyhunt.cpp**: `getrandom()` now rejects partial reads — prevents PRNG seeding with uninitialized data
+- **Int.cpp**: Added NULL checks on 4 `calloc` calls (`GetBlockStr`, `GetC64Str`, `GetBaseN`, `GetBase2`)
+
 ### Thread Safety
 - **io.cpp**: Moved `platform_mutex_lock` before printf in `writekey()` to prevent interleaved output from concurrent threads
 - **Random.cpp**: Made PRNG state `thread_local` to eliminate data races between search threads
+- **globals.h/cpp**: Thread counters (`FINISHED_THREADS_COUNTER`, `FINISHED_THREADS_BP`, `THREADCYCLES`, `THREADCOUNTER`) now `std::atomic<uint64_t>`
 
 ### Memory Safety
 - **monitoring.cpp**: Added NULL guards for `GetBase10()` return values in display formatting
@@ -71,6 +79,16 @@
 - **mode_bsgs.cpp**: Fixed file descriptor leaks on bloom allocation error paths
 - **mode_bsgs.cpp**: Added cleanup loops to free bloom buffers on partial failure
 - **mode_bsgs.cpp**: Added `fclose()` return value checks on bloom write paths
+
+### Error Handling
+- **io.cpp**: `writekey()`/`writekeyeth()` now check `fprintf`/`fclose` return values; fallback to stderr on write failure
+- **io.cpp**: `processOneVanity()` return value now checked — bloom init failure no longer silently ignored
+- **keyhunt.cpp**: `platform_mutex_init()` return values checked — exits on failure instead of undefined behavior
+- **keyhunt.cpp**: NULL check on `GetBase16()` return before use in `output_success()`
+- **mode_bsgs.cpp**: Thread creation failure now marks slot as finished — prevents deadlock/hang
+- **mode_bsgs.cpp**: Corrupted bloom cache files cleaned up via `unlink()` on write error
+- **Random.cpp**: Warning logged to stderr when `getrandom()` fails and Mersenne Twister fallback is used
+- **multi_gpu_scheduler.h**: `MULTI_GPU_MAX_DEVICES` derives from `GPU_MAX_DEVICES` to prevent array bounds mismatch
 
 ### Dead Code Removal
 - Removed ~1000 lines of dead code from `config.cpp`, `cli.cpp`, `globals.cpp`

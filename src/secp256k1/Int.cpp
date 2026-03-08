@@ -872,6 +872,7 @@ char* Int::GetBase16() {
 
 char* Int::GetBlockStr() {
   char *tmp =  (char*) calloc(1,256);
+  if(!tmp) return NULL;
 	char bStr[256];
 	tmp[0] = 0;
 	for (int i = NB32BLOCK-3; i>=0 ; i--) {
@@ -886,6 +887,7 @@ char* Int::GetBlockStr() {
 
 char * Int::GetC64Str(int nbDigit) {
   char *tmp =  (char*) calloc(1,256);
+  if(!tmp) return NULL;
   char bStr[256];
   tmp[0] = '{';
   tmp[1] = 0;
@@ -932,6 +934,7 @@ void  Int::SetBaseN(int n,const char *charset,const char *value) {
 
 char* Int::GetBaseN(int n,const char *charset) {
   char *ret = (char*) calloc(1,1024);
+  if(!ret) return NULL;
 
   Int N(this);
   int offset = 0;
@@ -981,6 +984,7 @@ int Int::GetBit(uint32_t n) {
 // ------------------------------------------------
 char* Int::GetBase2() {
   char *ret =  (char*) calloc(1,1024);
+  if(!ret) return NULL;
   int k=0;
   for(int i=0;i<NB32BLOCK-1;i++) {
     unsigned int mask=0x80000000;

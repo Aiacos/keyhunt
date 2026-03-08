@@ -1,9 +1,9 @@
 {
-  "session_id": "fix-todos-2026-02-26",
-  "total": 20,
-  "resolved": 20,
-  "remaining": 0,
+  "session_id": "fix-todos-2026-03-08",
+  "total": 7,
+  "resolved": 3,
+  "remaining": 4,
   "current": null,
-  "last_updated": "2026-02-26T09:38:00Z",
-  "notes": "All 20 TODOs resolved. #10: SHA256 API docs added. #12: 63 dead externs removed from search_context.h. #17: Env var registry + docs/ENV_VARIABLES.md created."
+  "last_updated": "2026-03-08T17:30:00Z",
+  "notes": "T1: key material zeroed with explicit_bzero before free. T4: NULL checks on 4 calloc calls in Int.cpp. N1: bloom unlink verified as false positive. Remaining: T2 (auth token), T3 (signal safety), T5 (recv timeout), T6 (sprintf), T7 (bsgs refactor)."
 }

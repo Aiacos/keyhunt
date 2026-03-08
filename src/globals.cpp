@@ -64,11 +64,11 @@ platform_mutex_t write_random;
 platform_mutex_t bsgs_thread;
 platform_mutex_t *bPload_mutex = NULL;
 
-/* Thread counters */
-uint64_t FINISHED_THREADS_COUNTER = 0;
-uint64_t FINISHED_THREADS_BP = 0;
-uint64_t THREADCYCLES = 0;
-uint64_t THREADCOUNTER = 0;
+/* Thread counters (atomic for cross-thread safety in BSGS loading) */
+std::atomic<uint64_t> FINISHED_THREADS_COUNTER{0};
+std::atomic<uint64_t> FINISHED_THREADS_BP{0};
+std::atomic<uint64_t> THREADCYCLES{0};
+std::atomic<uint64_t> THREADCOUNTER{0};
 std::atomic<uint64_t> FINISHED_ITEMS{0};
 uint64_t OLDFINISHED_ITEMS = 0;
 

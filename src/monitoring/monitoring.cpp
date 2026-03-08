@@ -118,13 +118,17 @@ Int *monitoring_range_progress_start(void) { return &g_rangeProgressStart; }
 Int *monitoring_range_progress_end(void) { return &g_rangeProgressEnd; }
 
 bool monitoring_span_u64_from_range(Int &start, Int &end, uint64_t &out) {
-    /* Check that all high words are equal (difference fits in 64 bits) */
+    /* Borrow-aware multi-word subtraction: check difference fits in 64 bits */
+    uint64_t d0 = end.bits64[0] - start.bits64[0];
+    uint64_t borrow = (end.bits64[0] < start.bits64[0]) ? 1ULL : 0ULL;
     for (int i = 1; i < NB64BLOCK; i++) {
-        if (end.bits64[i] != start.bits64[i]) return false;
+        uint64_t si = start.bits64[i] + borrow;
+        /* Handle carry from adding borrow to start word */
+        borrow = (si < borrow) ? 1ULL : 0ULL;
+        if (end.bits64[i] < si) return false; /* difference > 64 bits */
+        if (end.bits64[i] != si) return false; /* high word mismatch after borrow */
     }
-    /* Check that end >= start in the low word */
-    if (end.bits64[0] < start.bits64[0]) return false;
-    out = end.bits64[0] - start.bits64[0];
+    out = d0;
     return true;
 }
 

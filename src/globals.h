@@ -134,11 +134,11 @@ extern platform_mutex_t write_random;
 extern platform_mutex_t bsgs_thread;
 extern platform_mutex_t *bPload_mutex;
 
-/* Thread counters */
-extern uint64_t FINISHED_THREADS_COUNTER;
-extern uint64_t FINISHED_THREADS_BP;
-extern uint64_t THREADCYCLES;
-extern uint64_t THREADCOUNTER;
+/* Thread counters (atomic for cross-thread safety in BSGS loading) */
+extern std::atomic<uint64_t> FINISHED_THREADS_COUNTER;
+extern std::atomic<uint64_t> FINISHED_THREADS_BP;
+extern std::atomic<uint64_t> THREADCYCLES;
+extern std::atomic<uint64_t> THREADCOUNTER;
 extern std::atomic<uint64_t> FINISHED_ITEMS;
 extern uint64_t OLDFINISHED_ITEMS;
 

@@ -17,6 +17,7 @@
 
 
 #include "Random.h"
+#include <stdio.h>
 
 /* Use getrandom() on Linux for better entropy, Mersenne Twister on other platforms */
 #ifdef __linux__
@@ -125,6 +126,8 @@ unsigned long rndl() {
 		return r;
 	}
 	/* Fallback to Mersenne Twister if getrandom() fails */
+	fprintf(stderr, "[WARNING] getrandom() failed (got %zd/%zu bytes), falling back to Mersenne Twister PRNG\n",
+		bytes_read, sizeof(unsigned long));
 #endif
 	return rk_random(&localState);
 }

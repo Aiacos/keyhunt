@@ -277,9 +277,12 @@ int main(int argc, char **argv) {
     gpu_hybrid_args_t gpu_hybrid_args = {};
     int gpu_hybrid_started = 0;
 
-    platform_mutex_init(&write_keys);
-    platform_mutex_init(&write_random);
-    platform_mutex_init(&bsgs_thread);
+    if (platform_mutex_init(&write_keys) != 0 ||
+        platform_mutex_init(&write_random) != 0 ||
+        platform_mutex_init(&bsgs_thread) != 0) {
+        fprintf(stderr, "[FATAL] Failed to initialize mutexes\n");
+        exit(EXIT_FAILURE);
+    }
 
     atexit(cleanup_all_resources);
 
@@ -294,11 +297,11 @@ int main(int argc, char **argv) {
     rseed(clock() + time(NULL) + thread_rand());
 #else
     unsigned long rseedvalue;
-    int bytes_read = getrandom(&rseedvalue, sizeof(unsigned long), GRND_NONBLOCK);
-    if(bytes_read > 0) {
+    ssize_t bytes_read = getrandom(&rseedvalue, sizeof(unsigned long), GRND_NONBLOCK);
+    if(bytes_read == (ssize_t)sizeof(unsigned long)) {
         rseed(rseedvalue);
     } else {
-        output_warning("getrandom() failed (bytes_read=%d), using fallback RNG\n", bytes_read);
+        output_warning("getrandom() failed (bytes_read=%zd), using fallback RNG\n", bytes_read);
         rseed(clock() + time(NULL) + thread_rand() * thread_rand());
     }
 #endif
@@ -415,10 +418,10 @@ int main(int argc, char **argv) {
             else output_success("Range\n");
         }
         if(FLAGMODE != MODE_MINIKEYS) {
-            hextemp = n_range_start.GetBase16(); output_success("-- from : 0x%s\n",hextemp); free(hextemp);
+            hextemp = n_range_start.GetBase16(); output_success("-- from : 0x%s\n",hextemp ? hextemp : "0"); free(hextemp);
             if (FLAGRANGE) { Int end_inclusive; end_inclusive.Set(&n_range_end); end_inclusive.SubOne(); hextemp = end_inclusive.GetBase16(); }
             else { hextemp = n_range_end.GetBase16(); }
-            output_success("-- to   : 0x%s\n",hextemp); free(hextemp);
+            output_success("-- to   : 0x%s\n",hextemp ? hextemp : "0"); free(hextemp);
         }
 
         monitoring_initialize_range_progress(n_range_start, n_range_end, FLAGPROGRESSBAR, FLAGMODE);

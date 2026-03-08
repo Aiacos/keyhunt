@@ -485,6 +485,10 @@ void sha256_65(unsigned char *input, unsigned char *digest) {
 
 void sha256_checksum(uint8_t *input, int length, uint8_t *checksum) {
 
+  if (length < 0 || length > 55) {
+    memset(checksum, 0, 4);
+    return;
+  }
   uint32_t s[8];
   uint8_t b[64];
   memcpy(b,input,length);

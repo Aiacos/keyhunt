@@ -183,6 +183,19 @@ char* platform_normalize_path(char *path);
     #endif
 #endif
 
+/**
+ * @brief Secure memory zeroing that won't be optimized away.
+ *
+ * On POSIX: explicit_bzero (glibc 2.25+)
+ * On Windows: SecureZeroMemory
+ */
+#if PLATFORM_WINDOWS
+    #include <windows.h>
+    #ifndef explicit_bzero
+        #define explicit_bzero(ptr, len) SecureZeroMemory(ptr, len)
+    #endif
+#endif
+
 #ifdef __cplusplus
 }
 #endif

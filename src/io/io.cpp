@@ -112,12 +112,20 @@ void writekey(const keyhunt_config_t *config, bool compressed, Int *key) {
 
 	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL) {
-		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress: %s\nBech32: %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
-		fclose(keys);
+		if(fprintf(keys,"Private Key: %s\npubkey: %s\nAddress: %s\nBech32: %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd) < 0) {
+			fprintf(stderr, "[CRITICAL] Write error saving key to KEYFOUNDKEYFOUND.txt! Key data on stderr below.\n");
+			fprintf(stderr, "Private Key: %s\npubkey: %s\nAddress: %s\nBech32: %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
+		}
+		if(fclose(keys) != 0) {
+			fprintf(stderr, "[CRITICAL] Error closing KEYFOUNDKEYFOUND.txt after write!\n");
+		}
+	} else {
+		fprintf(stderr, "[CRITICAL] Cannot open KEYFOUNDKEYFOUND.txt for writing! Key data on stderr below.\n");
+		fprintf(stderr, "Private Key: %s\npubkey: %s\nAddress: %s\nBech32: %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
 	}
 	platform_mutex_unlock(write_mutex);
-	free(hextemp);
-	free(hexrmd);
+	if(hextemp) { explicit_bzero(hextemp, strlen(hextemp)); free(hextemp); }
+	if(hexrmd) { explicit_bzero(hexrmd, strlen(hexrmd)); free(hexrmd); }
 }
 
 void writekeyeth(const keyhunt_config_t *config, Int *key) {
@@ -157,12 +165,20 @@ void writekeyeth(const keyhunt_config_t *config, Int *key) {
 
 	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL) {
-		fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address);
-		fclose(keys);
+		if(fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address) < 0) {
+			fprintf(stderr, "[CRITICAL] Write error saving key to KEYFOUNDKEYFOUND.txt! Key data on stderr below.\n");
+			fprintf(stderr, "Private Key: %s\naddress: %s\n",hextemp,address);
+		}
+		if(fclose(keys) != 0) {
+			fprintf(stderr, "[CRITICAL] Error closing KEYFOUNDKEYFOUND.txt after write!\n");
+		}
+	} else {
+		fprintf(stderr, "[CRITICAL] Cannot open KEYFOUNDKEYFOUND.txt for writing! Key data on stderr below.\n");
+		fprintf(stderr, "Private Key: %s\naddress: %s\n",hextemp,address);
 	}
 
 	platform_mutex_unlock(write_mutex);
-	free(hextemp);
+	if(hextemp) { explicit_bzero(hextemp, strlen(hextemp)); free(hextemp); }
 }
 
 bool processOneVanity(keyhunt_config_t *config) {
@@ -433,7 +449,10 @@ bool readFileAddress(char *fileName, keyhunt_config_t *config) {
 		}
 	}
 	if(is_vanity) {
-		processOneVanity(config);
+		if(!processOneVanity(config)) {
+			output_error("Failed to initialize vanity search bloom filter\n");
+			return false;
+		}
 	}
 	if(!FLAGREADEDFILE1) {
 		switch(FLAGMODE) {
