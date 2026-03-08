@@ -364,7 +364,13 @@ void hmac_sha512(unsigned char *key, int key_length, unsigned char *message, int
   uint8_t hash[SHA512_HASH_LENGTH];
   int i;
 
-  // TODO Handle key larger than 128
+  // RFC 2104: If key > block size, hash it first
+  uint8_t hashed_key[SHA512_HASH_LENGTH];
+  if (key_length > SHA512_BLOCK_SIZE) {
+    sha512(key, key_length, hashed_key);
+    key = hashed_key;
+    key_length = SHA512_HASH_LENGTH;
+  }
 
   for (i = 0; i < key_length && i < SHA512_BLOCK_SIZE; i++) {
     ipad[i] = key[i] ^ IPAD;

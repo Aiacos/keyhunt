@@ -270,7 +270,7 @@ bool acquire_base_key(Int &key) {
 int main(int argc, char **argv) {
     char *hextemp = NULL;
     uint64_t i;
-    int salir;
+    int done;
     Int int_aux,int_r,int_q,int58;
 
     platform_thread_t gpu_thread_id = 0;
@@ -390,8 +390,8 @@ int main(int argc, char **argv) {
             if (errno != 0 || endp == num || (endp && *endp != '\0')) {
                 output_error("Invalid -n value: %s\n", str_N); FLAG_N = 0; N_SEQUENTIAL_MAX = 0x100000000;
             } else { N_SEQUENTIAL_MAX = (uint64_t)parsed; }
-            if(N_SEQUENTIAL_MAX < 1024) { output_info("n value need to be equal or great than 1024, back to defaults\n"); FLAG_N = 0; N_SEQUENTIAL_MAX = 0x100000000; }
-            if(N_SEQUENTIAL_MAX % 1024 != 0) { output_info("n value need to be multiplier of  1024\n"); FLAG_N = 0; N_SEQUENTIAL_MAX = 0x100000000; }
+            if(N_SEQUENTIAL_MAX < 1024) { output_warning("-n value must be >= 1024, using default\n"); FLAG_N = 0; N_SEQUENTIAL_MAX = 0x100000000; }
+            if(N_SEQUENTIAL_MAX % 1024 != 0) { output_warning("-n value must be a multiple of 1024, using default\n"); FLAG_N = 0; N_SEQUENTIAL_MAX = 0x100000000; }
         } else { N_SEQUENTIAL_MAX = 0x100000000; }
         output_success("N = 0x%llx\n",(unsigned long long)N_SEQUENTIAL_MAX);
 
@@ -401,18 +401,18 @@ int main(int argc, char **argv) {
             minikeyN = (char*) malloc(22);
             checkpointer((void *)minikeyN,__FILE__,"malloc","minikeyN",__LINE__-1);
             i = 0; int58.SetInt32(58); int_aux.SetInt64(N_SEQUENTIAL_MAX); int_aux.Mult(253);
-            i = 20; salir = 0;
+            i = 20; done = 0;
             do {
                 if(!int_aux.IsZero()) {
                     int_r.Set(&int_aux); int_r.Mod(&int58); int_q.Set(&int_aux);
                     minikeyN[i] = (uint8_t)int_r.GetInt64();
                     int_q.Sub(&int_r); int_q.Div(&int58); int_aux.Set(&int_q); i--;
-                } else { salir = 1; }
-            } while(!salir && i > 0);
+                } else { done = 1; }
+            } while(!done && i > 0);
             minikey_n_limit = 21 - i;
         } else {
             if(FLAGBITRANGE) output_success("Bit Range %i\n",bitrange);
-            else output_success("Range \n");
+            else output_success("Range\n");
         }
         if(FLAGMODE != MODE_MINIKEYS) {
             hextemp = n_range_start.GetBase16(); output_success("-- from : 0x%s\n",hextemp); free(hextemp);
@@ -577,7 +577,8 @@ int main(int argc, char **argv) {
     /* ========== Post-monitoring cleanup ========== */
     if (FLAGGPU_HYBRID && gpu_hybrid_started) {
         g_gpu_should_stop.store(1, std::memory_order_release);
-        printf("\n[+] Waiting for GPU thread to complete...\n");
+        printf("\n");
+        output_info("Waiting for GPU thread to complete...\n");
         platform_thread_join(gpu_thread_id, NULL);
         output_success("GPU thread finished. Result: %d keys found\n", gpu_hybrid_args.result.load(std::memory_order_acquire));
         output_success("GPU keys checked: %" PRIu64 "\n", monitoring_gpu_keys_checked_total_u64());
@@ -593,7 +594,7 @@ int main(int argc, char **argv) {
     }
 
     if (g_progress_enabled) { progress_complete(&g_progress_state); output_info("Progress tracking completed\n"); }
-    printf("\nEnd\n");
+    output_success("Search complete\n");
 #ifndef _WIN64
     shutdown_work_queue();
 #endif

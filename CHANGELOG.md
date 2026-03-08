@@ -49,6 +49,44 @@
 - **Auto-Correction**: Prevents OOM crashes and excessive thread counts
 - **User Feedback**: Visual indicators for optimal/acceptable/corrected parameters
 
+## Code Quality & Bug Fixes (2026-03-08)
+
+### Critical Fixes
+- **io.cpp**: Fixed stale address count `N` in `forceReadFileAddressEth()` — inflated count caused binary search to read uninitialized memory
+- **io.cpp**: Added NULL secp pointer check in `writekey()`/`writekeyeth()` to prevent crash if called before initialization
+- **io.cpp**: Added `0x`/`0X` prefix validation in ETH address parsing
+- **io.cpp**: Secure file permissions (`0600`) for `KEYFOUNDKEYFOUND.txt` output
+- **monitoring.cpp**: Fixed borrow propagation logic in `monitoring_span_u64_from_range()` — broke progress bar display
+- **monitoring.cpp**: Fixed thread completion check: `check_flag &= value` now correctly converts to boolean
+- **sha512.cpp**: Added RFC 2104 compliant key-length handling for `hmac_sha512` (keys > block size now hashed first)
+
+### Thread Safety
+- **io.cpp**: Moved `platform_mutex_lock` before printf in `writekey()` to prevent interleaved output from concurrent threads
+- **Random.cpp**: Made PRNG state `thread_local` to eliminate data races between search threads
+
+### Memory Safety
+- **monitoring.cpp**: Added NULL guards for `GetBase10()` return values in display formatting
+- **monitoring.cpp**: Fixed `GetBase10()` memory leak in GPU hybrid stats path
+- **mode_bsgs.cpp**: Added bloom cache size validation before malloc (prevents corrupt cache exploitation)
+- **mode_bsgs.cpp**: Fixed file descriptor leaks on bloom allocation error paths
+- **mode_bsgs.cpp**: Added cleanup loops to free bloom buffers on partial failure
+- **mode_bsgs.cpp**: Added `fclose()` return value checks on bloom write paths
+
+### Dead Code Removal
+- Removed ~1000 lines of dead code from `config.cpp`, `cli.cpp`, `globals.cpp`
+- Removed unused global variables: `FLAGRAWDATA`, `FLAGPRECALCUTED_P_FILE`
+- Removed 12 dead fields from `runtime_state_t` struct
+- Removed dead `sha256sse_test()` prototype
+- Deleted backup files: `keyhunt.cpp.bak` (323KB), `keyhunt_legacy.cpp.backup` (222KB)
+
+### Output Polish
+- Fixed typo "adddress" → "address" in BTC/ETH mode messages
+- Fixed typo "unknow" → "unknown" in BSGS mode warning
+- Fixed grammar in `-n` validation messages
+- Renamed Spanish variable `salir` → `done`/`found` in keyhunt.cpp and monitoring.cpp
+- Improved search key type messages: "compress" → "compressed keys"
+- Changed bare "End" message to proper `output_success("Search complete")`
+
 ---
 
 # Version 0.2.230519 Satoshi Quest

@@ -343,7 +343,7 @@ void parse_cli_args(int argc, char **argv) {
             case 'B':
                 index_value = indexOf(optarg,bsgs_modes,5);
                 if(index_value >= 0 && index_value <= 4) { FLAGBSGSMODE = index_value; }
-                else { output_warning("Ignoring unknow bsgs mode %s\n",optarg); }
+                else { output_warning("Ignoring unknown BSGS mode: %s\n",optarg); }
                 break;
             case 'b':
                 bitrange = strtol(optarg,NULL,10);
@@ -362,7 +362,7 @@ void parse_cli_args(int argc, char **argv) {
                 index_value = indexOf(optarg,cryptos,3);
                 switch(index_value) {
                     case 0: FLAGCRYPTO = CRYPTO_BTC; break;
-                    case 1: FLAGCRYPTO = CRYPTO_ETH; output_success("Setting search for ETH adddress.\n"); break;
+                    case 1: FLAGCRYPTO = CRYPTO_ETH; output_success("Setting search for ETH address\n"); break;
                     default: FLAGCRYPTO = CRYPTO_NONE; output_error("Unknown crypto value %s\n",optarg); exit(EXIT_FAILURE); break;
                 }
                 break;
@@ -420,9 +420,9 @@ void parse_cli_args(int argc, char **argv) {
                 break;
             case 'l':
                 switch(indexOf(optarg,publicsearch,3)) {
-                    case SEARCH_UNCOMPRESS: FLAGSEARCH = SEARCH_UNCOMPRESS; output_success("Search uncompress only\n"); break;
-                    case SEARCH_COMPRESS: FLAGSEARCH = SEARCH_COMPRESS; output_success("Search compress only\n"); break;
-                    case SEARCH_BOTH: FLAGSEARCH = SEARCH_BOTH; output_success("Search both compress and uncompress\n"); break;
+                    case SEARCH_UNCOMPRESS: FLAGSEARCH = SEARCH_UNCOMPRESS; output_success("Search uncompressed keys only\n"); break;
+                    case SEARCH_COMPRESS: FLAGSEARCH = SEARCH_COMPRESS; output_success("Search compressed keys only\n"); break;
+                    case SEARCH_BOTH: FLAGSEARCH = SEARCH_BOTH; output_success("Search both compressed and uncompressed keys\n"); break;
                 }
                 break;
             case 'M': FLAGMATRIX = 1; output_success("Matrix screen\n"); break;
@@ -456,13 +456,13 @@ void parse_cli_args(int argc, char **argv) {
                         case 1:
                             range_start = nextToken(&t);
                             if(isValidHex(range_start)) { FLAGRANGE = 1; range_end = secp->order.GetBase16(); }
-                            else { output_error("Invalid hexstring : %s.\n",range_start); }
+                            else { output_error("Invalid hex string:%s.\n",range_start); }
                             break;
                         case 2:
                             range_start = nextToken(&t);
                             range_end = nextToken(&t);
                             if(isValidHex(range_start) && isValidHex(range_end)) { FLAGRANGE = 1; }
-                            else { if(isValidHex(range_start)) { output_error("Invalid hexstring : %s\n",range_start); } else { output_error("Invalid hexstring : %s\n",range_end); } }
+                            else { if(isValidHex(range_start)) { output_error("Invalid hex string:%s\n",range_start); } else { output_error("Invalid hex string:%s\n",range_end); } }
                             break;
                         default: output_error("Unknown number of Range Params: %i\n",t.n); break;
                     }
@@ -579,7 +579,7 @@ void parse_cli_args(int argc, char **argv) {
     if(FLAGFILE == 0) { g_fileName = (char*) default_fileName; }
 
     if(FLAGMODE == MODE_ADDRESS && FLAGCRYPTO == CRYPTO_NONE) {
-        FLAGCRYPTO = CRYPTO_BTC; output_success("Setting search for btc adddress\n");
+        FLAGCRYPTO = CRYPTO_BTC; output_success("Setting search for BTC address\n");
     }
     if(FLAGMODE == MODE_RMD160 && FLAGCRYPTO == CRYPTO_NONE) {
         FLAGCRYPTO = CRYPTO_BTC; output_success("Setting search for btc rmd160\n");

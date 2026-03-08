@@ -12,8 +12,6 @@
 #include "../util/profiling.h"
 #include "../util/thread_util.h"
 #include "../util/work_queue.h"
-#include "../gpu/gpu_dispatch.h"
-#include "../gpu/gpu_backend.h"
 #include "../gpu/gpu_multi_worker.h"
 #include "../hybrid/adaptive_scheduler.h"
 #include "../platform/platform_memory.h"
@@ -120,18 +118,13 @@ Int *monitoring_range_progress_start(void) { return &g_rangeProgressStart; }
 Int *monitoring_range_progress_end(void) { return &g_rangeProgressEnd; }
 
 bool monitoring_span_u64_from_range(Int &start, Int &end, uint64_t &out) {
-    uint64_t d0 = end.bits64[0] - start.bits64[0];
-    uint64_t borrow = (end.bits64[0] < start.bits64[0]) ? 1ULL : 0ULL;
+    /* Check that all high words are equal (difference fits in 64 bits) */
     for (int i = 1; i < NB64BLOCK; i++) {
-        const uint64_t ei = end.bits64[i];
-        const uint64_t si = start.bits64[i];
-        const uint64_t si_borrow = si + borrow;
-        const uint64_t di = ei - si_borrow;
-        if (di != 0) return false;
-        borrow = (ei < si_borrow) ? 1ULL : 0ULL;
+        if (end.bits64[i] != start.bits64[i]) return false;
     }
-    if (borrow) return false;
-    out = d0;
+    /* Check that end >= start in the low word */
+    if (end.bits64[0] < start.bits64[0]) return false;
+    out = end.bits64[0] - start.bits64[0];
     return true;
 }
 
@@ -538,7 +531,7 @@ void run_monitoring_loop(monitoring_params_t *params) {
     char *str_divpretotal = NULL;
     int continue_flag, check_flag, j;
     uint64_t i;
-    int salir;
+    int found;
 
     monitoring_initialize_rate_limits();
 
@@ -559,7 +552,7 @@ void run_monitoring_loop(monitoring_params_t *params) {
         seconds.AddOne();
         check_flag = 1;
         for (j = 0; j < params->num_threads && check_flag; j++) {
-            check_flag &= params->ends[j].value;
+            check_flag &= (params->ends[j].value != 0) ? 1 : 0;
         }
         if (check_flag) {
             continue_flag = 0;
@@ -609,10 +602,12 @@ void run_monitoring_loop(monitoring_params_t *params) {
 
                     /* Report to adaptive scheduler */
                     {
-                        uint64_t cpu_delta_u64 = cpu_delta.IsPositive() ?
-                            strtoull(cpu_delta.GetBase10(), NULL, 10) : 0;
-                        uint64_t period_ms = period.IsPositive() ?
-                            strtoull(period.GetBase10(), NULL, 10) * 1000 : 1000;
+                        char *cpu_delta_str = cpu_delta.IsPositive() ? cpu_delta.GetBase10() : NULL;
+                        uint64_t cpu_delta_u64 = cpu_delta_str ? strtoull(cpu_delta_str, NULL, 10) : 0;
+                        free(cpu_delta_str);
+                        char *period_str = period.IsPositive() ? period.GetBase10() : NULL;
+                        uint64_t period_ms = period_str ? strtoull(period_str, NULL, 10) * 1000 : 1000;
+                        free(period_str);
 
                         if (cpu_delta_u64 > 0) {
                             adaptive_report_work(WORKER_CPU, cpu_delta_u64, period_ms);
@@ -737,42 +732,39 @@ void run_monitoring_loop(monitoring_params_t *params) {
                     if (pretotal.IsLower(&int_limits[0])) {
                         if (line_mode) {
                             snprintf(buffer, sizeof(buffer), "[+] Total %s keys in %s seconds: %s keys/s\n",
-                                     str_total, str_seconds, str_pretotal);
+                                     str_total ? str_total : "?", str_seconds ? str_seconds : "?", str_pretotal ? str_pretotal : "?");
                         } else {
                             snprintf(buffer, sizeof(buffer), "\r[+] Total %s keys in %s seconds: %s keys/s\r",
-                                     str_total, str_seconds, str_pretotal);
+                                     str_total ? str_total : "?", str_seconds ? str_seconds : "?", str_pretotal ? str_pretotal : "?");
                         }
                     } else {
                         i = 0;
-                        salir = 0;
-                        while (i < 6 && !salir) {
+                        found = 0;
+                        while (i < 6 && !found) {
                             if (pretotal.IsLower(&int_limits[i + 1])) {
-                                salir = 1;
+                                found = 1;
                             } else {
                                 i++;
                             }
                         }
 
                         div_pretotal.Set(&pretotal);
-                        div_pretotal.Div(&int_limits[salir ? i : i - 1]);
+                        div_pretotal.Div(&int_limits[found ? i : i - 1]);
                         str_divpretotal = div_pretotal.GetBase10();
                         if (line_mode) {
                             snprintf(buffer, sizeof(buffer),
                                      "[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\n",
-                                     str_total, str_seconds, str_divpretotal,
-                                     str_limits_prefixes[salir ? i : i - 1], str_pretotal);
+                                     str_total ? str_total : "?", str_seconds ? str_seconds : "?",
+                                     str_divpretotal ? str_divpretotal : "?",
+                                     str_limits_prefixes[found ? i : i - 1],
+                                     str_pretotal ? str_pretotal : "?");
                         } else {
-                            if (params->thread_output->load(std::memory_order_acquire) == 1) {
-                                snprintf(buffer, sizeof(buffer),
-                                         "\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",
-                                         str_total, str_seconds, str_divpretotal,
-                                         str_limits_prefixes[salir ? i : i - 1], str_pretotal);
-                            } else {
-                                snprintf(buffer, sizeof(buffer),
-                                         "\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",
-                                         str_total, str_seconds, str_divpretotal,
-                                         str_limits_prefixes[salir ? i : i - 1], str_pretotal);
-                            }
+                            snprintf(buffer, sizeof(buffer),
+                                     "\r[+] Total %s keys in %s seconds: ~%s %s (%s keys/s)\r",
+                                     str_total ? str_total : "?", str_seconds ? str_seconds : "?",
+                                     str_divpretotal ? str_divpretotal : "?",
+                                     str_limits_prefixes[found ? i : i - 1],
+                                     str_pretotal ? str_pretotal : "?");
                         }
                         free(str_divpretotal);
                     }

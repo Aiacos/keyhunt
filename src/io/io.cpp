@@ -10,7 +10,6 @@
 
 #include "io.h"
 #include "../search/search_context.h"
-#include "../search/search_utils.h"
 #include "../crypto/address_util.h"
 #include "../crypto/bloom_init.h"
 #include "../sort/sort.h"
@@ -65,6 +64,11 @@ void writekey(const keyhunt_config_t *config, bool compressed, Int *key) {
 	Int *rangeStart = (Int *)config->runtime.range_progress_start;
 	Int *rangeEnd = (Int *)config->runtime.range_progress_end;
 
+	if (!secp) {
+		fprintf(stderr, "[E] writekey: secp not initialized\n");
+		return;
+	}
+
 	// Range validation: skip keys outside the original search range
 	// This prevents false positives from key negation producing out-of-range keys
 	if (rangeStart && rangeEnd) {
@@ -97,6 +101,8 @@ void writekey(const keyhunt_config_t *config, bool compressed, Int *key) {
 		strcpy(bech32_address, "[bech32 requires compressed]");
 	}
 
+	platform_mutex_lock(write_mutex);
+
 	printf("\nHit! Private Key: %s\npubkey: %s\nAddress %s\nBech32 %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
 
 	// Colored box display
@@ -104,8 +110,7 @@ void writekey(const keyhunt_config_t *config, bool compressed, Int *key) {
 	output_key_found(hextemp, address, public_key_hex);
 	printf("\n");
 
-	platform_mutex_lock(write_mutex);
-	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL) {
 		fprintf(keys,"Private Key: %s\npubkey: %s\nAddress: %s\nBech32: %s\nrmd160 %s\n",hextemp,public_key_hex,address,bech32_address,hexrmd);
 		fclose(keys);
@@ -121,6 +126,11 @@ void writekeyeth(const keyhunt_config_t *config, Int *key) {
 	platform_mutex_t *write_mutex = (platform_mutex_t *)config->runtime.write_mutex;
 	Int *rangeStart = (Int *)config->runtime.range_progress_start;
 	Int *rangeEnd = (Int *)config->runtime.range_progress_end;
+
+	if (!secp) {
+		fprintf(stderr, "[E] writekeyeth: secp not initialized\n");
+		return;
+	}
 
 	// Range validation: skip keys outside the original search range
 	if (rangeStart && rangeEnd) {
@@ -139,12 +149,13 @@ void writekeyeth(const keyhunt_config_t *config, Int *key) {
 	address[1] = 'x';
 	tohex_dst(hash, 20, address+2);
 
+	platform_mutex_lock(write_mutex);
+
 	printf("\nHit! Private Key: %s\naddress: %s\n",hextemp,address);
 
 	output_key_found(hextemp, address, NULL);
 
-	platform_mutex_lock(write_mutex);
-	keys = fopen("KEYFOUNDKEYFOUND.txt","a+");
+	keys = fopen_secure_append("KEYFOUNDKEYFOUND.txt");
 	if(keys != NULL) {
 		fprintf(keys,"Private Key: %s\naddress: %s\n",hextemp,address);
 		fclose(keys);
@@ -633,6 +644,10 @@ bool forceReadFileAddressEth(char *fileName, keyhunt_config_t *config) {
 					}
 				break;
 				case 42:
+					if(aux[0] != '0' || (aux[1] != 'x' && aux[1] != 'X')) {
+						numberItems--;
+						continue;
+					}
 					if(isValidHex(aux+2)) {
 						hexs2bin(aux+2, rawvalue);
 						bloom_ext_add(bloom_ptr, rawvalue, sizeof(struct address_value));
@@ -652,6 +667,8 @@ bool forceReadFileAddressEth(char *fileName, keyhunt_config_t *config) {
 	}
 
 	fclose(fileDescriptor);
+
+	N = numberItems;
 
 	/* Write back to config */
 	config->runtime.address_count = (int64_t)N;

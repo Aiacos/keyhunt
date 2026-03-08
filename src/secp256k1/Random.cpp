@@ -36,7 +36,7 @@ typedef struct rk_state_
   int pos;
 } rk_state;
 
-rk_state localState;
+static thread_local rk_state localState;
 
 /* Maximum generated random value */
 #define RK_MAX 0xFFFFFFFFUL
