@@ -126,8 +126,12 @@ unsigned long rndl() {
 		return r;
 	}
 	/* Fallback to Mersenne Twister if getrandom() fails */
-	fprintf(stderr, "[WARNING] getrandom() failed (got %zd/%zu bytes), falling back to Mersenne Twister PRNG\n",
-		bytes_read, sizeof(unsigned long));
+	static thread_local bool warned = false;
+	if (!warned) {
+		fprintf(stderr, "[WARNING] getrandom() failed (got %zd/%zu bytes), falling back to Mersenne Twister PRNG\n",
+			bytes_read, sizeof(unsigned long));
+		warned = true;
+	}
 #endif
 	return rk_random(&localState);
 }

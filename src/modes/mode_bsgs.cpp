@@ -1053,10 +1053,9 @@ bsgs_recalculate_with_new_params:
                         if (s == 0) {
                             platform_thread_detach(tid[j]);
                         } else {
-                            output_error("Failed to create bPload thread %d (error %d)\n", j, s);
-                            bPload_temp_ptr[j].finished = 1;
-                            bPload_threads_available[j] = 1;
-                            FINISHED_THREADS_COUNTER++;
+                            output_error("Failed to create bPload thread %d (error %d), aborting BSGS init\n", j, s);
+                            free(aux); free(pointx_str); free(pointy_str);
+                            return -1;
                         }
                         BASE += THREADBPWORKLOAD;
                         THREADCOUNTER++;
@@ -1153,10 +1152,9 @@ bsgs_recalculate_with_new_params:
                         if (s == 0) {
                             platform_thread_detach(tid[j]);
                         } else {
-                            output_error("Failed to create bPload thread %d (error %d)\n", j, s);
-                            bPload_temp_ptr[j].finished = 1;
-                            bPload_threads_available[j] = 1;
-                            FINISHED_THREADS_COUNTER++;
+                            output_error("Failed to create bPload thread %d (error %d), aborting BSGS init\n", j, s);
+                            free(aux); free(pointx_str); free(pointy_str);
+                            return -1;
                         }
                         BASE += THREADBPWORKLOAD;
                         THREADCOUNTER++;
